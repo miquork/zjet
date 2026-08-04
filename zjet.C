@@ -122,12 +122,12 @@ void zjet::Loop()
    TH1D *h_seleta = new TH1D("h_seleta","",100,-5,5);
    TH1D *h_seldphi = new TH1D("h_seldphi","",120,-TMath::TwoPi(),TMath::TwoPi());
 
-   TH2D *h2_parpteta = new TH2D("h_parpteta","",200,0,200,100,-5,5);
+   TH2D *h2_parpteta = new TH2D("h2_parpteta","",200,0,200,100,-5,5);
    TH1D *h_parpt = new TH1D("h_parpt","",200,0,200);
    TH1D *h_pareta = new TH1D("h_pareta","",100,-5,5);
    TH1D *h_pardphi = new TH1D("h_pardphi","",120,-TMath::TwoPi(),TMath::TwoPi());
    
-   TH2D *h2_tranpteta = new TH2D("h_tranpteta","",200,0,200,100,-5,5);
+   TH2D *h2_tranpteta = new TH2D("h2_tranpteta","",200,0,200,100,-5,5);
    TH1D *h_ntran = new TH1D("h_tran","",20,0,20);
    TH1D *h_tran1pt = new TH1D("h_tran1pt","",200,0,200);
    TH1D *h_tranpt = new TH1D("h_tranpt","",200,0,200);
@@ -135,24 +135,42 @@ void zjet::Loop()
    TH1D *h_traneta = new TH1D("h_traneta","",100,-5,5);
    TH1D *h_trandphi = new TH1D("h_trandphi","",120,-TMath::TwoPi(),TMath::TwoPi());
 
-   TH2D *h2_mixpteta = new TH2D("h_mixpteta","",200,0,200,100,-5,5);
+   TH2D *h2_mixpteta = new TH2D("h2_mixpteta","",200,0,200,100,-5,5);
    TH1D *h_mixpt = new TH1D("h_mixpt","",200,0,200);
    TH1D *h_mixeta = new TH1D("h_mixeta","",100,-5,5);
    TH1D *h_mixdphi = new TH1D("h_mixdphi","",120,-TMath::TwoPi(),TMath::TwoPi());
    
    TH1D *h_db = new TH1D("h_db","",200,0,2);
+   TH1D *h_mpf = new TH1D("h_mpf","",700,-3,4);
+   TProfile2D *p2_db = new TProfile2D("p2_db","",40,0,200,100,-5,5);
+   TProfile2D *p2_mpf = new TProfile2D("p2_mpf","",40,0,200,100,-5,5);
+   TProfile2D *p2_mpfn = new TProfile2D("p2_mpfn","",40,0,200,100,-5,5);
+   TProfile2D *p2_mpfu = new TProfile2D("p2_mpfu","",40,0,200,100,-5,5);
+   TProfile2D *p2_mpfnu = new TProfile2D("p2_mpfnu","",40,0,200,100,-5,5);
    TH2D *h2_db = new TH2D("h2_db","",200,0,200,200,0,200);
    TProfile *p_db_vsz = new TProfile("p_db_vsz","",200,0,200);
    TProfile *p_db_vsj = new TProfile("p_db_vsj","",200,0,200);
    TProfile *p_db_vsa = new TProfile("p_db_vsa","",200,0,200);
 
    TH1D *h_dbp = new TH1D("h_dbp","",200,0,2);
+   TH1D *h_mpfp = new TH1D("h_mpfp","",700,-3,4);
+   TProfile2D *p2_dbp = new TProfile2D("p2_dbp","",40,0,200,100,-5,5);
+   TProfile2D *p2_mpfp = new TProfile2D("p2_mpfp","",40,0,200,100,-5,5);
+   TProfile2D *p2_mpfnp = new TProfile2D("p2_mpfnp","",40,0,200,100,-5,5);
+   TProfile2D *p2_mpfup = new TProfile2D("p2_mpfup","",40,0,200,100,-5,5);
+   TProfile2D *p2_mpfnup = new TProfile2D("p2_mpfnup","",40,0,200,100,-5,5);
    TH2D *h2_dbp = new TH2D("h2_dbp","",200,0,200,200,0,200);
    TProfile *p_dbp_vsz = new TProfile("p_dbp_vsz","",200,0,200);
    TProfile *p_dbp_vsj = new TProfile("p_dbp_vsj","",200,0,200);
    TProfile *p_dbp_vsa = new TProfile("p_dbp_vsa","",200,0,200);
 
    TH1D *h_dbt = new TH1D("h_dbt","",200,0,2);
+   TH1D *h_mpft = new TH1D("h_mpft","",700,-3,4);
+   TProfile2D *p2_dbt = new TProfile2D("p2_dbt","",40,0,200,100,-5,5);
+   TProfile2D *p2_mpft = new TProfile2D("p2_mpft","",40,0,200,100,-5,5);
+   TProfile2D *p2_mpfnt = new TProfile2D("p2_mpfnt","",40,0,200,100,-5,5);
+   TProfile2D *p2_mpfut = new TProfile2D("p2_mpfut","",40,0,200,100,-5,5);
+   TProfile2D *p2_mpfnut = new TProfile2D("p2_mpfnut","",40,0,200,100,-5,5);
    TH2D *h2_dbt = new TH2D("h2_dbt","",200,0,200,200,0,200);
    TProfile *p_dbt_vsz = new TProfile("p_dbt_vsz","",200,0,200);
    TProfile *p_dbt_vsj = new TProfile("p_dbt_vsj","",200,0,200);
@@ -259,8 +277,8 @@ void zjet::Loop()
    curdir->cd();
 
    TLorentzVector p4lplus, p4lminus, p4z, p4jet1, p4jet, p4sel1, p4tran1;
-   TLorentzVector p4p, p4t, p4t1, p4t2;
-   TLorentzVector met, ht, met1, metn, metu, metnu;
+   TLorentzVector p4p, p4pz, p4t, p4tz, p4t1, p4t1z, p4t2, p4t2z;
+   TLorentzVector met, ht, met1, metn, metu, metnu, meta;
    
    Long64_t nbytes = 0, nb = 0;
    for (Long64_t jentry=0; jentry<nentries;jentry++) {
@@ -311,6 +329,7 @@ void zjet::Loop()
       metn.SetPtEtaPhiM(0,0,0,0);
       metu.SetPtEtaPhiM(0,0,0,0);
       metnu.SetPtEtaPhiM(0,0,0,0);
+      meta.SetPtEtaPhiM(0,0,0,0);
       int nlep(0), nsel(0), ntran(0);
 
       // Select leading leptons
@@ -391,13 +410,17 @@ void zjet::Loop()
       else
 	continue;
 
-      // Set Z-parallel directions
+      // Set Z-parallel (probe) directions
       p4p.SetPtEtaPhiM(p4z.Pt(),p4z.Eta(),p4z.Phi()+TMath::Pi(),p4z.M());
+      p4pz.SetPtEtaPhiM(p4z.Pt(),p4z.Eta(),p4z.Phi(),p4z.M());
 	
       // Set Z-transverse direction(s)
       p4t.SetPtEtaPhiM(p4z.Pt(),p4z.Eta(),p4z.Phi()+(jentry%2==0 ? +1 : -1)*TMath::Pi()*0.5,p4z.M());
+      p4tz.SetPtEtaPhiM(p4z.Pt(),p4z.Eta(),p4z.Phi()+(jentry%2==0 ? -1 : +1)*TMath::Pi()*0.5,p4z.M());
       p4t1.SetPtEtaPhiM(p4z.Pt(),p4z.Eta(),p4z.Phi()+TMath::Pi()*0.5,p4z.M());
+      p4t1z.SetPtEtaPhiM(p4z.Pt(),p4z.Eta(),p4z.Phi()-TMath::Pi()*0.5,p4z.M());
       p4t2.SetPtEtaPhiM(p4z.Pt(),p4z.Eta(),p4z.Phi()-TMath::Pi()*0.5,p4z.M());
+      p4t2z.SetPtEtaPhiM(p4z.Pt(),p4z.Eta(),p4z.Phi()+TMath::Pi()*0.5,p4z.M());
 
       // Keep leptons out of parallel and transverse probe directions to avoid
       // relative bias between parallel and transverse pileup jet counts
@@ -437,8 +460,27 @@ void zjet::Loop()
       }
       for (int ijet = 0; ijet != nJet; ++ijet) {
 
+	double eta = p4jet.Eta();
+	double ptz = p4z.Pt();
+	double ptj = p4jet.Pt();
+	double pta = 0.5*(ptz+ptj);
+
+	double jes = (1-Jet_rawFactor[ijet]);
 	p4jet.SetPtEtaPhiM(Jet_pt[ijet], Jet_eta[ijet], Jet_phi[ijet],
 			   Jet_mass[ijet]);
+
+	met1 = -p4z - p4jet;
+	met1.SetPtEtaPhiM(met1.Pt(),0,met1.Phi(),0.);
+	metn = -ht + p4z + p4jet;
+	metn.SetPtEtaPhiM(metn.Pt(),0,metn.Phi(),0.);
+	metnu = metn + metu;
+	meta = met1 + metn + metu;
+	double mpf = 1 + meta.Vect().Dot(p4z.Vect()) / (ptz*ptz);
+	double mpf1 = 1 + met1.Vect().Dot(p4z.Vect()) / (ptz*ptz);
+	double mpfn = metn.Vect().Dot(p4z.Vect()) / (ptz*ptz);
+	double mpfu = metu.Vect().Dot(p4z.Vect()) / (ptz*ptz);
+	double mpfnu = metnu.Vect().Dot(p4z.Vect()) / (ptz*ptz);
+	
 	//if (p4jet.DeltaR(p4lplus)>0.4 && p4jet.DeltaR(p4lminus)>0.4) {
 	if (p4jet.DeltaR(p4lplus)>0.2 && p4jet.DeltaR(p4lminus)>0.2) {
 
@@ -452,7 +494,10 @@ void zjet::Loop()
 	  //if (fabs(p4jet.DeltaPhi(p4z))>15./16.*TMath::Pi() && // >2.945
 	  if (fabs(p4jet.DeltaPhi(p4p))<1./16.*TMath::Pi() && // 0.1963
 	      //p4jet.Pt()>0.5*p4z.Pt() && p4z.Pt()>0.5*p4jet.Pt()) {
-	      p4jet.Pt()>0.6*p4z.Pt() && p4z.Pt()>0.6*p4jet.Pt()) {
+	      //p4jet.Pt()>0.6*p4z.Pt() && p4z.Pt()>0.6*p4jet.Pt()) {
+	      //p4jet.Pt()>0.5*p4z.Pt() && p4jet.Pt()<1.5*p4z.Pt()) {
+	      //p4jet.Pt()>0.25*p4z.Pt() && p4jet.Pt()<2.0*p4z.Pt()) {
+	      p4jet.Pt()>0.5*p4z.Pt() && p4jet.Pt()<2.0*p4z.Pt()) {
 
 
 	    //if (fabs(p4jet.Eta())<1.305) {
@@ -470,6 +515,12 @@ void zjet::Loop()
 	      if (p4jet.Pt()>p4sel1.Pt()) p4sel1 = p4jet;
 	      
 	      h_dbp->Fill(p4jet.Pt() / p4z.Pt());
+	      h_mpfp->Fill(mpf);
+	      p2_dbp->Fill(p4z.Pt(), p4jet.Eta(), p4jet.Pt() / p4z.Pt(), +1);
+	      p2_mpfp->Fill(p4z.Pt(), p4jet.Eta(), mpf, +1);
+	      p2_mpfnp->Fill(p4z.Pt(), p4jet.Eta(), mpfn, +1);
+	      p2_mpfup->Fill(p4z.Pt(), p4jet.Eta(), mpfu, +1);
+	      p2_mpfnup->Fill(p4z.Pt(), p4jet.Eta(), mpfnu, +1);
 	      h2_dbp->Fill(p4z.Pt(), p4jet.Pt());
 	      p_dbp_vsz->Fill(p4z.Pt(), p4jet.Pt() / p4z.Pt());
 	      p_dbp_vsj->Fill(p4jet.Pt(), p4jet.Pt() / p4z.Pt());
@@ -480,7 +531,14 @@ void zjet::Loop()
 	      h_seldphi->Fill(p4jet.DeltaPhi(p4p), +1);
 	      
 	      h_db->Fill(p4jet.Pt() / p4z.Pt(), +1);
+	      h_mpf->Fill(mpf, +1);
+	      p2_db->Fill(p4z.Pt(), p4jet.Eta(), p4jet.Pt() / p4z.Pt(), +1);
+	      p2_mpf->Fill(p4z.Pt(), p4jet.Eta(), mpf, +1);
+	      p2_mpfn->Fill(p4z.Pt(), p4jet.Eta(), mpfn, +1);
+	      p2_mpfu->Fill(p4z.Pt(), p4jet.Eta(), mpfu, +1);
+	      p2_mpfnu->Fill(p4z.Pt(), p4jet.Eta(), mpfnu, +1);
 	      h2_db->Fill(p4z.Pt(), p4jet.Pt(), +1);
+	      //h3_db->Fill(p4z.Pt(), p4jet.Eta(), p4jet.Pt() / p4z.Pt(), +1);
 	      p_db_vsz->Fill(p4z.Pt(), p4jet.Pt() / p4z.Pt(), +1);
 	      p_db_vsj->Fill(p4jet.Pt(), p4jet.Pt() / p4z.Pt(), +1);
 	      p_db_vsa->Fill(0.5*(p4z.Pt()+p4jet.Pt()), p4jet.Pt() / p4z.Pt());
@@ -504,24 +562,13 @@ void zjet::Loop()
 	    pmz->Fill(pta, p4z.M());
 	    pmztc->Fill(ptz, p4z.M());
 	    
-	    double jes = (1-Jet_rawFactor[ijet]);
+	    //double jes = (1-Jet_rawFactor[ijet]);
 	    p2jespf_->Fill(eta, ptj, jes);
 	    p2jes_->Fill(eta, pta, jes);
 	    p2jestc_->Fill(eta, ptz, jes);
 	    p2jespf->Fill(eta, ptj, jes);
 	    p2jes->Fill(eta, pta, jes);
 	    p2jestc->Fill(eta, ptz, jes);
-
-	    met1 = -p4z - p4jet;
-	    met1.SetPtEtaPhiM(met1.Pt(),0,met1.Phi(),0.);
-	    metn = -ht + p4z + p4jet;
-	    metn.SetPtEtaPhiM(metn.Pt(),0,metn.Phi(),0.);
-	    metnu = metn + metu;
-	    double mpf = 1 + met.Vect().Dot(p4z.Vect()) / (ptz*ptz);
-	    double mpf1 = 1 + met1.Vect().Dot(p4z.Vect()) / (ptz*ptz);
-	    double mpfn = metn.Vect().Dot(p4z.Vect()) / (ptz*ptz);
-	    double mpfu = metu.Vect().Dot(p4z.Vect()) / (ptz*ptz);
-	    double mpfnu = metnu.Vect().Dot(p4z.Vect()) / (ptz*ptz);
 
 	    p2m0pf_->Fill(eta, ptj, mpf);
 	    p2m0_->Fill(eta, pta, mpf);
@@ -567,7 +614,42 @@ void zjet::Loop()
 	  //if (fabs(p4jet.DeltaPhi(p4t))>15./16.*TMath::Pi() && // >2.945
 	  if (fabs(p4jet.DeltaPhi(p4t))<1./16.*TMath::Pi() && // >0.1963
 	      //p4jet.Pt()>0.5*p4z.Pt() && p4z.Pt()>0.5*p4jet.Pt()) {
-	      p4jet.Pt()>0.6*p4z.Pt() && p4z.Pt()>0.6*p4jet.Pt()) {
+	      //p4jet.Pt()>0.6*p4z.Pt() && p4z.Pt()>0.6*p4jet.Pt()) {
+	      //p4jet.Pt()>0.5*p4z.Pt() && p4jet.Pt()<1.5*p4z.Pt()) {
+	      //p4jet.Pt()>0.25*p4z.Pt() && p4jet.Pt()<2.0*p4z.Pt()) {
+	      p4jet.Pt()>0.5*p4z.Pt() && p4jet.Pt()<2.0*p4z.Pt()) {
+
+	    // Keep old MPF values for later hybridization
+	    double mpfold = mpf;
+	    double mpf1old = mpf1;
+	    double mpfnold = mpfn;
+	    double mpfuold = mpfu;
+	    double mpfnuold = mpfnu;
+
+	    
+	    // Override previous MPF with transverse version
+	    met1 = -p4z - p4jet; // keep reference Z in parallel plane
+	    //met1 = -p4tz - p4jet; // also rotate reference Z
+	    met1.SetPtEtaPhiM(met1.Pt(),0,met1.Phi(),0);
+	    metn = -ht + p4z + p4jet;
+	    metn.SetPtEtaPhiM(metn.Pt(),0,metn.Phi(),0);
+	    metnu = metn + metu;
+	    meta = met1 + metn + metu;
+	    double mpf = 1 + meta.Vect().Dot(p4tz.Vect()) / (ptz*ptz);
+	    double mpf1 = 1 + met1.Vect().Dot(p4tz.Vect()) / (ptz*ptz);
+	    double mpfn = metn.Vect().Dot(p4tz.Vect()) / (ptz*ptz);
+	    double mpfu = metu.Vect().Dot(p4tz.Vect()) / (ptz*ptz);
+	    double mpfnu = metnu.Vect().Dot(p4tz.Vect()) / (ptz*ptz);
+
+	    // NB: may need to hybridize eta-specific MPF at transverse plane
+	    //     and eta-average MPF in parallel plane
+	    //     to estimate impact from PU in probe region
+	    mpf += (mpfold-1);
+	    mpf1 += (mpf1old-1);
+	    mpfn += mpfnold;
+	    mpfu += mpfuold;
+	    mpfnu += mpfnuold;
+	    
 	    
 	    double wt = -1;//-0.5;
 	    //if (fabs(p4jet.Eta())<1.305) {
@@ -588,6 +670,12 @@ void zjet::Loop()
 	      if (p4jet.Pt()>p4tran1.Pt()) p4tran1 = p4jet;
 	      
 	      h_dbt->Fill(p4jet.Pt() / p4z.Pt());
+	      h_mpft->Fill(mpf);
+	      p2_dbt->Fill(p4z.Pt(), p4jet.Eta(), p4jet.Pt() / p4z.Pt(), +1);
+	      p2_mpft->Fill(p4z.Pt(), p4jet.Eta(), mpf, +1);
+	      p2_mpfnt->Fill(p4z.Pt(), p4jet.Eta(), mpfn, +1);
+	      p2_mpfut->Fill(p4z.Pt(), p4jet.Eta(), mpfu, +1);
+	      p2_mpfnut->Fill(p4z.Pt(), p4jet.Eta(), mpfnu, +1);
 	      h2_dbt->Fill(p4z.Pt(), p4jet.Pt());
 	      p_dbt_vsz->Fill(p4z.Pt(), p4jet.Pt() / p4z.Pt());
 	      p_dbt_vsj->Fill(p4jet.Pt(), p4jet.Pt() / p4z.Pt());
@@ -601,16 +689,18 @@ void zjet::Loop()
 	      //h_seldphi->Fill(p4jet.DeltaPhi(p4t2), 0.5*wt);
 	      
 	      h_db->Fill(p4jet.Pt() / p4z.Pt(), wt);
+	      h_mpf->Fill(mpf, wt);
+	      p2_db->Fill(p4z.Pt(), p4jet.Eta(), p4jet.Pt() / p4z.Pt(), wt);
+	      p2_mpf->Fill(p4z.Pt(), p4jet.Eta(), mpf, wt);
+	      p2_mpfn->Fill(p4z.Pt(), p4jet.Eta(), mpfn, wt);
+	      p2_mpfu->Fill(p4z.Pt(), p4jet.Eta(), mpfu, wt);
+	      p2_mpfnu->Fill(p4z.Pt(), p4jet.Eta(), mpfnu, wt);
 	      h2_db->Fill(p4z.Pt(), p4jet.Pt(), wt);
 	      p_db_vsz->Fill(p4z.Pt(), p4jet.Pt() / p4z.Pt(), wt);
 	      p_db_vsj->Fill(p4jet.Pt(), p4jet.Pt() / p4z.Pt(), wt);
 	      p_db_vsa->Fill(0.5*(p4z.Pt()+p4jet.Pt()),p4jet.Pt()/p4z.Pt(), wt);
 	    } // barrel
 
-	    double eta = p4jet.Eta();
-	    double ptz = p4z.Pt();
-	    double ptj = p4jet.Pt();
-	    double pta = 0.5*(ptz+ptj);
 	    h2ptetapf_->Fill(eta, ptj, wt);
 	    h2pteta_->Fill(eta, pta, wt);
 	    h2ptetatc_->Fill(eta, ptz, wt);
@@ -618,24 +708,13 @@ void zjet::Loop()
 	    h2pteta->Fill(eta, pta, wt);
 	    h2ptetatc->Fill(eta, ptz, wt);
 
-	    double jes = (1-Jet_rawFactor[ijet]);
+	    //double jes = (1-Jet_rawFactor[ijet]);
 	    p2jespf_->Fill(eta, ptj, jes, wt);
 	    p2jes_->Fill(eta, pta, jes, wt);
 	    p2jestc_->Fill(eta, ptz, jes, wt);
 	    p2jespf->Fill(eta, ptj, jes, wt);
 	    p2jes->Fill(eta, pta, jes, wt);
 	    p2jestc->Fill(eta, ptz, jes, wt);
-
-	    met1 = -p4z - p4jet;
-	    met1.SetPtEtaPhiM(met1.Pt(),0,met1.Phi(),0);
-	    metn = -ht + p4z + p4jet;
-	    metn.SetPtEtaPhiM(metn.Pt(),0,metn.Phi(),0);
-	    metnu = metn + metu;
-	    double mpf = 1 + met.Vect().Dot(p4t.Vect()) / (ptz*ptz);
-	    double mpf1 = 1 + met1.Vect().Dot(p4t.Vect()) / (ptz*ptz);
-	    double mpfn = metn.Vect().Dot(p4t.Vect()) / (ptz*ptz);
-	    double mpfu = metu.Vect().Dot(p4t.Vect()) / (ptz*ptz);
-	    double mpfnu = metnu.Vect().Dot(p4t.Vect()) / (ptz*ptz);
 
 	    p2m0pf_->Fill(eta, ptj, mpf, wt);
 	    p2m0_->Fill(eta, pta, mpf, wt);
