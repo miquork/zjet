@@ -3,15 +3,13 @@
 #include "TProfile2D.h"
 #include "TF1.h"
 #include "TFile.h"
+#include "TSystem.h"
 
 #include "tdrstyle_mod22.C"
 
 void drawControl() {
 
-  gROOT->ProcessLine(".! mkdir pdf");
-  gROOT->ProcessLine(".! touch pdf");
-  gROOT->ProcessLine(".! mkdir pdf/drawControl");
-  gROOT->ProcessLine(".! touch pdf/drawControl");
+  gSystem->mkdir("pdf/drawControl",true);
   
   setTDRStyle();
 
@@ -39,7 +37,7 @@ void drawControl() {
   f1_pt->Draw("SAME");
   
   TLegend *leg_pt = tdrLeg(0.52,0.87-4*0.05,0.82,0.87);
-  leg_pt->SetHeader("|#Delta#phi|<#pi/16, |#Deltap_{T}/p_{T}|<0.4");
+  leg_pt->SetHeader("|#Delta#phi|<#pi/16, 0.5<p_{T,jet}/p_{T,Z}<2");
   leg_pt->AddEntry(h_parpt,"Parallel");
   leg_pt->AddEntry(h_tranpt,"Transverse");
   leg_pt->AddEntry(h_mixpt,"Par - tran");
@@ -77,7 +75,7 @@ void drawControl() {
   gPad->RedrawAxis();
   
   TLegend *leg_eta = tdrLeg(0.35,0.80-4*0.05,0.65,0.80);
-  leg_eta->SetHeader("|#Delta#phi|<#pi/16, |#Deltap_{T}/p_{T}|<0.4");
+  leg_eta->SetHeader("|#Delta#phi|<#pi/16, 0.5<p_{T,jet}/p_{T,Z}<2");
   leg_eta->AddEntry(h_pareta,"Parallel");
   leg_eta->AddEntry(h_traneta,"Transverse");
   leg_eta->AddEntry(h_mixeta,"Par-tran");
@@ -101,7 +99,7 @@ void drawControl() {
   tdrDraw(h_db,"Pz",kFullCircle,kGreen+2,kSolid,-1,kNone,0,0.5);
 
   TF1 *f1_db = new TF1("f1_db","gaus",0.6,1./0.6);
-  f1_eta->SetParameters(200,0.9,0.3);
+  f1_db->SetParameters(200,0.9,0.3);
   h_db->Fit(f1_db,"RN");
   f1_db->SetRange(0.5,1.8);
   f1_db->SetLineColor(kGreen+2);
@@ -110,7 +108,7 @@ void drawControl() {
   gPad->RedrawAxis();
   
   TLegend *leg_db = tdrLeg(0.50,0.87-4*0.05,0.80,0.87);
-  leg_db->SetHeader("|#Delta#phi|<#pi/16, |#Deltap_{T}/p_{T}|<0.4");
+  leg_db->SetHeader("|#Delta#phi|<#pi/16, 0.5<p_{T,jet}/p_{T,Z}<2");
   leg_db->AddEntry(h_dbp,"Parallel");
   leg_db->AddEntry(h_dbt,"Transverse");
   leg_db->AddEntry(h_db,"Par-tran");
@@ -121,7 +119,7 @@ void drawControl() {
   c1_db->SaveAs("pdf/drawControl/drawControl_c1_3_db.pdf");
 
 
-  TH1D *h_mpfp = (TH1D*)f->Get("control/h_mpfp"); assert(h_dbp);
+  TH1D *h_mpfp = (TH1D*)f->Get("control/h_mpfp"); assert(h_mpfp);
   TH1D *h_mpft = (TH1D*)f->Get("control/h_mpft"); assert(h_mpft);
   TH1D *h_mpf = (TH1D*)f->Get("control/h_mpf");   assert(h_mpf);
 
@@ -134,7 +132,7 @@ void drawControl() {
   tdrDraw(h_mpf,"Pz",kFullCircle,kGreen+2,kSolid,-1,kNone,0,0.5);
 
   TF1 *f1_mpf = new TF1("f1_mpf","gaus",0.6,1./0.6);
-  f1_eta->SetParameters(200,0.9,0.3);
+  f1_mpf->SetParameters(200,0.9,0.3);
   h_mpf->Fit(f1_mpf,"RN");
   f1_mpf->SetRange(0.5,1.8);
   f1_mpf->SetLineColor(kGreen+2);
@@ -143,7 +141,7 @@ void drawControl() {
   gPad->RedrawAxis();
   
   TLegend *leg_mpf = tdrLeg(0.50,0.87-4*0.05,0.80,0.87);
-  leg_mpf->SetHeader("|#Delta#phi|<#pi/16, |#Deltap_{T}/p_{T}|<0.4");
+  leg_mpf->SetHeader("|#Delta#phi|<#pi/16, 0.5<p_{T,jet}/p_{T,Z}<2");
   leg_mpf->AddEntry(h_mpfp,"Parallel");
   leg_mpf->AddEntry(h_mpft,"Transverse");
   leg_mpf->AddEntry(h_mpf,"Par-tran");
@@ -169,7 +167,7 @@ void drawControl() {
   h2_parpteta->Draw("COLZ");
   h2_parpteta->UseCurrentStyle();
   h2_parpteta->GetZaxis()->SetRangeUser(1,150);
-  h2_parpteta->GetXaxis()->SetTitle("p_{T,Z} (GeV)");
+  h2_parpteta->GetXaxis()->SetTitle("p_{T,jet} (GeV)");
   h2_parpteta->GetYaxis()->SetTitle("#eta_{jet}");
 
   tex->DrawLatex(0.65,0.90,"Parallel");
@@ -179,7 +177,7 @@ void drawControl() {
   h2_tranpteta->Draw("COLZ");
   h2_tranpteta->UseCurrentStyle();
   h2_tranpteta->GetZaxis()->SetRangeUser(1,150);
-  h2_tranpteta->GetXaxis()->SetTitle("p_{T,Z} (GeV)");
+  h2_tranpteta->GetXaxis()->SetTitle("p_{T,jet} (GeV)");
   h2_tranpteta->GetYaxis()->SetTitle("#eta_{jet}");
   
   tex->DrawLatex(0.65,0.90,"Transverse");
@@ -189,7 +187,7 @@ void drawControl() {
   h2_mixpteta->Draw("COLZ");
   h2_mixpteta->UseCurrentStyle();
   h2_mixpteta->GetZaxis()->SetRangeUser(1,150);
-  h2_mixpteta->GetXaxis()->SetTitle("p_{T,Z} (GeV)");
+  h2_mixpteta->GetXaxis()->SetTitle("p_{T,jet} (GeV)");
   h2_mixpteta->GetYaxis()->SetTitle("#eta_{jet}");
   
   tex->DrawLatex(0.65,0.90,"Par - tran");
@@ -201,7 +199,7 @@ void drawControl() {
   TProfile2D *p2_db = (TProfile2D*)f->Get("control/p2_db");
   assert(p2_db);
   TProfile2D *p2_dbp = (TProfile2D*)f->Get("control/p2_dbp");
-  assert(p2_db;);
+  assert(p2_dbp);
   TProfile2D *p2_dbt = (TProfile2D*)f->Get("control/p2_dbt");
   assert(p2_dbt);
 
@@ -244,7 +242,7 @@ void drawControl() {
   TProfile2D *p2_mpf = (TProfile2D*)f->Get("control/p2_mpf");
   assert(p2_mpf);
   TProfile2D *p2_mpfp = (TProfile2D*)f->Get("control/p2_mpfp");
-  assert(p2_mpf;);
+  assert(p2_mpfp);
   TProfile2D *p2_mpft = (TProfile2D*)f->Get("control/p2_mpft");
   assert(p2_mpft);
 
@@ -287,7 +285,7 @@ void drawControl() {
   TProfile2D *p2_mpfn = (TProfile2D*)f->Get("control/p2_mpfn");
   assert(p2_mpfn);
   TProfile2D *p2_mpfnp = (TProfile2D*)f->Get("control/p2_mpfnp");
-  assert(p2_mpfn;);
+  assert(p2_mpfnp);
   TProfile2D *p2_mpfnt = (TProfile2D*)f->Get("control/p2_mpfnt");
   assert(p2_mpfnt);
 
@@ -330,7 +328,7 @@ void drawControl() {
   TProfile2D *p2_mpfu = (TProfile2D*)f->Get("control/p2_mpfu");
   assert(p2_mpfu);
   TProfile2D *p2_mpfup = (TProfile2D*)f->Get("control/p2_mpfup");
-  assert(p2_mpfu;);
+  assert(p2_mpfup);
   TProfile2D *p2_mpfut = (TProfile2D*)f->Get("control/p2_mpfut");
   assert(p2_mpfut);
 
@@ -373,7 +371,7 @@ void drawControl() {
   TProfile2D *p2_mpfnu = (TProfile2D*)f->Get("control/p2_mpfnu");
   assert(p2_mpfnu);
   TProfile2D *p2_mpfnup = (TProfile2D*)f->Get("control/p2_mpfnup");
-  assert(p2_mpfnu;);
+  assert(p2_mpfnup);
   TProfile2D *p2_mpfnut = (TProfile2D*)f->Get("control/p2_mpfnut");
   assert(p2_mpfnut);
 

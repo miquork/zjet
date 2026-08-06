@@ -2,16 +2,21 @@
 
 R__LOAD_LIBRARY(zjet_C.so)
 
-void mk_zjet() {
+void mk_zjet(
+  const char *mcFile="../data/zjet/events_1_DYto2L_4Jets_M_50_Summer24.root",
+  const char *dataFile="../data/zjet/events_1_Muon0_Run2024I_JMENANOv15_v2_v1.root",
+  const char *goldenJson="",
+  const char *lumiPileup="",
+  const char *pileupWeights="") {
   
   bool isMC = false;
   TChain *cm = new TChain("Events","Events");
   //cm->AddFile("../data/zjet/DYto2Mu-4Jets_Bin-MLL-50_TuneCP5_13p6TeV_madgraphMLM-pythia8_Summer24.root"); //isMC =  true;
-  cm->AddFile("../data/zjet/events_1_DYto2L_4Jets_M_50_Summer24.root");
+  cm->AddFile(mcFile);
 
   TChain *cd = new TChain("Events","Events");
   //cd->AddFile("../data/zjet/Muon0_Run2025G_PromptReco_v1.root"); //isMC = false;
-  cd->AddFile("../data/zjet/events_1_Muon0_Run2024I_JMENANOv15_v2_v1.root");
+  cd->AddFile(dataFile);
 
   //TFileCollection fc;
   //fc.AddFromFile("textfiles/2025G_Muon0.txt"); isMC = false;
@@ -19,12 +24,12 @@ void mk_zjet() {
   //fc.AddFromFile("textfiles/Summer24MC.txt"); isMC = true;
   //c->AddFileInfoList(fc.GetList());
   
-  zjet zm(cm, isMC = true);
+  zjet zm(cm, isMC = true, "rootfiles/zjet_MC.root", "", "",
+          pileupWeights);
   zm.Loop();
-  gROOT->ProcessLine(".! mv -i rootfiles/zjet.root rootfiles/zjet_MC.root");
   
-  zjet zd(cd, isMC = false);
+  zjet zd(cd, isMC = false, "rootfiles/zjet_DATA.root", goldenJson,
+          lumiPileup, "");
   zd.Loop();
-  gROOT->ProcessLine(".! mv -i rootfiles/zjet.root rootfiles/zjet_DATA.root");
 
 }

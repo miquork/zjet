@@ -12,6 +12,8 @@
 #include <TChain.h>
 #include <TFile.h>
 
+#include <string>
+
 // Header file for the classes stored in the TTree if any.
 
 class zjet {
@@ -694,7 +696,15 @@ public :
    TBranch        *b_HLT_Mu19;   //!
 
   bool isMC;
-  zjet(TTree *tree=0, bool isMC=false);
+  std::string outputFile;
+  std::string goldenJsonFile;
+  std::string lumiPileupFile;
+  std::string pileupWeightFile;
+  zjet(TTree *tree=0, bool isMC=false,
+       const char *outputFile="rootfiles/zjet.root",
+       const char *goldenJsonFile="",
+       const char *lumiPileupFile="",
+       const char *pileupWeightFile="");
    virtual ~zjet();
    virtual Int_t    Cut(Long64_t entry);
    virtual Int_t    GetEntry(Long64_t entry);
@@ -708,7 +718,12 @@ public :
 #endif
 
 #ifdef zjet_cxx
-zjet::zjet(TTree *tree, bool _isMC) : fChain(0), isMC(_isMC)
+zjet::zjet(TTree *tree, bool _isMC, const char *_outputFile,
+           const char *_goldenJsonFile, const char *_lumiPileupFile,
+           const char *_pileupWeightFile)
+  : fChain(0), isMC(_isMC), outputFile(_outputFile),
+    goldenJsonFile(_goldenJsonFile), lumiPileupFile(_lumiPileupFile),
+    pileupWeightFile(_pileupWeightFile)
 {
 // if parameter tree is not specified (or zero), connect the file
 // used to generate this class and read the Tree.

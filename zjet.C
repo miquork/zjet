@@ -10,6 +10,11 @@
 #include "TProfile2D.h"
 #include "TStopwatch.h"
 
+#include "ZJetLumi.h"
+
+#include <map>
+#include <string>
+
 void zjet::Loop()
 {
 //   In a ROOT session, you can do:
@@ -44,12 +49,18 @@ void zjet::Loop()
    
    fChain->SetBranchStatus("*",0);  // disable all branches
 
+   fChain->SetBranchStatus("run",1);
+   fChain->SetBranchStatus("luminosityBlock",1);
+   fChain->SetBranchStatus("event",1);
+
    fChain->SetBranchStatus("nMuon",1);
    fChain->SetBranchStatus("Muon_pt",1);
    fChain->SetBranchStatus("Muon_eta",1);
    fChain->SetBranchStatus("Muon_phi",1);
    fChain->SetBranchStatus("Muon_mass",1);
    fChain->SetBranchStatus("Muon_charge",1);
+   fChain->SetBranchStatus("Muon_tightId",1);
+   fChain->SetBranchStatus("Muon_pfIsoId",1);
 
    fChain->SetBranchStatus("nJet",1);
    fChain->SetBranchStatus("Jet_pt",1);
@@ -57,6 +68,36 @@ void zjet::Loop()
    fChain->SetBranchStatus("Jet_phi",1);
    fChain->SetBranchStatus("Jet_mass",1);
    fChain->SetBranchStatus("Jet_rawFactor",1);
+   fChain->SetBranchStatus("Jet_chMultiplicity",1);
+   fChain->SetBranchStatus("Jet_neMultiplicity",1);
+   fChain->SetBranchStatus("Jet_nConstituents",1);
+   fChain->SetBranchStatus("Jet_chHEF",1);
+   fChain->SetBranchStatus("Jet_neHEF",1);
+   fChain->SetBranchStatus("Jet_neEmEF",1);
+
+   fChain->SetBranchStatus("PV_npvs",1);
+   fChain->SetBranchStatus("Rho_fixedGridRhoFastjetAll",1);
+
+   fChain->SetBranchStatus("Flag_goodVertices",1);
+   fChain->SetBranchStatus("Flag_globalSuperTightHalo2016Filter",1);
+   fChain->SetBranchStatus("Flag_EcalDeadCellTriggerPrimitiveFilter",1);
+   fChain->SetBranchStatus("Flag_BadPFMuonFilter",1);
+   fChain->SetBranchStatus("Flag_BadPFMuonDzFilter",1);
+   fChain->SetBranchStatus("Flag_hfNoisyHitsFilter",1);
+   fChain->SetBranchStatus("Flag_eeBadScFilter",1);
+   fChain->SetBranchStatus("Flag_ecalBadCalibFilter",1);
+   fChain->SetBranchStatus("HLT_IsoMu24",1);
+
+   if (isMC) {
+     fChain->SetBranchStatus("genWeight",1);
+     fChain->SetBranchStatus("Pileup_nTrueInt",1);
+     fChain->SetBranchStatus("nGenJet",1);
+     fChain->SetBranchStatus("GenJet_pt",1);
+     fChain->SetBranchStatus("GenJet_eta",1);
+     fChain->SetBranchStatus("GenJet_phi",1);
+     fChain->SetBranchStatus("GenJet_mass",1);
+     fChain->SetBranchStatus("Jet_genJetIdx",1);
+   }
 
    fChain->SetBranchStatus("PuppiMET_pt",1);
    fChain->SetBranchStatus("PuppiMET_phi",1);
@@ -70,13 +111,97 @@ void zjet::Loop()
    if (isMC)  cout << "Running over MC branches" << endl;
    if (!isMC) cout << "Running over DATA branches" << endl;
 
+   ZJetLumiData lumiData;
+   if (!isMC && !goldenJsonFile.empty()) {
+     if (!lumiData.loadGoldenJson(goldenJsonFile)) {
+       cout << "Failed to load golden JSON " << goldenJsonFile << endl;
+       return;
+     }
+   }
+   if (!isMC && !lumiPileupFile.empty()) {
+     if (!lumiData.loadPileup(lumiPileupFile)) {
+       cout << "Failed to load lumisection pileup file " << lumiPileupFile << endl;
+       return;
+     }
+   }
+
+   TH1 *pileupWeights(0);
+   if (isMC && !pileupWeightFile.empty()) {
+     TFile pileupFile(pileupWeightFile.c_str(), "READ");
+     TH1 *source = (TH1*)pileupFile.Get("pileup_ratio");
+     if (!source) source = (TH1*)pileupFile.Get("pileup");
+     if (!source) {
+       cout << "Could not find pileup_ratio or pileup in "
+            << pileupWeightFile << endl;
+       return;
+     }
+     pileupWeights = (TH1*)source->Clone("zjet_pileup_weights");
+     pileupWeights->SetDirectory(0);
+   }
+
    TDirectory *curdir = gDirectory;
-   TFile *fout = new TFile("rootfiles/zjet.root","RECREATE");
+   TFile *fout = new TFile(outputFile.c_str(),"RECREATE");
+   if (!fout || fout->IsZombie()) {
+     cout << "Failed to create output file " << outputFile << endl;
+     return;
+   }
 
    
    // Object pT plots
    fout->mkdir("control");
    fout->cd("control");
+   TH1D *h_cutflow = new TH1D("h_cutflow","",7,0.5,7.5);
+   h_cutflow->GetXaxis()->SetBinLabel(1,"all");
+   h_cutflow->GetXaxis()->SetBinLabel(2,"golden JSON");
+   h_cutflow->GetXaxis()->SetBinLabel(3,"MET filters");
+   h_cutflow->GetXaxis()->SetBinLabel(4,"HLT IsoMu24");
+   h_cutflow->GetXaxis()->SetBinLabel(5,"two tight isolated muons");
+   h_cutflow->GetXaxis()->SetBinLabel(6,"Z mass");
+   h_cutflow->GetXaxis()->SetBinLabel(7,"probe lepton veto");
+
+   std::map<std::string, TProfile*> pileupControl;
+   const char *observables[] = {"npvs", "rho", "mu"};
+   const int observableBins[] = {100, 100, 100};
+   const double observableMax[] = {100., 100., 100.};
+   const char *regions[] = {"parallel", "transverse", "subtracted"};
+   for (int io = 0; io != 3; ++io) {
+     for (int ir = 0; ir != 3; ++ir) {
+       for (const char *response : {"db", "mpf"}) {
+         const string name = Form("p_%s_vs_%s_%s", response,
+                                  observables[io], regions[ir]);
+         pileupControl[name] = new TProfile(name.c_str(), "",
+                                            observableBins[io], 0.,
+                                            observableMax[io]);
+       }
+     }
+   }
+
+   std::map<std::string, TProfile*> truthControl;
+   for (const char *region : regions) {
+     for (const char *observable : {"ptz", "npvs", "rho", "mu"}) {
+       const int bins = (string(observable)=="ptz" ? 100 : 100);
+       const double xmax = (string(observable)=="ptz" ? 200. : 100.);
+       const string name = Form("p_pujet_fraction_vs_%s_%s", observable,
+                                region);
+       truthControl[name] = new TProfile(name.c_str(), "", bins, 0., xmax);
+     }
+   }
+   for (const char *region : {"parallel", "transverse"}) {
+     for (const char *category : {"matched", "pileup"}) {
+       for (const char *response : {"db", "mpf"}) {
+         const string name = Form("p_%s_vs_ptz_%s_%s", response, category,
+                                  region);
+         truthControl[name] = new TProfile(name.c_str(), "",100,0.,200.);
+       }
+     }
+   }
+   TH1D *h_truth_parallel = new TH1D("h_truth_parallel","",2,-0.5,1.5);
+   TH1D *h_truth_transverse = new TH1D("h_truth_transverse","",2,-0.5,1.5);
+   TH1D *h_truth_subtracted = new TH1D("h_truth_subtracted","",2,-0.5,1.5);
+   for (TH1D *h : {h_truth_parallel,h_truth_transverse,h_truth_subtracted}) {
+     h->GetXaxis()->SetBinLabel(1,"pileup/unmatched");
+     h->GetXaxis()->SetBinLabel(2,"truth matched");
+   }
    TH1D *h_nlep = new TH1D("h_nlep","",20,0,20);
    TH1D *h_lep1pt = new TH1D("h_lep1pt","",200,0,200);
    TH1D *h_lep2pt = new TH1D("h_lep2pt","",200,0,200);
@@ -277,8 +402,25 @@ void zjet::Loop()
    curdir->cd();
 
    TLorentzVector p4lplus, p4lminus, p4z, p4jet1, p4jet, p4sel1, p4tran1;
-   TLorentzVector p4p, p4pz, p4t, p4tz, p4t1, p4t1z, p4t2, p4t2z;
+   TLorentzVector p4p, p4pz, p4t1, p4t1z, p4t2, p4t2z;
    TLorentzVector met, ht, met1, metn, metu, metnu, meta;
+
+   // JMENANOv15 does not store Jet_jetId. Reconstruct the Run-3 Tight
+   // PF Jet ID used by the standard NanoAOD jetId tight bit.
+   auto passTightJetId = [&](int ijet) {
+     const double abseta = fabs(Jet_eta[ijet]);
+     if (abseta <= 2.6)
+       return (Jet_neHEF[ijet] < 0.99 && Jet_neEmEF[ijet] < 0.90 &&
+               Jet_nConstituents[ijet] > 1 && Jet_chHEF[ijet] > 0.01 &&
+               Jet_chMultiplicity[ijet] > 0);
+     if (abseta <= 2.7)
+       return (Jet_neHEF[ijet] < 0.90 && Jet_neEmEF[ijet] < 0.99);
+     if (abseta <= 3.0)
+       return (Jet_neHEF[ijet] < 0.99);
+     if (abseta < 5.0)
+       return (Jet_neEmEF[ijet] < 0.40 && Jet_neMultiplicity[ijet] >= 2);
+     return false;
+   };
    
    Long64_t nbytes = 0, nb = 0;
    for (Long64_t jentry=0; jentry<nentries;jentry++) {
@@ -286,6 +428,38 @@ void zjet::Loop()
       if (ientry < 0) break;
       nb = fChain->GetEntry(jentry);   nbytes += nb;
       // if (Cut(ientry) < 0) continue;
+
+      double eventWeight = 1.;
+      if (isMC) {
+        eventWeight = (genWeight >= 0. ? 1. : -1.);
+        if (pileupWeights) {
+          const int bin = pileupWeights->GetXaxis()->FindFixBin(Pileup_nTrueInt);
+          eventWeight *= pileupWeights->GetBinContent(bin);
+        }
+      }
+      const double mu = (isMC ? Pileup_nTrueInt
+                              : lumiData.pileup(run, luminosityBlock));
+
+      h_cutflow->Fill(1., eventWeight);
+      if (!isMC && !lumiData.accept(run, luminosityBlock)) continue;
+      h_cutflow->Fill(2., eventWeight);
+
+      const bool passMetFilters =
+        (Flag_goodVertices && Flag_globalSuperTightHalo2016Filter &&
+         Flag_EcalDeadCellTriggerPrimitiveFilter && Flag_BadPFMuonFilter &&
+         Flag_BadPFMuonDzFilter && Flag_hfNoisyHitsFilter &&
+         Flag_eeBadScFilter && Flag_ecalBadCalibFilter);
+      if (!passMetFilters) continue;
+      h_cutflow->Fill(3., eventWeight);
+
+      if (!HLT_IsoMu24) continue;
+      h_cutflow->Fill(4., eventWeight);
+
+      if (nMuon>nMuonMax || nJet>nJetMax) {
+        cout << "ERROR: collection size exceeds fixed MakeClass buffer: nMuon="
+             << nMuon << ", nJet=" << nJet << endl;
+        continue;
+      }
 
       if (jentry==100000 || jentry==1000000 || jentry==1000000 ||
 	  (jentry%1000000==0 && jentry<10000000) ||
@@ -316,7 +490,6 @@ void zjet::Loop()
       p4lplus.SetPtEtaPhiM(0,0,0,0);
       p4lminus.SetPtEtaPhiM(0,0,0,0);
       p4z.SetPtEtaPhiM(0,0,0,0);
-      p4t.SetPtEtaPhiM(0,0,0,0);
       p4t1.SetPtEtaPhiM(0,0,0,0);
       p4t2.SetPtEtaPhiM(0,0,0,0);
       p4jet1.SetPtEtaPhiM(0,0,0,0);
@@ -330,25 +503,26 @@ void zjet::Loop()
       metu.SetPtEtaPhiM(0,0,0,0);
       metnu.SetPtEtaPhiM(0,0,0,0);
       meta.SetPtEtaPhiM(0,0,0,0);
-      int nlep(0), nsel(0), ntran(0);
+      int nlep(0), nsel(0);
+      double ntran(0.);
 
       // Select leading leptons
-      h_nlep->Fill(nMuon);
-      if (nMuon>nMuonMax) {
-	cout << "ERROR: nMuon="<<nMuon<<" > nMuonMax="<<nMuonMax<<endl;
-	continue;
-      }
+      h_nlep->Fill(nMuon, eventWeight);
       for (int ilep = 0; ilep != nMuon; ++ilep) {
 
 	//if (ilep==0) h_lep1pt->Fill(Muon_pt[ilep]);
 	//if (ilep==1) h_lep2pt->Fill(Muon_pt[ilep]);
 	//h_leppt->Fill(Muon_pt[ilep]);
 
-	if (Muon_charge[ilep]>0 && fabs(Muon_eta[ilep])<2.5 &&
+	if (Muon_tightId[ilep] && Muon_pfIsoId[ilep]>=4 &&
+            Muon_pt[ilep]>20. && fabs(Muon_eta[ilep])<2.4 &&
+            Muon_charge[ilep]>0 &&
 	    Muon_pt[ilep]>p4lplus.Pt())
 	  p4lplus.SetPtEtaPhiM(Muon_pt[ilep], Muon_eta[ilep], Muon_phi[ilep],
 			       Muon_mass[ilep]);
-	if (Muon_charge[ilep]<0 && fabs(Muon_eta[ilep])<2.5 &&
+	if (Muon_tightId[ilep] && Muon_pfIsoId[ilep]>=4 &&
+            Muon_pt[ilep]>20. && fabs(Muon_eta[ilep])<2.4 &&
+            Muon_charge[ilep]<0 &&
 	    Muon_pt[ilep]>p4lminus.Pt())
 	  p4lminus.SetPtEtaPhiM(Muon_pt[ilep], Muon_eta[ilep], Muon_phi[ilep],
 				Muon_mass[ilep]);
@@ -360,6 +534,8 @@ void zjet::Loop()
       if (p4lplus.Pt()>0 && p4lminus.Pt()>0) {
 	p4z += p4lplus; p4z += p4lminus;
       }
+      if (nlep != 2 || max(p4lplus.Pt(),p4lminus.Pt()) <= 27.) continue;
+      h_cutflow->Fill(5., eventWeight);
       const double mz = 91.1880;
       const double dmz = 1.5*2.4955; // 1.5*Gamma,Z~3.7; was 10-20 GeV
       //if (p4z.Pt()>0 && p4z.M()>80 && p4z.M()<100) {
@@ -409,14 +585,14 @@ void zjet::Loop()
       }
       else
 	continue;
+      h_cutflow->Fill(6., eventWeight);
 
       // Set Z-parallel (probe) directions
       p4p.SetPtEtaPhiM(p4z.Pt(),p4z.Eta(),p4z.Phi()+TMath::Pi(),p4z.M());
       p4pz.SetPtEtaPhiM(p4z.Pt(),p4z.Eta(),p4z.Phi(),p4z.M());
 	
-      // Set Z-transverse direction(s)
-      p4t.SetPtEtaPhiM(p4z.Pt(),p4z.Eta(),p4z.Phi()+(jentry%2==0 ? +1 : -1)*TMath::Pi()*0.5,p4z.M());
-      p4tz.SetPtEtaPhiM(p4z.Pt(),p4z.Eta(),p4z.Phi()+(jentry%2==0 ? -1 : +1)*TMath::Pi()*0.5,p4z.M());
+      // Use both transverse sidebands. Their later weights are one half each,
+      // so their average has the same azimuthal acceptance as the signal.
       p4t1.SetPtEtaPhiM(p4z.Pt(),p4z.Eta(),p4z.Phi()+TMath::Pi()*0.5,p4z.M());
       p4t1z.SetPtEtaPhiM(p4z.Pt(),p4z.Eta(),p4z.Phi()-TMath::Pi()*0.5,p4z.M());
       p4t2.SetPtEtaPhiM(p4z.Pt(),p4z.Eta(),p4z.Phi()-TMath::Pi()*0.5,p4z.M());
@@ -432,10 +608,13 @@ void zjet::Loop()
       //fabs(p4t.DeltaPhi(p4z))<1./8.*TMath::Pi())
       if (fabs(p4p.DeltaPhi(p4lplus))<1./8.*TMath::Pi() ||
 	  fabs(p4p.DeltaPhi(p4lminus))<1./8.*TMath::Pi() ||
-	  fabs(p4t.DeltaPhi(p4lplus))<1./8.*TMath::Pi() ||
-	  fabs(p4t.DeltaPhi(p4lminus))<1./8.*TMath::Pi())
+	  fabs(p4t1.DeltaPhi(p4lplus))<1./8.*TMath::Pi() ||
+	  fabs(p4t1.DeltaPhi(p4lminus))<1./8.*TMath::Pi() ||
+	  fabs(p4t2.DeltaPhi(p4lplus))<1./8.*TMath::Pi() ||
+	  fabs(p4t2.DeltaPhi(p4lminus))<1./8.*TMath::Pi())
 	continue;
-      h_zpt_probeveto->Fill(p4z.Pt());
+      h_cutflow->Fill(7., eventWeight);
+      h_zpt_probeveto->Fill(p4z.Pt(), eventWeight);
       
       // Calculate MET and HT sum
       met.SetPtEtaPhiM(PuppiMET_pt, 0., PuppiMET_phi, 0.0);
@@ -444,21 +623,61 @@ void zjet::Loop()
 	p4jet.SetPtEtaPhiM(Jet_pt[ijet], Jet_eta[ijet], Jet_phi[ijet],
 			   Jet_mass[ijet]);
 	//if (p4jet.DeltaR(p4lplus)>0.4 && p4jet.DeltaR(p4lminus)>0.4 &&
-	if (p4jet.DeltaR(p4lplus)>0.2 && p4jet.DeltaR(p4lminus)>0.2 &&
+	if (passTightJetId(ijet) &&
+            p4jet.DeltaR(p4lplus)>0.2 && p4jet.DeltaR(p4lminus)>0.2 &&
 	    p4jet.Pt()>15.) {
 	  ht += p4jet;
 	}
       }
       ht.SetPtEtaPhiM(ht.Pt(),0,ht.Phi(),0);
       metu = met + ht;
+
+      auto fillPileupResponse = [&](const char *region, double db,
+                                    double mpfValue, double weight) {
+        const double x[] = {double(PV_npvs),
+                            double(Rho_fixedGridRhoFastjetAll), mu};
+        for (int io = 0; io != 3; ++io) {
+          if (x[io] < 0.) continue;
+          pileupControl[Form("p_db_vs_%s_%s",observables[io],region)]
+            ->Fill(x[io], db, weight);
+          pileupControl[Form("p_mpf_vs_%s_%s",observables[io],region)]
+            ->Fill(x[io], mpfValue, weight);
+        }
+      };
+
+      auto fillTruth = [&](const char *region, bool matched, double db,
+                           double mpfValue, double weight) {
+        if (!isMC) return;
+        TH1D *hist = (string(region)=="parallel" ? h_truth_parallel :
+                      string(region)=="transverse" ? h_truth_transverse :
+                      h_truth_subtracted);
+        hist->Fill(matched ? 1. : 0., weight);
+
+        const double x[] = {p4z.Pt(), double(PV_npvs),
+                            double(Rho_fixedGridRhoFastjetAll), mu};
+        const char *names[] = {"ptz", "npvs", "rho", "mu"};
+        for (int io = 0; io != 4; ++io) {
+          if (x[io] < 0.) continue;
+          truthControl[Form("p_pujet_fraction_vs_%s_%s",names[io],region)]
+            ->Fill(x[io], matched ? 0. : 1., weight);
+        }
+
+        if (string(region)!="subtracted") {
+          const char *category = (matched ? "matched" : "pileup");
+          truthControl[Form("p_db_vs_ptz_%s_%s",category,region)]
+            ->Fill(p4z.Pt(), db, weight);
+          truthControl[Form("p_mpf_vs_ptz_%s_%s",category,region)]
+            ->Fill(p4z.Pt(), mpfValue, weight);
+        }
+      };
       
       // Select leading jet
-      h_njet->Fill(nJet-nlep);
-      if (nJet>nJetMax) {
-	cout << "ERROR: nJet="<<nJet<<" > nJetMax="<<nJetMax<<endl;
-	continue;
-      }
+      h_njet->Fill(nJet, eventWeight);
       for (int ijet = 0; ijet != nJet; ++ijet) {
+
+	p4jet.SetPtEtaPhiM(Jet_pt[ijet], Jet_eta[ijet], Jet_phi[ijet],
+			   Jet_mass[ijet]);
+	if (!passTightJetId(ijet)) continue;
 
 	double eta = p4jet.Eta();
 	double ptz = p4z.Pt();
@@ -466,8 +685,14 @@ void zjet::Loop()
 	double pta = 0.5*(ptz+ptj);
 
 	double jes = (1-Jet_rawFactor[ijet]);
-	p4jet.SetPtEtaPhiM(Jet_pt[ijet], Jet_eta[ijet], Jet_phi[ijet],
-			   Jet_mass[ijet]);
+	bool truthMatched = false;
+	if (isMC && Jet_genJetIdx[ijet]>=0 && Jet_genJetIdx[ijet]<nGenJet) {
+	  const int igen = Jet_genJetIdx[ijet];
+	  TLorentzVector p4gen;
+	  p4gen.SetPtEtaPhiM(GenJet_pt[igen],GenJet_eta[igen],GenJet_phi[igen],
+			     GenJet_mass[igen]);
+	  truthMatched = (p4gen.Pt()>8. && p4jet.DeltaR(p4gen)<0.4);
+	}
 
 	met1 = -p4z - p4jet;
 	met1.SetPtEtaPhiM(met1.Pt(),0,met1.Phi(),0.);
@@ -497,260 +722,149 @@ void zjet::Loop()
 	      //p4jet.Pt()>0.6*p4z.Pt() && p4z.Pt()>0.6*p4jet.Pt()) {
 	      //p4jet.Pt()>0.5*p4z.Pt() && p4jet.Pt()<1.5*p4z.Pt()) {
 	      //p4jet.Pt()>0.25*p4z.Pt() && p4jet.Pt()<2.0*p4z.Pt()) {
-	      p4jet.Pt()>0.5*p4z.Pt() && p4jet.Pt()<2.0*p4z.Pt()) {
+		      p4jet.Pt()>0.5*p4z.Pt() && p4jet.Pt()<2.0*p4z.Pt()) {
 
+		    const double db = ptj/ptz;
+		    const double abseta = fabs(eta);
+		    const double wt = eventWeight;
+		    ++nsel;
+		    h2_mixpteta->Fill(ptj,eta,wt);
+		    h_mixpt->Fill(ptj,wt);
+		    h_mixeta->Fill(eta,wt);
+		    h_mixdphi->Fill(p4jet.DeltaPhi(p4p),wt);
+		    h2_parpteta->Fill(ptj,eta,wt);
+		    h_parpt->Fill(ptj,wt);
+		    h_pareta->Fill(eta,wt);
+		    h_pardphi->Fill(p4jet.DeltaPhi(p4p),wt);
+		    if (ptj>p4sel1.Pt()) p4sel1 = p4jet;
 
-	    //if (fabs(p4jet.Eta())<1.305) {
-	    if (true) {
-	      ++nsel;
-	      h2_mixpteta->Fill(p4jet.Pt(),p4jet.Eta());
-	      h_mixpt->Fill(p4jet.Pt());
-	      h_mixeta->Fill(p4jet.Eta());
-	      h_mixdphi->Fill(p4jet.DeltaPhi(p4p));
-	      
-	      h2_parpteta->Fill(p4jet.Pt(),p4jet.Eta());
-	      h_parpt->Fill(p4jet.Pt());
-	      h_pareta->Fill(p4jet.Eta());
-	      h_pardphi->Fill(p4jet.DeltaPhi(p4p));
-	      if (p4jet.Pt()>p4sel1.Pt()) p4sel1 = p4jet;
-	      
-	      h_dbp->Fill(p4jet.Pt() / p4z.Pt());
-	      h_mpfp->Fill(mpf);
-	      p2_dbp->Fill(p4z.Pt(), p4jet.Eta(), p4jet.Pt() / p4z.Pt(), +1);
-	      p2_mpfp->Fill(p4z.Pt(), p4jet.Eta(), mpf, +1);
-	      p2_mpfnp->Fill(p4z.Pt(), p4jet.Eta(), mpfn, +1);
-	      p2_mpfup->Fill(p4z.Pt(), p4jet.Eta(), mpfu, +1);
-	      p2_mpfnup->Fill(p4z.Pt(), p4jet.Eta(), mpfnu, +1);
-	      h2_dbp->Fill(p4z.Pt(), p4jet.Pt());
-	      p_dbp_vsz->Fill(p4z.Pt(), p4jet.Pt() / p4z.Pt());
-	      p_dbp_vsj->Fill(p4jet.Pt(), p4jet.Pt() / p4z.Pt());
-	      p_dbp_vsa->Fill(0.5*(p4z.Pt()+p4jet.Pt()), p4jet.Pt() / p4z.Pt());
-	      
-	      h_selpt->Fill(p4jet.Pt(), +1);
-	      h_seleta->Fill(p4jet.Eta(), +1);
-	      h_seldphi->Fill(p4jet.DeltaPhi(p4p), +1);
-	      
-	      h_db->Fill(p4jet.Pt() / p4z.Pt(), +1);
-	      h_mpf->Fill(mpf, +1);
-	      p2_db->Fill(p4z.Pt(), p4jet.Eta(), p4jet.Pt() / p4z.Pt(), +1);
-	      p2_mpf->Fill(p4z.Pt(), p4jet.Eta(), mpf, +1);
-	      p2_mpfn->Fill(p4z.Pt(), p4jet.Eta(), mpfn, +1);
-	      p2_mpfu->Fill(p4z.Pt(), p4jet.Eta(), mpfu, +1);
-	      p2_mpfnu->Fill(p4z.Pt(), p4jet.Eta(), mpfnu, +1);
-	      h2_db->Fill(p4z.Pt(), p4jet.Pt(), +1);
-	      //h3_db->Fill(p4z.Pt(), p4jet.Eta(), p4jet.Pt() / p4z.Pt(), +1);
-	      p_db_vsz->Fill(p4z.Pt(), p4jet.Pt() / p4z.Pt(), +1);
-	      p_db_vsj->Fill(p4jet.Pt(), p4jet.Pt() / p4z.Pt(), +1);
-	      p_db_vsa->Fill(0.5*(p4z.Pt()+p4jet.Pt()), p4jet.Pt() / p4z.Pt());
-	    } // barrel
+		    h_dbp->Fill(db,wt); h_mpfp->Fill(mpf,wt);
+		    p2_dbp->Fill(ptz,eta,db,wt); p2_mpfp->Fill(ptz,eta,mpf,wt);
+		    p2_mpfnp->Fill(ptz,eta,mpfn,wt); p2_mpfup->Fill(ptz,eta,mpfu,wt);
+		    p2_mpfnup->Fill(ptz,eta,mpfnu,wt); h2_dbp->Fill(ptz,ptj,wt);
+		    p_dbp_vsz->Fill(ptz,db,wt); p_dbp_vsj->Fill(ptj,db,wt);
+		    p_dbp_vsa->Fill(pta,db,wt);
 
-	    double eta = p4jet.Eta();
-	    double ptz = p4z.Pt();
-	    double ptj = p4jet.Pt();
-	    double pta = 0.5*(ptz+ptj);
-	    h2ptetapf_->Fill(eta, ptj);
-	    h2pteta_->Fill(eta, pta);
-	    h2ptetatc_->Fill(eta, ptz);
-	    h2ptetapf->Fill(eta, ptj);
-	    h2pteta->Fill(eta, pta);
-	    h2ptetatc->Fill(eta, ptz);
+		    h_selpt->Fill(ptj,wt); h_seleta->Fill(eta,wt);
+		    h_seldphi->Fill(p4jet.DeltaPhi(p4p),wt);
+		    h_db->Fill(db,wt); h_mpf->Fill(mpf,wt);
+		    p2_db->Fill(ptz,eta,db,wt); p2_mpf->Fill(ptz,eta,mpf,wt);
+		    p2_mpfn->Fill(ptz,eta,mpfn,wt); p2_mpfu->Fill(ptz,eta,mpfu,wt);
+		    p2_mpfnu->Fill(ptz,eta,mpfnu,wt); h2_db->Fill(ptz,ptj,wt);
+		    p_db_vsz->Fill(ptz,db,wt); p_db_vsj->Fill(ptj,db,wt);
+		    p_db_vsa->Fill(pta,db,wt);
+		    fillPileupResponse("parallel",db,mpf,wt);
+		    fillPileupResponse("subtracted",db,mpf,wt);
+		    fillTruth("parallel",truthMatched,db,mpf,wt);
+		    fillTruth("subtracted",truthMatched,db,mpf,wt);
 
-	    pmzpf_->Fill(ptj, p4z.M());
-	    pmz_->Fill(pta, p4z.M());
-	    pmztc_->Fill(ptz, p4z.M());
-	    pmzpf->Fill(ptj, p4z.M());
-	    pmz->Fill(pta, p4z.M());
-	    pmztc->Fill(ptz, p4z.M());
-	    
-	    //double jes = (1-Jet_rawFactor[ijet]);
-	    p2jespf_->Fill(eta, ptj, jes);
-	    p2jes_->Fill(eta, pta, jes);
-	    p2jestc_->Fill(eta, ptz, jes);
-	    p2jespf->Fill(eta, ptj, jes);
-	    p2jes->Fill(eta, pta, jes);
-	    p2jestc->Fill(eta, ptz, jes);
+		    h2ptetapf_->Fill(abseta,ptj,wt); h2pteta_->Fill(abseta,pta,wt);
+		    h2ptetatc_->Fill(abseta,ptz,wt);
+		    h2ptetapf->Fill(eta,ptj,wt); h2pteta->Fill(eta,pta,wt);
+		    h2ptetatc->Fill(eta,ptz,wt);
+		    pmzpf_->Fill(ptj,p4z.M(),wt); pmz_->Fill(pta,p4z.M(),wt);
+		    pmztc_->Fill(ptz,p4z.M(),wt); pmzpf->Fill(ptj,p4z.M(),wt);
+		    pmz->Fill(pta,p4z.M(),wt); pmztc->Fill(ptz,p4z.M(),wt);
 
-	    p2m0pf_->Fill(eta, ptj, mpf);
-	    p2m0_->Fill(eta, pta, mpf);
-	    p2m0tc_->Fill(eta, ptz, mpf);
-	    p2m0pf->Fill(eta, ptj, mpf);
-	    p2m0->Fill(eta, pta, mpf);
-	    p2m0tc->Fill(eta, ptz, mpf);
+		    p2jespf_->Fill(abseta,ptj,jes,wt); p2jes_->Fill(abseta,pta,jes,wt);
+		    p2jestc_->Fill(abseta,ptz,jes,wt); p2jespf->Fill(eta,ptj,jes,wt);
+		    p2jes->Fill(eta,pta,jes,wt); p2jestc->Fill(eta,ptz,jes,wt);
+		    p2m0pf_->Fill(abseta,ptj,mpf,wt); p2m0_->Fill(abseta,pta,mpf,wt);
+		    p2m0tc_->Fill(abseta,ptz,mpf,wt); p2m0pf->Fill(eta,ptj,mpf,wt);
+		    p2m0->Fill(eta,pta,mpf,wt); p2m0tc->Fill(eta,ptz,mpf,wt);
+		    p2m2pf_->Fill(abseta,ptj,mpf1,wt); p2m2_->Fill(abseta,pta,mpf1,wt);
+		    p2m2tc_->Fill(abseta,ptz,mpf1,wt); p2m2pf->Fill(eta,ptj,mpf1,wt);
+		    p2m2->Fill(eta,pta,mpf1,wt); p2m2tc->Fill(eta,ptz,mpf1,wt);
+		    p2mnpf_->Fill(abseta,ptj,mpfn,wt); p2mn_->Fill(abseta,pta,mpfn,wt);
+		    p2mntc_->Fill(abseta,ptz,mpfn,wt); p2mnpf->Fill(eta,ptj,mpfn,wt);
+		    p2mn->Fill(eta,pta,mpfn,wt); p2mntc->Fill(eta,ptz,mpfn,wt);
+		    p2mnupf_->Fill(abseta,ptj,mpfnu,wt); p2mnu_->Fill(abseta,pta,mpfnu,wt);
+		    p2mnutc_->Fill(abseta,ptz,mpfnu,wt); p2mnupf->Fill(eta,ptj,mpfnu,wt);
+		    p2mnu->Fill(eta,pta,mpfnu,wt); p2mnutc->Fill(eta,ptz,mpfnu,wt);
+		    p2mupf_->Fill(abseta,ptj,mpfu,wt); p2mu_->Fill(abseta,pta,mpfu,wt);
+		    p2mutc_->Fill(abseta,ptz,mpfu,wt); p2mupf->Fill(eta,ptj,mpfu,wt);
+		    p2mu->Fill(eta,pta,mpfu,wt); p2mutc->Fill(eta,ptz,mpfu,wt);
+		    p2respf_->Fill(abseta,ptj,1.,wt); p2res_->Fill(abseta,pta,1.,wt);
+		    p2restc_->Fill(abseta,ptz,1.,wt); p2respf->Fill(eta,ptj,1.,wt);
+		    p2res->Fill(eta,pta,1.,wt); p2restc->Fill(eta,ptz,1.,wt);
+		  } // Parallel region
 
-	    p2m2pf_->Fill(eta, ptj, mpf1);
-	    p2m2_->Fill(eta, pta, mpf1);
-	    p2m2tc_->Fill(eta, ptz, mpf1);
-	    p2m2pf->Fill(eta, ptj, mpf1);
-	    p2m2->Fill(eta, pta, mpf1);
-	    p2m2tc->Fill(eta, ptz, mpf1);
+		  const TLorentzVector *transverseProbe[] = {&p4t1,&p4t2};
+		  const TLorentzVector *transverseAxis[] = {&p4t1z,&p4t2z};
+		  for (int idir = 0; idir != 2; ++idir) {
+		    const TLorentzVector &probe = *transverseProbe[idir];
+		    const TLorentzVector &axis = *transverseAxis[idir];
+		    if (fabs(p4jet.DeltaPhi(probe))>=1./16.*TMath::Pi() ||
+			ptj<=0.5*ptz || ptj>=2.0*ptz) continue;
 
-	    p2mnpf_->Fill(eta, ptj, mpfn);
-	    p2mn_->Fill(eta, pta, mpfn);
-	    p2mntc_->Fill(eta, ptz, mpfn);
-	    p2mnpf->Fill(eta, ptj, mpfn);
-	    p2mn->Fill(eta, pta, mpfn);
-	    p2mntc->Fill(eta, ptz, mpfn);
+		    TLorentzVector met1t = -p4z-p4jet;
+		    met1t.SetPtEtaPhiM(met1t.Pt(),0,met1t.Phi(),0.);
+		    TLorentzVector metnt = -ht+p4z+p4jet;
+		    metnt.SetPtEtaPhiM(metnt.Pt(),0,metnt.Phi(),0.);
+		    const TLorentzVector metnut = metnt+metu;
+		    const TLorentzVector metat = met1t+metnt+metu;
+		    double mpfT = 1+metat.Vect().Dot(axis.Vect())/(ptz*ptz)+(mpf-1.);
+		    double mpf1T = 1+met1t.Vect().Dot(axis.Vect())/(ptz*ptz)+(mpf1-1.);
+		    double mpfnT = metnt.Vect().Dot(axis.Vect())/(ptz*ptz)+mpfn;
+		    double mpfuT = metu.Vect().Dot(axis.Vect())/(ptz*ptz)+mpfu;
+		    double mpfnuT = metnut.Vect().Dot(axis.Vect())/(ptz*ptz)+mpfnu;
 
-	    p2mnupf_->Fill(eta, ptj, mpfnu);
-	    p2mnu_->Fill(eta, pta, mpfnu);
-	    p2mnutc_->Fill(eta, ptz, mpfnu);
-	    p2mnupf->Fill(eta, ptj, mpfnu);
-	    p2mnu->Fill(eta, pta, mpfnu);
-	    p2mnutc->Fill(eta, ptz, mpfnu);
+		    const double db = ptj/ptz;
+		    const double abseta = fabs(eta);
+		    const double wraw = 0.5*eventWeight;
+		    const double wt = -wraw;
+		    ntran += 0.5;
 
-	    p2mupf_->Fill(eta, ptj, mpfu);
-	    p2mu_->Fill(eta, pta, mpfu);
-	    p2mutc_->Fill(eta, ptz, mpfu);
-	    p2mupf->Fill(eta, ptj, mpfu);
-	    p2mu->Fill(eta, pta, mpfu);
-	    p2mutc->Fill(eta, ptz, mpfu);
-	  } // Parallel region
+		    h2_tranpteta->Fill(ptj,eta,wraw); h_tranpt->Fill(ptj,wraw);
+		    h_traneta->Fill(eta,wraw); h_trandphi->Fill(p4jet.DeltaPhi(probe),wraw);
+		    if (ptj>p4tran1.Pt()) p4tran1 = p4jet;
+		    h_dbt->Fill(db,wraw); h_mpft->Fill(mpfT,wraw);
+		    p2_dbt->Fill(ptz,eta,db,wraw); p2_mpft->Fill(ptz,eta,mpfT,wraw);
+		    p2_mpfnt->Fill(ptz,eta,mpfnT,wraw); p2_mpfut->Fill(ptz,eta,mpfuT,wraw);
+		    p2_mpfnut->Fill(ptz,eta,mpfnuT,wraw); h2_dbt->Fill(ptz,ptj,wraw);
+		    p_dbt_vsz->Fill(ptz,db,wraw); p_dbt_vsj->Fill(ptj,db,wraw);
+		    p_dbt_vsa->Fill(pta,db,wraw);
 
-	  // Transverse region(s)
-	  //if ((fabs(p4jet.DeltaPhi(p4t1))>3./4.*TMath::Pi() || // >2.36
-	  //   fabs(p4jet.DeltaPhi(p4t2))>3./4.*TMath::Pi()) && // >2.36
-	  //if (fabs(p4jet.DeltaPhi(p4t1))>3./4.*TMath::Pi() && // >2.36
-	  //if (fabs(p4jet.DeltaPhi(p4t1))>7./8.*TMath::Pi() && // >2.75
-	  //if (fabs(p4jet.DeltaPhi(p4t))>15./16.*TMath::Pi() && // >2.945
-	  if (fabs(p4jet.DeltaPhi(p4t))<1./16.*TMath::Pi() && // >0.1963
-	      //p4jet.Pt()>0.5*p4z.Pt() && p4z.Pt()>0.5*p4jet.Pt()) {
-	      //p4jet.Pt()>0.6*p4z.Pt() && p4z.Pt()>0.6*p4jet.Pt()) {
-	      //p4jet.Pt()>0.5*p4z.Pt() && p4jet.Pt()<1.5*p4z.Pt()) {
-	      //p4jet.Pt()>0.25*p4z.Pt() && p4jet.Pt()<2.0*p4z.Pt()) {
-	      p4jet.Pt()>0.5*p4z.Pt() && p4jet.Pt()<2.0*p4z.Pt()) {
+		    h2_mixpteta->Fill(ptj,eta,wt); h_mixpt->Fill(ptj,wt);
+		    h_mixeta->Fill(eta,wt); h_mixdphi->Fill(p4jet.DeltaPhi(probe),wt);
+		    h_selpt->Fill(ptj,wt); h_seleta->Fill(eta,wt);
+		    h_seldphi->Fill(p4jet.DeltaPhi(probe),wt);
+		    h_db->Fill(db,wt); h_mpf->Fill(mpfT,wt);
+		    p2_db->Fill(ptz,eta,db,wt); p2_mpf->Fill(ptz,eta,mpfT,wt);
+		    p2_mpfn->Fill(ptz,eta,mpfnT,wt); p2_mpfu->Fill(ptz,eta,mpfuT,wt);
+		    p2_mpfnu->Fill(ptz,eta,mpfnuT,wt); h2_db->Fill(ptz,ptj,wt);
+		    p_db_vsz->Fill(ptz,db,wt); p_db_vsj->Fill(ptj,db,wt);
+		    p_db_vsa->Fill(pta,db,wt);
+		    fillPileupResponse("transverse",db,mpfT,wraw);
+		    fillPileupResponse("subtracted",db,mpfT,wt);
+		    fillTruth("transverse",truthMatched,db,mpfT,wraw);
+		    fillTruth("subtracted",truthMatched,db,mpfT,wt);
 
-	    // Keep old MPF values for later hybridization
-	    double mpfold = mpf;
-	    double mpf1old = mpf1;
-	    double mpfnold = mpfn;
-	    double mpfuold = mpfu;
-	    double mpfnuold = mpfnu;
-
-	    
-	    // Override previous MPF with transverse version
-	    met1 = -p4z - p4jet; // keep reference Z in parallel plane
-	    //met1 = -p4tz - p4jet; // also rotate reference Z
-	    met1.SetPtEtaPhiM(met1.Pt(),0,met1.Phi(),0);
-	    metn = -ht + p4z + p4jet;
-	    metn.SetPtEtaPhiM(metn.Pt(),0,metn.Phi(),0);
-	    metnu = metn + metu;
-	    meta = met1 + metn + metu;
-	    double mpf = 1 + meta.Vect().Dot(p4tz.Vect()) / (ptz*ptz);
-	    double mpf1 = 1 + met1.Vect().Dot(p4tz.Vect()) / (ptz*ptz);
-	    double mpfn = metn.Vect().Dot(p4tz.Vect()) / (ptz*ptz);
-	    double mpfu = metu.Vect().Dot(p4tz.Vect()) / (ptz*ptz);
-	    double mpfnu = metnu.Vect().Dot(p4tz.Vect()) / (ptz*ptz);
-
-	    // NB: may need to hybridize eta-specific MPF at transverse plane
-	    //     and eta-average MPF in parallel plane
-	    //     to estimate impact from PU in probe region
-	    mpf += (mpfold-1);
-	    mpf1 += (mpf1old-1);
-	    mpfn += mpfnold;
-	    mpfu += mpfuold;
-	    mpfnu += mpfnuold;
-	    
-	    
-	    double wt = -1;//-0.5;
-	    //if (fabs(p4jet.Eta())<1.305) {
-	    if (true) {
-
-	      ++ntran;
-	      h2_mixpteta->Fill(p4jet.Pt(),p4jet.Eta(),wt);
-	      h_mixpt->Fill(p4jet.Pt(),wt);
-	      h_mixeta->Fill(p4jet.Eta(),wt);
-	      h_mixdphi->Fill(p4jet.DeltaPhi(p4t),wt);
-	      
-	      h2_tranpteta->Fill(p4jet.Pt(),p4jet.Eta());
-	      h_tranpt->Fill(p4jet.Pt());
-	      h_traneta->Fill(p4jet.Eta());
-	      h_trandphi->Fill(p4jet.DeltaPhi(p4t));
-	      //h_trandphi->Fill(p4jet.DeltaPhi(p4t1));
-	      //h_trandphi->Fill(p4jet.DeltaPhi(p4t2));
-	      if (p4jet.Pt()>p4tran1.Pt()) p4tran1 = p4jet;
-	      
-	      h_dbt->Fill(p4jet.Pt() / p4z.Pt());
-	      h_mpft->Fill(mpf);
-	      p2_dbt->Fill(p4z.Pt(), p4jet.Eta(), p4jet.Pt() / p4z.Pt(), +1);
-	      p2_mpft->Fill(p4z.Pt(), p4jet.Eta(), mpf, +1);
-	      p2_mpfnt->Fill(p4z.Pt(), p4jet.Eta(), mpfn, +1);
-	      p2_mpfut->Fill(p4z.Pt(), p4jet.Eta(), mpfu, +1);
-	      p2_mpfnut->Fill(p4z.Pt(), p4jet.Eta(), mpfnu, +1);
-	      h2_dbt->Fill(p4z.Pt(), p4jet.Pt());
-	      p_dbt_vsz->Fill(p4z.Pt(), p4jet.Pt() / p4z.Pt());
-	      p_dbt_vsj->Fill(p4jet.Pt(), p4jet.Pt() / p4z.Pt());
-	      p_dbt_vsa->Fill(0.5*(p4z.Pt()+p4jet.Pt()), p4jet.Pt() / p4z.Pt());
-	      
-	      // Negative addition to normal region to cancel out pileup
-	      h_selpt->Fill(p4jet.Pt(), wt);
-	      h_seleta->Fill(p4jet.Eta(), wt);
-	      h_seldphi->Fill(p4jet.DeltaPhi(p4t), wt);
-	      //h_seldphi->Fill(p4jet.DeltaPhi(p4t1), 0.5*wt);
-	      //h_seldphi->Fill(p4jet.DeltaPhi(p4t2), 0.5*wt);
-	      
-	      h_db->Fill(p4jet.Pt() / p4z.Pt(), wt);
-	      h_mpf->Fill(mpf, wt);
-	      p2_db->Fill(p4z.Pt(), p4jet.Eta(), p4jet.Pt() / p4z.Pt(), wt);
-	      p2_mpf->Fill(p4z.Pt(), p4jet.Eta(), mpf, wt);
-	      p2_mpfn->Fill(p4z.Pt(), p4jet.Eta(), mpfn, wt);
-	      p2_mpfu->Fill(p4z.Pt(), p4jet.Eta(), mpfu, wt);
-	      p2_mpfnu->Fill(p4z.Pt(), p4jet.Eta(), mpfnu, wt);
-	      h2_db->Fill(p4z.Pt(), p4jet.Pt(), wt);
-	      p_db_vsz->Fill(p4z.Pt(), p4jet.Pt() / p4z.Pt(), wt);
-	      p_db_vsj->Fill(p4jet.Pt(), p4jet.Pt() / p4z.Pt(), wt);
-	      p_db_vsa->Fill(0.5*(p4z.Pt()+p4jet.Pt()),p4jet.Pt()/p4z.Pt(), wt);
-	    } // barrel
-
-	    h2ptetapf_->Fill(eta, ptj, wt);
-	    h2pteta_->Fill(eta, pta, wt);
-	    h2ptetatc_->Fill(eta, ptz, wt);
-	    h2ptetapf->Fill(eta, ptj, wt);
-	    h2pteta->Fill(eta, pta, wt);
-	    h2ptetatc->Fill(eta, ptz, wt);
-
-	    //double jes = (1-Jet_rawFactor[ijet]);
-	    p2jespf_->Fill(eta, ptj, jes, wt);
-	    p2jes_->Fill(eta, pta, jes, wt);
-	    p2jestc_->Fill(eta, ptz, jes, wt);
-	    p2jespf->Fill(eta, ptj, jes, wt);
-	    p2jes->Fill(eta, pta, jes, wt);
-	    p2jestc->Fill(eta, ptz, jes, wt);
-
-	    p2m0pf_->Fill(eta, ptj, mpf, wt);
-	    p2m0_->Fill(eta, pta, mpf, wt);
-	    p2m0tc_->Fill(eta, ptz, mpf, wt);
-	    p2m0pf->Fill(eta, ptj, mpf, wt);
-	    p2m0->Fill(eta, pta, mpf, wt);
-	    p2m0tc->Fill(eta, ptz, mpf, wt);
-
-	    p2m2pf_->Fill(eta, ptj, mpf1, wt);
-	    p2m2_->Fill(eta, pta, mpf1, wt);
-	    p2m2tc_->Fill(eta, ptz, mpf1, wt);
-	    p2m2pf->Fill(eta, ptj, mpf1, wt);
-	    p2m2->Fill(eta, pta, mpf1, wt);
-	    p2m2tc->Fill(eta, ptz, mpf1, wt);
-
-	    p2mnpf_->Fill(eta, ptj, mpfn, wt);
-	    p2mn_->Fill(eta, pta, mpfn, wt);
-	    p2mntc_->Fill(eta, ptz, mpfn, wt);
-	    p2mnpf->Fill(eta, ptj, mpfn, wt);
-	    p2mn->Fill(eta, pta, mpfn, wt);
-	    p2mntc->Fill(eta, ptz, mpfn, wt);
-
-	    p2mnupf_->Fill(eta, ptj, mpfnu, wt);
-	    p2mnu_->Fill(eta, pta, mpfnu, wt);
-	    p2mnutc_->Fill(eta, ptz, mpfnu, wt);
-	    p2mnupf->Fill(eta, ptj, mpfnu, wt);
-	    p2mnu->Fill(eta, pta, mpfnu, wt);
-	    p2mnutc->Fill(eta, ptz, mpfnu, wt);
-
-	    p2mupf_->Fill(eta, ptj, mpfu, wt);
-	    p2mu_->Fill(eta, pta, mpfu, wt);
-	    p2mutc_->Fill(eta, ptz, mpfu, wt);
-	    p2mupf->Fill(eta, ptj, mpfu, wt);
-	    p2mu->Fill(eta, pta, mpfu, wt);
-	    p2mutc->Fill(eta, ptz, mpfu, wt);
-	  } // Transverse region
+		    h2ptetapf_->Fill(abseta,ptj,wt); h2pteta_->Fill(abseta,pta,wt);
+		    h2ptetatc_->Fill(abseta,ptz,wt); h2ptetapf->Fill(eta,ptj,wt);
+		    h2pteta->Fill(eta,pta,wt); h2ptetatc->Fill(eta,ptz,wt);
+		    p2jespf_->Fill(abseta,ptj,jes,wt); p2jes_->Fill(abseta,pta,jes,wt);
+		    p2jestc_->Fill(abseta,ptz,jes,wt); p2jespf->Fill(eta,ptj,jes,wt);
+		    p2jes->Fill(eta,pta,jes,wt); p2jestc->Fill(eta,ptz,jes,wt);
+		    p2m0pf_->Fill(abseta,ptj,mpfT,wt); p2m0_->Fill(abseta,pta,mpfT,wt);
+		    p2m0tc_->Fill(abseta,ptz,mpfT,wt); p2m0pf->Fill(eta,ptj,mpfT,wt);
+		    p2m0->Fill(eta,pta,mpfT,wt); p2m0tc->Fill(eta,ptz,mpfT,wt);
+		    p2m2pf_->Fill(abseta,ptj,mpf1T,wt); p2m2_->Fill(abseta,pta,mpf1T,wt);
+		    p2m2tc_->Fill(abseta,ptz,mpf1T,wt); p2m2pf->Fill(eta,ptj,mpf1T,wt);
+		    p2m2->Fill(eta,pta,mpf1T,wt); p2m2tc->Fill(eta,ptz,mpf1T,wt);
+		    p2mnpf_->Fill(abseta,ptj,mpfnT,wt); p2mn_->Fill(abseta,pta,mpfnT,wt);
+		    p2mntc_->Fill(abseta,ptz,mpfnT,wt); p2mnpf->Fill(eta,ptj,mpfnT,wt);
+		    p2mn->Fill(eta,pta,mpfnT,wt); p2mntc->Fill(eta,ptz,mpfnT,wt);
+		    p2mnupf_->Fill(abseta,ptj,mpfnuT,wt); p2mnu_->Fill(abseta,pta,mpfnuT,wt);
+		    p2mnutc_->Fill(abseta,ptz,mpfnuT,wt); p2mnupf->Fill(eta,ptj,mpfnuT,wt);
+		    p2mnu->Fill(eta,pta,mpfnuT,wt); p2mnutc->Fill(eta,ptz,mpfnuT,wt);
+		    p2mupf_->Fill(abseta,ptj,mpfuT,wt); p2mu_->Fill(abseta,pta,mpfuT,wt);
+		    p2mutc_->Fill(abseta,ptz,mpfuT,wt); p2mupf->Fill(eta,ptj,mpfuT,wt);
+		    p2mu->Fill(eta,pta,mpfuT,wt); p2mutc->Fill(eta,ptz,mpfuT,wt);
+		    p2respf_->Fill(abseta,ptj,1.,wt); p2res_->Fill(abseta,pta,1.,wt);
+		    p2restc_->Fill(abseta,ptz,1.,wt); p2respf->Fill(eta,ptj,1.,wt);
+		    p2res->Fill(eta,pta,1.,wt); p2restc->Fill(eta,ptz,1.,wt);
+		  } // transverse direction
 	  
 	}
       } // for ijet
@@ -771,7 +885,7 @@ void zjet::Loop()
       }
    } // for jentry in nentries
    
-   cout << endl << "Finished loop, writing file rootfiles/zjet.root." << endl << flush;
+   cout << endl << "Finished loop, writing file " << outputFile << "." << endl << flush;
     cout << "Processed " << nentries << " events\n";
     //cout << "Skipped " << _nbadevents_json << " events due to JSON ("
     //	 << (100.*_nbadevents_json/_nevents) << "%) \n";
