@@ -214,7 +214,6 @@ Run all commands below in the same bash environment in which both `root` and
 klist
 voms-proxy-info -timeleft
 voms-proxy-info -fqan
-export X509_USER_PROXY="$(voms-proxy-info -path)"
 ```
 
 The FQAN must contain `/cms/`. Create a fresh long-lived proxy before an
@@ -222,8 +221,30 @@ overnight campaign if necessary:
 
 ```bash
 voms-proxy-init --rfc --voms cms --valid 192:00
-export X509_USER_PROXY="$(voms-proxy-info -path)"
 ```
+
+The default proxy is under `/tmp` on one lxplus host and is not visible to the
+HTCondor scheduler on another host. Copy it to a private AFS directory before
+preparing any campaign, then point `X509_USER_PROXY` to that shared copy:
+
+```bash
+mkdir -p "$HOME/private"
+chmod 700 "$HOME/private"
+fs setacl -dir "$HOME/private" -acl system:anyuser none
+fs setacl -dir "$HOME/private" -acl "$(whoami)" all
+
+afs_proxy="$HOME/private/x509up_u$(id -u)"
+cp "$(voms-proxy-info -path)" "$afs_proxy"
+chmod 600 "$afs_proxy"
+export X509_USER_PROXY="$afs_proxy"
+
+voms-proxy-info -file "$X509_USER_PROXY" -timeleft
+voms-proxy-info -file "$X509_USER_PROXY" -fqan
+```
+
+Never copy the proxy into the repository. The campaign generator rejects
+non-AFS proxies and proxy files located under the public repository. Refresh
+the AFS copy whenever a new VOMS proxy is created.
 
 First prepare a two-job worker-node smoke test. Campaign names are immutable;
 use a new name if a campaign directory already exists:

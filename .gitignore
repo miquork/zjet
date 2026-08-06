@@ -76,4 +76,5 @@ pdf/
 tmp/
 textfiles/generated/
 condor/jobs/
+x509up*
 __pycache__/

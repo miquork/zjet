@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -67,6 +68,23 @@ def main() -> None:
         raise ValueError("--files-per-job must be positive")
     if args.retries < 0:
         raise ValueError("--retries cannot be negative")
+
+    proxy_value = os.environ.get("X509_USER_PROXY","")
+    if not proxy_value:
+        raise RuntimeError("X509_USER_PROXY is not set")
+    proxy_path = Path(proxy_value).expanduser().resolve()
+    if not proxy_path.is_file():
+        raise FileNotFoundError(f"X509_USER_PROXY does not exist: {proxy_path}")
+    if not str(proxy_path).startswith("/afs/"):
+        raise ValueError(
+            "X509_USER_PROXY must point to a protected AFS file for CERN "
+            "HTCondor; worker schedds cannot read an lxplus-local /tmp proxy")
+    try:
+        proxy_path.relative_to(REPOSITORY)
+    except ValueError:
+        pass
+    else:
+        raise ValueError("do not store an X.509 proxy inside the public repository")
 
     mc_list = args.mc_list.expanduser().resolve()
     data_list = args.data_list.expanduser().resolve()
@@ -163,7 +181,7 @@ request_disk = 2GB
 +JobFlavour = \"{args.job_flavour}\"
 
 use_x509userproxy = True
-x509userproxy = $ENV(X509_USER_PROXY)
+x509userproxy = {proxy_path}
 
 should_transfer_files = YES
 when_to_transfer_output = ON_EXIT
