@@ -198,3 +198,93 @@ early rate estimates at 1k, 10k, and 100k events, and updated completion-time
 estimates at least once per minute. Output directories are created
 automatically. A zero-entry chain or a read failure is treated as an error and
 does not leave an apparently valid output file behind.
+
+## CERN HTCondor campaign
+
+Do not leave the full sample in an interactive SSH session. The campaign tool
+splits each input list into small lists, submits MC and data as independent
+jobs, delegates the CMS VOMS proxy, and returns only histogram ROOT files. The
+default chunk size is ten remote files per job. For the current lists this
+means 77 MC jobs and 69 data jobs instead of one multi-hour process.
+
+Run all commands below in the same bash environment in which both `root` and
+`condor_submit` are available. Check the Kerberos ticket and CMS proxy first:
+
+```bash
+klist
+voms-proxy-info -timeleft
+voms-proxy-info -fqan
+export X509_USER_PROXY="$(voms-proxy-info -path)"
+```
+
+The FQAN must contain `/cms/`. Create a fresh long-lived proxy before an
+overnight campaign if necessary:
+
+```bash
+voms-proxy-init --rfc --voms cms --valid 192:00
+export X509_USER_PROXY="$(voms-proxy-info -path)"
+```
+
+First prepare a two-job worker-node smoke test. Campaign names are immutable;
+use a new name if a campaign directory already exists:
+
+```bash
+python3 scripts/prepare_condor.py \
+  --mc-list textfiles/generated/summer24_mc.txt \
+  --data-list textfiles/generated/run2024i_data.txt \
+  --campaign run2024i_worker_test \
+  --files-per-job 1 \
+  --max-mc-files 1 \
+  --max-data-files 1
+
+condor_submit condor/jobs/run2024i_worker_test/zjet.sub
+```
+
+Monitor the jobs and inspect their logs:
+
+```bash
+condor_q -nobatch
+condor_wait condor/jobs/run2024i_worker_test/logs/condor.log
+find condor/jobs/run2024i_worker_test/results -name '*.root' -type f
+sed -n '1,160p' condor/jobs/run2024i_worker_test/logs/mc_0000.out
+sed -n '1,160p' condor/jobs/run2024i_worker_test/logs/data_0000.out
+```
+
+Both logs must end in `Job finished successfully`, and both ROOT files must be
+present. The worker validates the proxy FQAN and output cutflow. Transient
+worker failures are retried twice on a different worker.
+
+After the smoke test succeeds, prepare and submit the full campaign:
+
+```bash
+python3 scripts/prepare_condor.py \
+  --mc-list textfiles/generated/summer24_mc.txt \
+  --data-list textfiles/generated/run2024i_data.txt \
+  --campaign run2024i_full \
+  --files-per-job 10
+
+condor_submit condor/jobs/run2024i_full/zjet.sub
+```
+
+`condor_submit` returns immediately; the campaign continues after the SSH
+connection closes. The generated submit file requests one CPU, 2 GB of memory,
+EL9, the two-hour `longlunch` flavour, and an HTCondor-delegated X.509 proxy.
+The source is compiled inside each worker scratch directory, so compiled files
+are never shared between concurrent jobs.
+
+In the morning, wait until `condor_q` shows no campaign jobs and merge only
+after every expected output has returned:
+
+```bash
+python3 scripts/merge_condor.py run2024i_full --force
+```
+
+The merge tool refuses to run if any expected job output is missing or empty.
+Without `--force`, it also refuses to replace existing
+`rootfiles/zjet_MC.root` and `rootfiles/zjet_DATA.root`. After merging, rerun
+the normal control plots and compatibility writer.
+
+Optional data certification, data pileup, and MC pileup-weight inputs can be
+transferred to every job with `--golden-json`, `--lumi-pileup`, and
+`--pileup-weights`. Generated campaigns, direct storage URLs, logs, results,
+and credentials are ignored by Git and must remain outside the public history.

@@ -75,4 +75,5 @@ rootfiles/*
 pdf/
 tmp/
 textfiles/generated/
+condor/jobs/
 __pycache__/
