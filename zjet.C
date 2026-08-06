@@ -8,10 +8,14 @@
 #include "TH2D.h"
 #include "TProfile.h"
 #include "TProfile2D.h"
-#include "TStopwatch.h"
+#include "TSystem.h"
 
 #include "ZJetLumi.h"
 
+#include <chrono>
+#include <cmath>
+#include <ctime>
+#include <iomanip>
 #include <map>
 #include <string>
 
@@ -42,11 +46,6 @@ void zjet::Loop()
 //by  b_branchname->GetEntry(ientry); //read only this branch
    if (fChain == 0) return;
 
-   TStopwatch fulltime, laptime;
-   fulltime.Start();
-   TDatime bgn;
-   int nlap(0);
-   
    fChain->SetBranchStatus("*",0);  // disable all branches
 
    fChain->SetBranchStatus("run",1);
@@ -106,10 +105,25 @@ void zjet::Loop()
    fChain->SetBranchStatus("RawPuppiMET_pt",1);
    fChain->SetBranchStatus("RawPuppiMET_phi",1);
    
-   //Long64_t nentries = fChain->GetEntriesFast();
-   Long64_t nentries = fChain->GetEntries(); // Long startup time
-   cout << "\nStarting loop over " << "dataset" << " with "
-	<< nentries << " entries" << endl;
+   cout << "Opening input files and reading entry metadata. "
+        << "The first remote access can take a while..." << endl << flush;
+   const auto metadataStart = std::chrono::steady_clock::now();
+   // GetEntries() opens the files. This is intentionally not GetEntriesFast(),
+   // because an exact count is needed for reliable progress and ETA reports.
+   const Long64_t nentries = fChain->GetEntries();
+   const double metadataSeconds =
+     std::chrono::duration<double>(std::chrono::steady_clock::now()-
+                                  metadataStart).count();
+   if (nentries<=0) {
+     cout << "ERROR: the input chain has zero readable entries after "
+          << Form("%.1f",metadataSeconds) << " s. No output file will be "
+          << "created. Check the first URL in the input list separately."
+          << endl;
+     return;
+   }
+   cout << "Input opened in " << Form("%.1f",metadataSeconds)
+        << " s. Starting loop over dataset with " << nentries
+        << " entries." << endl;
    if (isMC)  cout << "Running over MC branches" << endl;
    if (!isMC) cout << "Running over DATA branches" << endl;
 
@@ -139,6 +153,16 @@ void zjet::Loop()
      }
      pileupWeights = (TH1*)source->Clone("zjet_pileup_weights");
      pileupWeights->SetDirectory(0);
+   }
+
+   const std::string::size_type separator = outputFile.find_last_of("/\\");
+   if (separator!=std::string::npos) {
+     const std::string outputDirectory = outputFile.substr(0,separator);
+     gSystem->mkdir(outputDirectory.c_str(),kTRUE);
+     if (gSystem->AccessPathName(outputDirectory.c_str())) {
+       cout << "Failed to create output directory " << outputDirectory << endl;
+       return;
+     }
    }
 
    TDirectory *curdir = gDirectory;
@@ -483,10 +507,58 @@ void zjet::Loop()
    const double dmz = 1.5*2.4955; // 1.5*Gamma,Z~3.7 GeV
    
    Long64_t nbytes = 0, nb = 0;
+   bool readFailure = false;
+   const auto loopStart = std::chrono::steady_clock::now();
+   auto previousProgress = loopStart;
+   auto reportProgress = [&](Long64_t processed) {
+     const auto now = std::chrono::steady_clock::now();
+     const double elapsed =
+       std::chrono::duration<double>(now-loopStart).count();
+     const double sincePrevious =
+       std::chrono::duration<double>(now-previousProgress).count();
+     const bool earlyReport =
+       (processed==1000 || processed==10000 || processed==100000);
+     const bool periodicReport = (sincePrevious>=60.);
+     const bool finalReport = (processed==nentries);
+     if (!earlyReport && !periodicReport && !finalReport) return;
+
+     const double rate = (elapsed>0. ? processed/elapsed : 0.);
+     const double remaining =
+       (rate>0. ? (nentries-processed)/rate : 0.);
+     const std::time_t completionTime =
+       std::time(0)+static_cast<std::time_t>(std::llround(remaining));
+     const std::tm *localCompletion = std::localtime(&completionTime);
+     cout << "Processed " << processed << "/" << nentries << " ("
+          << Form("%.1f",100.*processed/nentries) << "%) in "
+          << Form("%.1f",elapsed/60.) << " min at "
+          << Form("%.0f",rate) << " events/s; "
+          << Form("%.1f",remaining/60.) << " min remaining";
+     if (localCompletion)
+       cout << ", estimated completion "
+            << std::put_time(localCompletion,"%Y-%m-%d %H:%M:%S");
+     cout << "." << endl << flush;
+     previousProgress = now;
+   };
+
    for (Long64_t jentry=0; jentry<nentries;jentry++) {
       Long64_t ientry = LoadTree(jentry);
-      if (ientry < 0) break;
+      if (ientry < 0) {
+        cout << "ERROR: failed to load event " << jentry << "." << endl;
+        readFailure = true;
+        break;
+      }
       nb = fChain->GetEntry(jentry);   nbytes += nb;
+      if (nb<=0) {
+        cout << "ERROR: failed to read event " << jentry
+             << ". Stopping to avoid writing a silently incomplete sample."
+             << endl;
+        readFailure = true;
+        break;
+      }
+      if (jentry==0)
+        cout << "First event read successfully; the analysis loop is running."
+             << endl << flush;
+      reportProgress(jentry+1);
       // if (Cut(ientry) < 0) continue;
 
       double eventWeight = 1.;
@@ -522,32 +594,6 @@ void zjet::Loop()
       }
       h_muon_selection->Fill(1., eventWeight);
 
-      if (jentry==100000 || jentry==1000000 || jentry==1000000 ||
-	  (jentry%1000000==0 && jentry<10000000) ||
-	  (jentry%10000000==0 && jentry!=0) ||
-	  jentry==nentries-1) {
-	if (jentry==0) { laptime.Start(); }
-	if (nentries!=0) {
-	  cout << Form("\nProcessed %lld events (%1.1f%%) in %1.0f sec. "
-		       "(%1.0f sec. for last %d)",
-		       jentry, 100.*jentry/nentries, fulltime.RealTime(),
-		       laptime.RealTime(), nlap);
-	}
-	if (jentry!=0 && nlap!=0) {
-	cout << Form("\nEstimated runtime:  %1.0f sec. "
-		     " (%1.0f sec. for last %d)",
-		     1.*nentries/jentry*fulltime.RealTime(),
-		     1.*nentries/nlap*laptime.RealTime(),nlap) << flush;
-	laptime.Reset();
-	nlap = 0;
-	}
-	if (jentry==0) fulltime.Reset(); // Leave out initialization time
-	fulltime.Continue();
-	laptime.Continue();
-      }
-      if (jentry%10000==0) cout << "." << flush;
-      ++nlap;
-      
       p4lplus.SetPtEtaPhiM(0,0,0,0);
       p4lminus.SetPtEtaPhiM(0,0,0,0);
       p4z.SetPtEtaPhiM(0,0,0,0);
@@ -1051,6 +1097,13 @@ void zjet::Loop()
 	h_tran1eta->Fill(p4tran1.Eta());
       }
    } // for jentry in nentries
+
+   if (readFailure) {
+     fout->Close();
+     gSystem->Unlink(outputFile.c_str());
+     cout << "Removed incomplete output " << outputFile << "." << endl;
+     return;
+   }
    
    cout << endl << "Finished loop, writing file " << outputFile << "." << endl << flush;
     cout << "Processed " << nentries << " events\n";

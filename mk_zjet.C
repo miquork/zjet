@@ -50,10 +50,12 @@ void mk_zjet(
   //cd->AddFile("../data/zjet/Muon0_Run2025G_PromptReco_v1.root"); //isMC = false;
   addInput(cd,dataFile,maximumDataFiles);
 
+  std::cout << "\n=== Starting MC analysis ===" << std::endl;
   zjet zm(cm, isMC = true, "rootfiles/zjet_MC.root", "", "",
           pileupWeights);
   zm.Loop();
-  
+
+  std::cout << "\n=== Starting data analysis ===" << std::endl;
   zjet zd(cd, isMC = false, "rootfiles/zjet_DATA.root", goldenJson,
           lumiPileup, "");
   zd.Loop();

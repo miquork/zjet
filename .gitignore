@@ -70,7 +70,8 @@ Testing/
 
 # ROOT/ACLiC products and local analysis outputs
 *.pcm
-rootfiles/
+rootfiles/*
+!rootfiles/.gitkeep
 pdf/
 tmp/
 textfiles/generated/

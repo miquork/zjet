@@ -81,6 +81,32 @@ published to the federation, pass the storage site's XRootD endpoint explicitly
 with `--redirector root://<site-host>:1094/`. Generated lists are ignored by
 Git and must not be committed.
 
+The global redirector can return XRootD error 3011 even when a file exists at
+its original storage site. In that case, preserve the direct URLs supplied in
+the JSON documents:
+
+```bash
+python3 scripts/json_to_filelist.py /path/to/mc.json --keep-urls \
+  -o textfiles/generated/summer24_mc.txt
+
+python3 scripts/json_to_filelist.py /path/to/data_part1.json \
+  /path/to/data_part2.json /path/to/data_part3.json /path/to/data_part4.json \
+  --keep-urls -o textfiles/generated/run2024i_data.txt
+```
+
+Test the first direct URL before starting ROOT:
+
+```bash
+gfal-ls "$(sed -n '1p' textfiles/generated/summer24_mc.txt)"
+gfal-ls "$(sed -n '1p' textfiles/generated/run2024i_data.txt)"
+```
+
+The storage site used for these samples supports both XRootD and HTTPS/WebDAV.
+If direct HTTPS works with `gfal-ls` but the installed ROOT cannot open it, find
+the site's current XRootD prefix in
+`/cvmfs/cms.cern.ch/SITECONF/<site>/storage.json` and regenerate the lists with
+`--redirector`. Do not guess the endpoint or commit a site-specific file list.
+
 ## Control plots
 
 The original control plots are produced with:
@@ -124,7 +150,23 @@ Log in with the CERN account and verify the proxy:
 ```bash
 ssh <cern-user>@lxplus.cern.ch
 voms-proxy-info -timeleft
+voms-proxy-info -fqan
+export X509_USER_PROXY="$(voms-proxy-info -path)"
 ```
+
+If either proxy command fails or the lifetime is too short, create a fresh CMS
+proxy and export its path explicitly:
+
+```bash
+voms-proxy-init --voms cms --valid 192:00
+export X509_USER_PROXY="$(voms-proxy-info -path)"
+voms-proxy-info -timeleft
+```
+
+The PEM pass phrase belongs only in the interactive `voms-proxy-init` step. If
+ROOT itself asks for it, stop the job: the XRootD client did not find a usable
+proxy and is trying to create one from the long-lived certificate. Never put
+the certificate password in a command, script, file list, or batch job.
 
 After cloning or pulling this repository on lxplus, source a ROOT environment
 compatible with the JMENANO files, compile, and first run one MC and one data
@@ -149,3 +191,10 @@ Then repeat with a few files, for example by replacing the final `1,1` with
 
 Do not submit the full sample or HTCondor jobs before the one- and few-file
 checks pass.
+
+At startup, the macro reports that it is opening the remote files before
+calling `GetEntries()`. It then reports the first successfully read event,
+early rate estimates at 1k, 10k, and 100k events, and updated completion-time
+estimates at least once per minute. Output directories are created
+automatically. A zero-entry chain or a read failure is treated as an error and
+does not leave an apparently valid output file behind.
