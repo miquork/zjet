@@ -1,5 +1,7 @@
 #include "TCanvas.h"
 #include "TFile.h"
+#include "TGraphErrors.h"
+#include "TH1D.h"
 #include "TLegend.h"
 #include "TLine.h"
 #include "TProfile.h"
@@ -17,6 +19,12 @@ TProfile *getProfile(TFile *file, const std::string &name, bool required=true) {
   return profile;
 }
 
+TH1D *getHistogram(TFile *file, const std::string &name) {
+  TH1D *histogram = dynamic_cast<TH1D*>(file->Get(name.c_str()));
+  assert(histogram);
+  return histogram;
+}
+
 void style(TProfile *profile, Color_t color, Style_t marker,
            Style_t lineStyle=1) {
   profile->SetLineColor(color);
@@ -24,6 +32,22 @@ void style(TProfile *profile, Color_t color, Style_t marker,
   profile->SetMarkerStyle(marker);
   profile->SetMarkerSize(0.8);
   profile->SetLineStyle(lineStyle);
+}
+
+void fillGraph(TGraphErrors &graph, TProfile *profile, Color_t color,
+               Style_t marker) {
+  graph.SetLineColor(color);
+  graph.SetMarkerColor(color);
+  graph.SetMarkerStyle(marker);
+  graph.SetMarkerSize(0.8);
+  int point = 0;
+  for (int bin = 1; bin <= profile->GetNbinsX(); ++bin) {
+    // A non-positive signed denominator does not define a useful fraction.
+    if (profile->GetBinEntries(bin)<=0.) continue;
+    graph.SetPoint(point,profile->GetBinCenter(bin),profile->GetBinContent(bin));
+    graph.SetPointError(point,0.,profile->GetBinError(bin));
+    ++point;
+  }
 }
 
 void drawResponse(TFile *mc, TFile *data, const char *response,
@@ -139,6 +163,156 @@ void drawTruthResponse(TFile *mc, const char *response, const char *region,
   canvas.SaveAs(Form("%s/%s_truth_%s.pdf",outputDirectory,response,region));
 }
 
+void drawMatchDefinition(TFile *mc, const char *outputDirectory) {
+  TProfile *analysis = getProfile(
+    mc,"control/p_pujet_fraction_vs_ptz_subtracted");
+  TProfile *extraCuts = getProfile(
+    mc,"control/p_extra_match_cuts_unmatched_fraction_vs_ptz_subtracted");
+  style(analysis,kBlack,kFullCircle);
+  style(extraCuts,kBlue+1,kOpenSquare);
+
+  TCanvas canvas("c_match_definition","",700,650);
+  canvas.SetBottomMargin(0.13);
+  analysis->SetTitle("");
+  analysis->GetXaxis()->SetTitle("p_{T,Z} (GeV)");
+  analysis->GetYaxis()->SetTitle("Subtracted unmatched fraction");
+  analysis->GetYaxis()->SetRangeUser(-0.1,1.05);
+  analysis->Draw("E1");
+  extraCuts->Draw("E1 SAME");
+  TLine zero(0.,0.,200.,0.);
+  zero.SetLineStyle(3);
+  zero.Draw();
+  TLegend legend(0.49,0.74,0.88,0.88);
+  legend.SetBorderSize(0);
+  legend.AddEntry(analysis,"No valid genJetIdx","lp");
+  legend.AddEntry(extraCuts,"Also require gen p_{T}>8, #DeltaR<0.4","lp");
+  legend.Draw();
+  canvas.SaveAs(Form("%s/match_definition_vs_ptz.pdf",outputDirectory));
+}
+
+void drawEtaDependence(TFile *mc, const char *outputDirectory) {
+  TProfile *central = getProfile(
+    mc,"control/p_pujet_fraction_vs_ptz_subtracted_central");
+  TProfile *endcap = getProfile(
+    mc,"control/p_pujet_fraction_vs_ptz_subtracted_endcap");
+  TProfile *forward = getProfile(
+    mc,"control/p_pujet_fraction_vs_ptz_subtracted_forward");
+  TGraphErrors centralGraph, endcapGraph, forwardGraph;
+  fillGraph(centralGraph,central,kBlack,kFullCircle);
+  fillGraph(endcapGraph,endcap,kBlue+1,kOpenSquare);
+  fillGraph(forwardGraph,forward,kRed+1,kOpenTriangleUp);
+
+  TCanvas canvas("c_eta_dependence","",700,650);
+  canvas.SetBottomMargin(0.13);
+  TH1D frame("h_eta_frame",";p_{T,Z} (GeV);Subtracted unmatched fraction",
+             100,0.,200.);
+  frame.GetYaxis()->SetRangeUser(-0.25,0.5);
+  frame.Draw("AXIS");
+  centralGraph.Draw("P E SAME");
+  endcapGraph.Draw("P E SAME");
+  forwardGraph.Draw("P E SAME");
+  TLine zero(0.,0.,200.,0.);
+  zero.SetLineStyle(3);
+  zero.Draw();
+  TLegend legend(0.58,0.70,0.88,0.88);
+  legend.SetBorderSize(0);
+  legend.AddEntry(&centralGraph,"|#eta| < 1.3","lp");
+  legend.AddEntry(&endcapGraph,"1.3 #leq |#eta| < 2.5","lp");
+  legend.AddEntry(&forwardGraph,"|#eta| #geq 2.5","lp");
+  legend.Draw();
+  canvas.SaveAs(Form("%s/pujet_fraction_eta_vs_ptz.pdf",outputDirectory));
+}
+
+void drawCountCheck(TFile *mc, const char *outputDirectory) {
+  TH1D *unmatched = getHistogram(
+    mc,"control/h_unmatched_jets_vs_ptz_subtracted");
+  TH1D *all = getHistogram(mc,"control/h_all_jets_vs_ptz_subtracted");
+  TH1D *ratio = dynamic_cast<TH1D*>(unmatched->Clone("h_count_ratio"));
+  ratio->SetDirectory(0);
+  ratio->Divide(all);
+  TProfile *profile = getProfile(
+    mc,"control/p_pujet_fraction_vs_ptz_subtracted");
+  ratio->SetLineColor(kBlue+1);
+  ratio->SetMarkerColor(kBlue+1);
+  ratio->SetMarkerStyle(kOpenSquare);
+  style(profile,kBlack,kFullCircle);
+
+  TCanvas canvas("c_count_check","",700,650);
+  canvas.SetBottomMargin(0.13);
+  ratio->SetTitle("");
+  ratio->GetXaxis()->SetTitle("p_{T,Z} (GeV)");
+  ratio->GetYaxis()->SetTitle("Subtracted unmatched fraction");
+  ratio->GetYaxis()->SetRangeUser(-0.2,1.05);
+  ratio->Draw("E1");
+  profile->Draw("E1 SAME");
+  TLine zero(0.,0.,200.,0.);
+  zero.SetLineStyle(3);
+  zero.Draw();
+  TLegend legend(0.50,0.74,0.88,0.88);
+  legend.SetBorderSize(0);
+  legend.AddEntry(profile,"TProfile with signed weights","lp");
+  legend.AddEntry(ratio,"Explicit unmatched/all yields","lp");
+  legend.Draw();
+  canvas.SaveAs(Form("%s/pujet_fraction_count_check_vs_ptz.pdf",
+                     outputDirectory));
+  delete ratio;
+}
+
+void drawSelectionEfficiency(TFile *mc, TFile *data, const char *histogram,
+                             const char *outputDirectory) {
+  TH1D *mcSource = getHistogram(mc,Form("control/%s",histogram));
+  TH1D *dataSource = getHistogram(data,Form("control/%s",histogram));
+  TH1D *mcEfficiency = dynamic_cast<TH1D*>(mcSource->Clone(
+    Form("%s_mc_efficiency",histogram)));
+  TH1D *dataEfficiency = dynamic_cast<TH1D*>(dataSource->Clone(
+    Form("%s_data_efficiency",histogram)));
+  mcEfficiency->SetDirectory(0);
+  dataEfficiency->SetDirectory(0);
+  if (mcEfficiency->GetBinContent(1)!=0.)
+    mcEfficiency->Scale(1./mcEfficiency->GetBinContent(1));
+  if (dataEfficiency->GetBinContent(1)!=0.)
+    dataEfficiency->Scale(1./dataEfficiency->GetBinContent(1));
+  TGraphErrors mcGraph, dataGraph;
+  for (int bin = 1; bin <= mcEfficiency->GetNbinsX(); ++bin) {
+    const int point = bin-1;
+    mcGraph.SetPoint(point,mcEfficiency->GetBinCenter(bin),
+                     mcEfficiency->GetBinContent(bin));
+    mcGraph.SetPointError(point,0.,mcEfficiency->GetBinError(bin));
+    dataGraph.SetPoint(point,dataEfficiency->GetBinCenter(bin),
+                       dataEfficiency->GetBinContent(bin));
+    dataGraph.SetPointError(point,0.,dataEfficiency->GetBinError(bin));
+  }
+  mcGraph.SetLineColor(kBlue+1);
+  mcGraph.SetMarkerColor(kBlue+1);
+  mcGraph.SetMarkerStyle(kOpenSquare);
+  dataGraph.SetLineColor(kBlack);
+  dataGraph.SetMarkerColor(kBlack);
+  dataGraph.SetMarkerStyle(kFullCircle);
+
+  TCanvas canvas(Form("c_%s",histogram),"",850,650);
+  canvas.SetBottomMargin(0.32);
+  canvas.SetLeftMargin(0.12);
+  TH1D frame(Form("%s_frame",histogram),"",mcEfficiency->GetNbinsX(),
+             mcEfficiency->GetXaxis()->GetXmin(),
+             mcEfficiency->GetXaxis()->GetXmax());
+  for (int bin = 1; bin <= frame.GetNbinsX(); ++bin)
+    frame.GetXaxis()->SetBinLabel(bin,mcEfficiency->GetXaxis()->GetBinLabel(bin));
+  frame.GetYaxis()->SetTitle("Fraction of first bin");
+  frame.GetYaxis()->SetRangeUser(0.,1.1);
+  frame.GetXaxis()->LabelsOption("v");
+  frame.Draw("AXIS");
+  mcGraph.Draw("P E SAME");
+  dataGraph.Draw("P E SAME");
+  TLegend legend(0.71,0.76,0.88,0.88);
+  legend.SetBorderSize(0);
+  legend.AddEntry(&mcGraph,"MC","lp");
+  legend.AddEntry(&dataGraph,"Data","lp");
+  legend.Draw();
+  canvas.SaveAs(Form("%s/%s.pdf",outputDirectory,histogram));
+  delete mcEfficiency;
+  delete dataEfficiency;
+}
+
 } // namespace
 
 void drawPileupControl(
@@ -168,4 +342,11 @@ void drawPileupControl(
   for (const char *region : {"parallel","transverse"})
     for (const char *response : {"db","mpf"})
       drawTruthResponse(&mc,response,region,outputDirectory);
+
+  drawMatchDefinition(&mc,outputDirectory);
+  drawEtaDependence(&mc,outputDirectory);
+  drawCountCheck(&mc,outputDirectory);
+  drawSelectionEfficiency(&mc,&data,"h_cutflow",outputDirectory);
+  drawSelectionEfficiency(&mc,&data,"h_muon_selection",outputDirectory);
+  drawSelectionEfficiency(&mc,&data,"h_probe_veto",outputDirectory);
 }

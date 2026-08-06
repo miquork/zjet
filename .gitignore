@@ -67,3 +67,11 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# ROOT/ACLiC products and local analysis outputs
+*.pcm
+rootfiles/
+pdf/
+tmp/
+textfiles/generated/
+__pycache__/

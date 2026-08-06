@@ -29,6 +29,8 @@ The optional arguments of `mk_zjet` are, in order:
 3. golden-JSON file for data
 4. lumisection pileup file for the data `mu` control
 5. ROOT file containing the MC pileup-weight histogram
+6. maximum number of MC files (`-1` means all)
+7. maximum number of data files (`-1` means all)
 
 The pileup-weight histogram must be named `pileup_ratio` (preferred) or
 `pileup`. The lumisection pileup reader accepts a brilcalc CSV containing an
@@ -39,8 +41,45 @@ credential information.
 Example:
 
 ```bash
-root -l -b -q 'mk_zjet.C("mc.root","data.root","Cert.json","lumi.csv","pu_weights.root")'
+root -l -b -q 'mk_zjet.C("mc.root","data.root","Cert.json","lumi.csv","pu_weights.root",-1,-1)'
 ```
+
+The nominal dimuon selection scans all opposite-sign pairs and keeps the one
+closest to the Z mass. It requires one `pT > 27 GeV`, tight-ID, tight-PF-
+isolation tag and one `pT > 10 GeV`, medium-ID, loose-PF-isolation probe. The
+single-muon `HLT_IsoMu24` requirement constrains the tag, not the probe. The
+`control/h_muon_selection` histogram evaluates alternative ID, isolation, and
+threshold choices on the same HLT-and-filter input events.
+
+The two transverse directions are independent half-weight
+signal-sideband pairs. If a lepton overlaps only one sideband, that sideband
+and only the corresponding half of the signal are vetoed. The
+`control/h_probe_veto` and `control/h_probe_pair_state` histograms expose this
+acceptance explicitly.
+
+An input ending in `.txt` is interpreted as a newline-separated ROOT file
+list. A single `.root` input continues to work as before.
+
+## Converting the sample JSON files
+
+The received sample descriptions contain a top-level `files` string array.
+Convert the MC JSON to one text list and all non-overlapping data JSON files to
+a second list:
+
+```bash
+python3 scripts/json_to_filelist.py /path/to/mc.json \
+  -o textfiles/generated/summer24_mc.txt
+
+python3 scripts/json_to_filelist.py /path/to/data_part1.json \
+  /path/to/data_part2.json /path/to/data_part3.json /path/to/data_part4.json \
+  -o textfiles/generated/run2024i_data.txt
+```
+
+The converter removes duplicate URLs and, by default, maps every `/store/...`
+logical file name to the CMS global XRootD redirector. If a file is not
+published to the federation, pass the storage site's XRootD endpoint explicitly
+with `--redirector root://<site-host>:1094/`. Generated lists are ignored by
+Git and must not be committed.
 
 ## Control plots
 
@@ -57,8 +96,12 @@ root -l -b -q drawPileupControl.C
 ```
 
 The latter writes DB and hybrid-MPF profiles versus `PV_npvs`, `rho`, and
-`mu`, together with truth-matched versus unmatched jet controls, under
-`pdf/drawPileupControl/`.
+`mu`, together with selection efficiencies, truth-matched versus unmatched
+jet controls, matching-definition comparisons, explicit signed-yield ratios,
+and eta-split closure plots under `pdf/drawPileupControl/`. The primary MC
+pileup-jet definition is a missing valid `Jet_genJetIdx`. Extra generator-pT
+and DeltaR cuts are retained only as a diagnostic comparison because the
+NanoAOD index already encodes the reco-to-gen match.
 
 ## jecsys3 compatibility file
 
@@ -85,15 +128,24 @@ voms-proxy-info -timeleft
 
 After cloning or pulling this repository on lxplus, source a ROOT environment
 compatible with the JMENANO files, compile, and first run one MC and one data
-file through XRootD. Check that:
+file through XRootD:
+
+```bash
+root -l -b -q mk_compile.C
+root -l -b -q \
+  'mk_zjet.C("textfiles/generated/summer24_mc.txt","textfiles/generated/run2024i_data.txt","","","",1,1)'
+```
+
+Then repeat with a few files, for example by replacing the final `1,1` with
+`3,3`. Check that:
 
 - both remote files open before starting the event loop;
-- the cutflow is non-zero through the probe-lepton veto;
+- the cutflow is non-zero through the paired probe-lepton veto;
+- the `h_muon_selection` and `h_probe_veto` diagnostics are populated;
 - `l2res/p2m0tc` and `l2res/p2restc` both have entries;
 - the `l2res` eta underflow is empty;
 - the residual profile is exactly one in every populated bin;
 - the two half-weight transverse windows have the expected normalization.
 
-The exact JSON-to-XRootD file-list conversion will be added after the sample
-JSON schema has been inspected. Do not submit the full sample or HTCondor jobs
-before the one- and few-file checks pass.
+Do not submit the full sample or HTCondor jobs before the one- and few-file
+checks pass.

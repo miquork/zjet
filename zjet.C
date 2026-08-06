@@ -59,6 +59,8 @@ void zjet::Loop()
    fChain->SetBranchStatus("Muon_phi",1);
    fChain->SetBranchStatus("Muon_mass",1);
    fChain->SetBranchStatus("Muon_charge",1);
+   fChain->SetBranchStatus("Muon_looseId",1);
+   fChain->SetBranchStatus("Muon_mediumId",1);
    fChain->SetBranchStatus("Muon_tightId",1);
    fChain->SetBranchStatus("Muon_pfIsoId",1);
 
@@ -155,9 +157,34 @@ void zjet::Loop()
    h_cutflow->GetXaxis()->SetBinLabel(2,"golden JSON");
    h_cutflow->GetXaxis()->SetBinLabel(3,"MET filters");
    h_cutflow->GetXaxis()->SetBinLabel(4,"HLT IsoMu24");
-   h_cutflow->GetXaxis()->SetBinLabel(5,"two tight isolated muons");
+   h_cutflow->GetXaxis()->SetBinLabel(5,"tag-probe muons");
    h_cutflow->GetXaxis()->SetBinLabel(6,"Z mass");
-   h_cutflow->GetXaxis()->SetBinLabel(7,"probe lepton veto");
+   h_cutflow->GetXaxis()->SetBinLabel(7,"paired probe veto");
+
+   // Alternative Z selections evaluated on the same HLT+filter event sample.
+   // Except for the first bin, every entry also includes the narrow Z window.
+   TH1D *h_muon_selection = new TH1D("h_muon_selection","",12,0.5,12.5);
+   const char *muonSelectionLabels[] = {
+     "HLT + filters", "OS eta", "loose ID", "medium ID", "tight ID",
+     "medium + loose iso", "medium + medium iso",
+     "medium + tight iso", "tight + tight iso", "tag-probe 27/10",
+     "medium loose iso 27/20", "tight tight iso 27/20"
+   };
+   for (int ibin = 1; ibin <= 12; ++ibin)
+     h_muon_selection->GetXaxis()->SetBinLabel(ibin,
+                                               muonSelectionLabels[ibin-1]);
+
+   TH1D *h_probe_veto = new TH1D("h_probe_veto","",5,0.5,5.5);
+   h_probe_veto->GetXaxis()->SetBinLabel(1,"Z mass");
+   h_probe_veto->GetXaxis()->SetBinLabel(2,"signal clear");
+   h_probe_veto->GetXaxis()->SetBinLabel(3,"+90 pair valid");
+   h_probe_veto->GetXaxis()->SetBinLabel(4,"-90 pair valid");
+   h_probe_veto->GetXaxis()->SetBinLabel(5,"effective signal");
+   TH1D *h_probe_pair_state = new TH1D("h_probe_pair_state","",4,-0.5,3.5);
+   h_probe_pair_state->GetXaxis()->SetBinLabel(1,"neither");
+   h_probe_pair_state->GetXaxis()->SetBinLabel(2,"+90 only");
+   h_probe_pair_state->GetXaxis()->SetBinLabel(3,"-90 only");
+   h_probe_pair_state->GetXaxis()->SetBinLabel(4,"both");
 
    std::map<std::string, TProfile*> pileupControl;
    const char *observables[] = {"npvs", "rho", "mu"};
@@ -194,6 +221,36 @@ void zjet::Loop()
          truthControl[name] = new TProfile(name.c_str(), "",100,0.,200.);
        }
      }
+   }
+   for (const char *region : regions) {
+     const string indexName = Form("p_no_gen_index_fraction_vs_ptz_%s",region);
+     truthControl[indexName] = new TProfile(indexName.c_str(),"",100,0.,200.);
+     const string extraCutsName =
+       Form("p_extra_match_cuts_unmatched_fraction_vs_ptz_%s",region);
+     truthControl[extraCutsName] =
+       new TProfile(extraCutsName.c_str(),"",100,0.,200.);
+     for (const char *etaRegion : {"central","endcap","forward"}) {
+       const string name = Form("p_pujet_fraction_vs_ptz_%s_%s",region,
+                                etaRegion);
+       truthControl[name] = new TProfile(name.c_str(),"",100,0.,200.);
+     }
+   }
+   std::map<std::string, TH1D*> truthYield;
+   std::map<std::string, TH2D*> truthMatchQuality;
+   for (const char *region : regions) {
+     for (const char *category : {"all","unmatched","no_gen_index",
+                                  "extra_cuts_unmatched"}) {
+       const string name = Form("h_%s_jets_vs_ptz_%s",category,region);
+       truthYield[name] = new TH1D(name.c_str(),"",100,0.,200.);
+       truthYield[name]->Sumw2();
+     }
+     const string name = Form("h2_truth_match_quality_vs_ptz_%s",region);
+     truthMatchQuality[name] = new TH2D(name.c_str(),"",100,0.,200.,
+                                        4,-0.5,3.5);
+     truthMatchQuality[name]->GetYaxis()->SetBinLabel(1,"no gen index");
+     truthMatchQuality[name]->GetYaxis()->SetBinLabel(2,"index, gen pT <= 8");
+     truthMatchQuality[name]->GetYaxis()->SetBinLabel(3,"index, DeltaR >= 0.4");
+     truthMatchQuality[name]->GetYaxis()->SetBinLabel(4,"index, extra cuts pass");
    }
    TH1D *h_truth_parallel = new TH1D("h_truth_parallel","",2,-0.5,1.5);
    TH1D *h_truth_transverse = new TH1D("h_truth_transverse","",2,-0.5,1.5);
@@ -240,7 +297,7 @@ void zjet::Loop()
    TH1D *h_jet1eta = new TH1D("h_jet1eta","",100,-5,5);
    TH1D *h_jeteta = new TH1D("h_jeteta","",100,-5,5);
 
-   TH1D *h_nsel = new TH1D("h_nsel","",20,0,20);
+   TH1D *h_nsel = new TH1D("h_nsel","",40,0,20);
    TH1D *h_sel1pt = new TH1D("h_sel1pt","",200,0,200);
    TH1D *h_selpt = new TH1D("h_selpt","",200,0,200);
    TH1D *h_sel1eta = new TH1D("h_sel1eta","",100,-5,5);
@@ -253,7 +310,7 @@ void zjet::Loop()
    TH1D *h_pardphi = new TH1D("h_pardphi","",120,-TMath::TwoPi(),TMath::TwoPi());
    
    TH2D *h2_tranpteta = new TH2D("h2_tranpteta","",200,0,200,100,-5,5);
-   TH1D *h_ntran = new TH1D("h_tran","",20,0,20);
+   TH1D *h_ntran = new TH1D("h_tran","",40,0,20);
    TH1D *h_tran1pt = new TH1D("h_tran1pt","",200,0,200);
    TH1D *h_tranpt = new TH1D("h_tranpt","",200,0,200);
    TH1D *h_tran1eta = new TH1D("h_tran1eta","",100,-5,5);
@@ -421,6 +478,9 @@ void zjet::Loop()
        return (Jet_neEmEF[ijet] < 0.40 && Jet_neMultiplicity[ijet] >= 2);
      return false;
    };
+
+   const double mz = 91.1880;
+   const double dmz = 1.5*2.4955; // 1.5*Gamma,Z~3.7 GeV
    
    Long64_t nbytes = 0, nb = 0;
    for (Long64_t jentry=0; jentry<nentries;jentry++) {
@@ -460,6 +520,7 @@ void zjet::Loop()
              << nMuon << ", nJet=" << nJet << endl;
         continue;
       }
+      h_muon_selection->Fill(1., eventWeight);
 
       if (jentry==100000 || jentry==1000000 || jentry==1000000 ||
 	  (jentry%1000000==0 && jentry<10000000) ||
@@ -503,30 +564,86 @@ void zjet::Loop()
       metu.SetPtEtaPhiM(0,0,0,0);
       metnu.SetPtEtaPhiM(0,0,0,0);
       meta.SetPtEtaPhiM(0,0,0,0);
-      int nlep(0), nsel(0);
+      int nlep(0);
+      double nsel(0.);
       double ntran(0.);
 
-      // Select leading leptons
+      // Scan all opposite-sign pairs passing a configurable working point and
+      // keep the pair closest to the Z mass. The tag requirement models IsoMu24
+      // path: one tight, tightly isolated muon above the offline plateau;
+      // the other muon can be a lower-pT medium-ID, loose-isolation probe.
+      auto selectMuonPair = [&](int idWorkingPoint, int isolationWorkingPoint,
+                                double minimumPt, double leadingPt,
+                                bool requireTag, TLorentzVector &plus,
+                                TLorentzVector &minus) {
+        plus.SetPtEtaPhiM(0,0,0,0);
+        minus.SetPtEtaPhiM(0,0,0,0);
+        double bestMassDistance = 1.e9;
+        auto passMuon = [&](int ilep) {
+          const bool passId =
+            (idWorkingPoint==0 ||
+             (idWorkingPoint==1 && Muon_looseId[ilep]) ||
+             (idWorkingPoint==2 && Muon_mediumId[ilep]) ||
+             (idWorkingPoint==3 && Muon_tightId[ilep]));
+          return (passId && Muon_pfIsoId[ilep]>=isolationWorkingPoint &&
+                  Muon_pt[ilep]>minimumPt && fabs(Muon_eta[ilep])<2.4);
+        };
+        auto isTag = [&](int ilep) {
+          return (Muon_pt[ilep]>27. && Muon_tightId[ilep] &&
+                  Muon_pfIsoId[ilep]>=4);
+        };
+        for (int iplus = 0; iplus != nMuon; ++iplus) {
+          if (Muon_charge[iplus]<=0 || !passMuon(iplus)) continue;
+          TLorentzVector plusCandidate;
+          plusCandidate.SetPtEtaPhiM(Muon_pt[iplus],Muon_eta[iplus],
+                                     Muon_phi[iplus],Muon_mass[iplus]);
+          for (int iminus = 0; iminus != nMuon; ++iminus) {
+            if (Muon_charge[iminus]>=0 || !passMuon(iminus)) continue;
+            TLorentzVector minusCandidate;
+            minusCandidate.SetPtEtaPhiM(Muon_pt[iminus],Muon_eta[iminus],
+                                        Muon_phi[iminus],Muon_mass[iminus]);
+            if (max(plusCandidate.Pt(),minusCandidate.Pt())<=leadingPt)
+              continue;
+            if (requireTag && !isTag(iplus) && !isTag(iminus)) continue;
+            const double massDistance =
+              fabs((plusCandidate+minusCandidate).M()-mz);
+            if (massDistance<bestMassDistance) {
+              bestMassDistance = massDistance;
+              plus = plusCandidate;
+              minus = minusCandidate;
+            }
+          }
+        }
+        return (bestMassDistance<1.e8);
+      };
+
+      auto fillMuonSelection = [&](int bin, int idWorkingPoint,
+                                   int isolationWorkingPoint,
+                                   double minimumPt, double leadingPt,
+                                   bool requireTag) {
+        TLorentzVector plus, minus;
+        if (!selectMuonPair(idWorkingPoint,isolationWorkingPoint,minimumPt,
+                            leadingPt,requireTag,plus,minus)) return;
+        const TLorentzVector candidate = plus+minus;
+        if (fabs(candidate.M()-mz)<dmz)
+          h_muon_selection->Fill(bin,eventWeight);
+      };
+
+      fillMuonSelection(2,0,0,0.,0.,false);
+      fillMuonSelection(3,1,0,0.,0.,false);
+      fillMuonSelection(4,2,0,0.,0.,false);
+      fillMuonSelection(5,3,0,0.,0.,false);
+      fillMuonSelection(6,2,2,0.,0.,false);
+      fillMuonSelection(7,2,3,0.,0.,false);
+      fillMuonSelection(8,2,4,0.,0.,false);
+      fillMuonSelection(9,3,4,0.,0.,false);
+      fillMuonSelection(10,2,2,10.,27.,true);
+      fillMuonSelection(11,2,2,20.,27.,false);
+      fillMuonSelection(12,3,4,20.,27.,false);
+
+      // Select the nominal tag-probe pair.
       h_nlep->Fill(nMuon, eventWeight);
-      for (int ilep = 0; ilep != nMuon; ++ilep) {
-
-	//if (ilep==0) h_lep1pt->Fill(Muon_pt[ilep]);
-	//if (ilep==1) h_lep2pt->Fill(Muon_pt[ilep]);
-	//h_leppt->Fill(Muon_pt[ilep]);
-
-	if (Muon_tightId[ilep] && Muon_pfIsoId[ilep]>=4 &&
-            Muon_pt[ilep]>20. && fabs(Muon_eta[ilep])<2.4 &&
-            Muon_charge[ilep]>0 &&
-	    Muon_pt[ilep]>p4lplus.Pt())
-	  p4lplus.SetPtEtaPhiM(Muon_pt[ilep], Muon_eta[ilep], Muon_phi[ilep],
-			       Muon_mass[ilep]);
-	if (Muon_tightId[ilep] && Muon_pfIsoId[ilep]>=4 &&
-            Muon_pt[ilep]>20. && fabs(Muon_eta[ilep])<2.4 &&
-            Muon_charge[ilep]<0 &&
-	    Muon_pt[ilep]>p4lminus.Pt())
-	  p4lminus.SetPtEtaPhiM(Muon_pt[ilep], Muon_eta[ilep], Muon_phi[ilep],
-				Muon_mass[ilep]);
-      } // for ilep
+      if (!selectMuonPair(2,2,10.,27.,true,p4lplus,p4lminus)) continue;
 
       // Reconstruct Z boson
       if (p4lplus.Pt()>0) ++nlep;
@@ -534,10 +651,8 @@ void zjet::Loop()
       if (p4lplus.Pt()>0 && p4lminus.Pt()>0) {
 	p4z += p4lplus; p4z += p4lminus;
       }
-      if (nlep != 2 || max(p4lplus.Pt(),p4lminus.Pt()) <= 27.) continue;
+      if (nlep != 2) continue;
       h_cutflow->Fill(5., eventWeight);
-      const double mz = 91.1880;
-      const double dmz = 1.5*2.4955; // 1.5*Gamma,Z~3.7; was 10-20 GeV
       //if (p4z.Pt()>0 && p4z.M()>80 && p4z.M()<100) {
       if (p4z.Pt()>0 && p4z.M()>75 && p4z.M()<105) {
 	h_zpt_precut->Fill(p4z.Pt());
@@ -586,6 +701,7 @@ void zjet::Loop()
       else
 	continue;
       h_cutflow->Fill(6., eventWeight);
+      h_probe_veto->Fill(1., eventWeight);
 
       // Set Z-parallel (probe) directions
       p4p.SetPtEtaPhiM(p4z.Pt(),p4z.Eta(),p4z.Phi()+TMath::Pi(),p4z.M());
@@ -598,23 +714,30 @@ void zjet::Loop()
       p4t2.SetPtEtaPhiM(p4z.Pt(),p4z.Eta(),p4z.Phi()-TMath::Pi()*0.5,p4z.M());
       p4t2z.SetPtEtaPhiM(p4z.Pt(),p4z.Eta(),p4z.Phi()+TMath::Pi()*0.5,p4z.M());
 
-      // Keep leptons out of parallel and transverse probe directions to avoid
-      // relative bias between parallel and transverse pileup jet counts
-      // (to be supersafe would need also margin of deltaPhi=0.2)
-      // (using DeltaPhi<1./16.*pi for probes effectively provides this)
-      // (outside tracker coverage could still have paired anti-parallel PU jet
-      //  inside trackser coverage overlap with lepton from Z boson?)
-      //if (fabs(p4p.DeltaPhi(p4z))<1./8.*TMath::Pi() ||
-      //fabs(p4t.DeltaPhi(p4z))<1./8.*TMath::Pi())
-      if (fabs(p4p.DeltaPhi(p4lplus))<1./8.*TMath::Pi() ||
-	  fabs(p4p.DeltaPhi(p4lminus))<1./8.*TMath::Pi() ||
-	  fabs(p4t1.DeltaPhi(p4lplus))<1./8.*TMath::Pi() ||
-	  fabs(p4t1.DeltaPhi(p4lminus))<1./8.*TMath::Pi() ||
-	  fabs(p4t2.DeltaPhi(p4lplus))<1./8.*TMath::Pi() ||
-	  fabs(p4t2.DeltaPhi(p4lminus))<1./8.*TMath::Pi())
-	continue;
-      h_cutflow->Fill(7., eventWeight);
-      h_zpt_probeveto->Fill(p4z.Pt(), eventWeight);
+      // Treat (+90) and (-90) as independent signal-sideband pairs. A lepton
+      // veto in one transverse window removes only that window and the
+      // matching half of the parallel signal. This keeps the lepton-veto
+      // acceptance identical in each subtraction and avoids penalising the
+      // signal twice merely because two sidebands are evaluated.
+      const double vetoWidth = TMath::Pi()/8.;
+      auto leptonClear = [&](const TLorentzVector &probe) {
+        return (fabs(probe.DeltaPhi(p4lplus))>=vetoWidth &&
+                fabs(probe.DeltaPhi(p4lminus))>=vetoWidth);
+      };
+      const bool signalClear = leptonClear(p4p);
+      const bool pairValid[] = {signalClear && leptonClear(p4t1),
+                                signalClear && leptonClear(p4t2)};
+      const int pairState = (pairValid[0] ? 1 : 0)+(pairValid[1] ? 2 : 0);
+      const double signalAcceptance =
+        0.5*((pairValid[0] ? 1. : 0.)+(pairValid[1] ? 1. : 0.));
+      h_probe_pair_state->Fill(pairState,eventWeight);
+      if (signalClear) h_probe_veto->Fill(2.,eventWeight);
+      if (pairValid[0]) h_probe_veto->Fill(3.,eventWeight);
+      if (pairValid[1]) h_probe_veto->Fill(4.,eventWeight);
+      h_probe_veto->Fill(5.,eventWeight*signalAcceptance);
+      if (signalAcceptance==0.) continue;
+      h_cutflow->Fill(7., eventWeight*signalAcceptance);
+      h_zpt_probeveto->Fill(p4z.Pt(), eventWeight*signalAcceptance);
       
       // Calculate MET and HT sum
       met.SetPtEtaPhiM(PuppiMET_pt, 0., PuppiMET_phi, 0.0);
@@ -645,8 +768,10 @@ void zjet::Loop()
         }
       };
 
-      auto fillTruth = [&](const char *region, bool matched, double db,
-                           double mpfValue, double weight) {
+      auto fillTruth = [&](const char *region, bool matched,
+                           bool passesExtraMatchCuts, bool hasGenIndex,
+                           int matchCategory, double db, double mpfValue,
+                           double weight) {
         if (!isMC) return;
         TH1D *hist = (string(region)=="parallel" ? h_truth_parallel :
                       string(region)=="transverse" ? h_truth_transverse :
@@ -661,6 +786,30 @@ void zjet::Loop()
           truthControl[Form("p_pujet_fraction_vs_%s_%s",names[io],region)]
             ->Fill(x[io], matched ? 0. : 1., weight);
         }
+
+        truthControl[Form("p_no_gen_index_fraction_vs_ptz_%s",region)]
+          ->Fill(p4z.Pt(),hasGenIndex ? 0. : 1.,weight);
+        truthControl[Form("p_extra_match_cuts_unmatched_fraction_vs_ptz_%s",
+                          region)]
+          ->Fill(p4z.Pt(),passesExtraMatchCuts ? 0. : 1.,weight);
+        const double abseta = fabs(p4jet.Eta());
+        const char *etaRegion = (abseta<1.3 ? "central" :
+                                 abseta<2.5 ? "endcap" : "forward");
+        truthControl[Form("p_pujet_fraction_vs_ptz_%s_%s",region,etaRegion)]
+          ->Fill(p4z.Pt(),matched ? 0. : 1.,weight);
+        truthYield[Form("h_all_jets_vs_ptz_%s",region)]
+          ->Fill(p4z.Pt(),weight);
+        if (!matched)
+          truthYield[Form("h_unmatched_jets_vs_ptz_%s",region)]
+            ->Fill(p4z.Pt(),weight);
+        if (!hasGenIndex)
+          truthYield[Form("h_no_gen_index_jets_vs_ptz_%s",region)]
+            ->Fill(p4z.Pt(),weight);
+        if (!passesExtraMatchCuts)
+          truthYield[Form("h_extra_cuts_unmatched_jets_vs_ptz_%s",region)]
+            ->Fill(p4z.Pt(),weight);
+        truthMatchQuality[Form("h2_truth_match_quality_vs_ptz_%s",region)]
+          ->Fill(p4z.Pt(),matchCategory,weight);
 
         if (string(region)!="subtracted") {
           const char *category = (matched ? "matched" : "pileup");
@@ -685,13 +834,26 @@ void zjet::Loop()
 	double pta = 0.5*(ptz+ptj);
 
 	double jes = (1-Jet_rawFactor[ijet]);
+	bool hasGenIndex = false;
 	bool truthMatched = false;
+	bool passesExtraMatchCuts = false;
+	int truthMatchCategory = 0;
 	if (isMC && Jet_genJetIdx[ijet]>=0 && Jet_genJetIdx[ijet]<nGenJet) {
+	  hasGenIndex = true;
+	  // Jet_genJetIdx is the NanoAOD reco-to-particle-level match. Do not
+	  // impose a second generator-pT cut on the nominal pileup classification:
+	  // it creates a strong migration bias precisely in the low-pT region.
 	  const int igen = Jet_genJetIdx[ijet];
 	  TLorentzVector p4gen;
 	  p4gen.SetPtEtaPhiM(GenJet_pt[igen],GenJet_eta[igen],GenJet_phi[igen],
 			     GenJet_mass[igen]);
-	  truthMatched = (p4gen.Pt()>8. && p4jet.DeltaR(p4gen)<0.4);
+	  truthMatched = true;
+	  if (p4gen.Pt()<=8.) truthMatchCategory = 1;
+	  else if (p4jet.DeltaR(p4gen)>=0.4) truthMatchCategory = 2;
+	  else {
+	    truthMatchCategory = 3;
+	    passesExtraMatchCuts = true;
+	  }
 	}
 
 	met1 = -p4z - p4jet;
@@ -726,8 +888,8 @@ void zjet::Loop()
 
 		    const double db = ptj/ptz;
 		    const double abseta = fabs(eta);
-		    const double wt = eventWeight;
-		    ++nsel;
+		    const double wt = eventWeight*signalAcceptance;
+		    nsel += signalAcceptance;
 		    h2_mixpteta->Fill(ptj,eta,wt);
 		    h_mixpt->Fill(ptj,wt);
 		    h_mixeta->Fill(eta,wt);
@@ -755,8 +917,10 @@ void zjet::Loop()
 		    p_db_vsa->Fill(pta,db,wt);
 		    fillPileupResponse("parallel",db,mpf,wt);
 		    fillPileupResponse("subtracted",db,mpf,wt);
-		    fillTruth("parallel",truthMatched,db,mpf,wt);
-		    fillTruth("subtracted",truthMatched,db,mpf,wt);
+		    fillTruth("parallel",truthMatched,passesExtraMatchCuts,
+		              hasGenIndex,truthMatchCategory,db,mpf,wt);
+		    fillTruth("subtracted",truthMatched,passesExtraMatchCuts,
+		              hasGenIndex,truthMatchCategory,db,mpf,wt);
 
 		    h2ptetapf_->Fill(abseta,ptj,wt); h2pteta_->Fill(abseta,pta,wt);
 		    h2ptetatc_->Fill(abseta,ptz,wt);
@@ -792,6 +956,7 @@ void zjet::Loop()
 		  const TLorentzVector *transverseProbe[] = {&p4t1,&p4t2};
 		  const TLorentzVector *transverseAxis[] = {&p4t1z,&p4t2z};
 		  for (int idir = 0; idir != 2; ++idir) {
+		    if (!pairValid[idir]) continue;
 		    const TLorentzVector &probe = *transverseProbe[idir];
 		    const TLorentzVector &axis = *transverseAxis[idir];
 		    if (fabs(p4jet.DeltaPhi(probe))>=1./16.*TMath::Pi() ||
@@ -837,8 +1002,10 @@ void zjet::Loop()
 		    p_db_vsa->Fill(pta,db,wt);
 		    fillPileupResponse("transverse",db,mpfT,wraw);
 		    fillPileupResponse("subtracted",db,mpfT,wt);
-		    fillTruth("transverse",truthMatched,db,mpfT,wraw);
-		    fillTruth("subtracted",truthMatched,db,mpfT,wt);
+		    fillTruth("transverse",truthMatched,passesExtraMatchCuts,
+		              hasGenIndex,truthMatchCategory,db,mpfT,wraw);
+		    fillTruth("subtracted",truthMatched,passesExtraMatchCuts,
+		              hasGenIndex,truthMatchCategory,db,mpfT,wt);
 
 		    h2ptetapf_->Fill(abseta,ptj,wt); h2pteta_->Fill(abseta,pta,wt);
 		    h2ptetatc_->Fill(abseta,ptz,wt); h2ptetapf->Fill(eta,ptj,wt);
