@@ -266,6 +266,7 @@ Monitor the jobs and inspect their logs:
 ```bash
 condor_q -nobatch
 condor_wait condor/jobs/run2024i_worker_test/logs/condor.log
+python3 scripts/status_condor.py run2024i_worker_test
 find condor/jobs/run2024i_worker_test/results -name '*.root' -type f
 sed -n '1,160p' condor/jobs/run2024i_worker_test/logs/mc_0000.out
 sed -n '1,160p' condor/jobs/run2024i_worker_test/logs/data_0000.out
@@ -297,10 +298,13 @@ In the morning, wait until `condor_q` shows no campaign jobs and merge only
 after every expected output has returned:
 
 ```bash
+python3 scripts/status_condor.py run2024i_full
 python3 scripts/merge_condor.py run2024i_full --force
 ```
 
-The merge tool refuses to run if any expected job output is missing or empty.
+The status tool prints `READY TO MERGE` only after every output is non-empty
+and its worker log ends successfully. The merge tool independently refuses to
+run if any expected job output is missing or empty.
 Without `--force`, it also refuses to replace existing
 `rootfiles/zjet_MC.root` and `rootfiles/zjet_DATA.root`. After merging, rerun
 the normal control plots and compatibility writer.

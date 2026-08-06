@@ -204,6 +204,8 @@ queue sample,chunk_id,chunk_path,chunk_name,output_file,result_path from {manife
           f"{mc_jobs} jobs and {len(data_files)} data files in {data_jobs} jobs.")
     print(f"Submit with: condor_submit {submit_path.relative_to(REPOSITORY)}")
     print(f"Results will return to: {result_dir.relative_to(REPOSITORY)}")
+    print(f"Check readiness with: python3 scripts/status_condor.py "
+          f"{args.campaign}")
 
 
 if __name__ == "__main__":
