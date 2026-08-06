@@ -143,10 +143,13 @@ def main() -> None:
     ]
     transfer_inputs = common_inputs + [str(path) for path in optional_paths]
     transfer_inputs.append("$(chunk_path)")
+    golden_argument = golden_name or "-"
+    lumi_argument = lumi_name or "-"
+    weights_argument = weights_name or "-"
     submit_text = f"""universe = vanilla
 executable = condor/run_zjet_job.sh
 initialdir = {REPOSITORY}
-arguments = \"$(sample)\" \"$(chunk_name)\" \"$(output_file)\" \"{golden_name}\" \"{lumi_name}\" \"{weights_name}\"
+arguments = $(sample) $(chunk_name) $(output_file) {golden_argument} {lumi_argument} {weights_argument}
 
 output = {log_dir}/$(sample)_$(chunk_id).out
 error = {log_dir}/$(sample)_$(chunk_id).err

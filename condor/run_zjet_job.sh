@@ -8,6 +8,10 @@ golden_json="${4:-}"
 lumi_pileup="${5:-}"
 pileup_weights="${6:-}"
 
+[[ "${golden_json}" == "-" ]] && golden_json=""
+[[ "${lumi_pileup}" == "-" ]] && lumi_pileup=""
+[[ "${pileup_weights}" == "-" ]] && pileup_weights=""
+
 preserve_failed_status() {
   status=$?
   trap - EXIT
