@@ -6,7 +6,8 @@ list, or other credential material.
 
 ## Local build and regression run
 
-Compile the analysis after changing `zjet.C`, `zjet.h`, or `ZJetLumi.h`:
+Compile the analysis and the bundled standalone JetMET correction code after
+changing the analysis:
 
 ```bash
 root -l -b -q mk_compile.C
@@ -31,12 +32,17 @@ The optional arguments of `mk_zjet` are, in order:
 5. ROOT file containing the MC pileup-weight histogram
 6. maximum number of MC files (`-1` means all)
 7. maximum number of data files (`-1` means all)
+8. L2 JEC text file (empty disables JEC recomputation)
+9. data residual JEC text file (ignored for MC)
 
 The pileup-weight histogram must be named `pileup_ratio` (preferred) or
 `pileup`. The lumisection pileup reader accepts a brilcalc CSV containing an
-`avgpu` column, or a whitespace-separated `run ls mu` file. Empty optional
-arguments disable only the corresponding correction or selection and print no
-credential information.
+`avgpu` column, or a whitespace-separated `run ls mu` file. By default jets
+are recomputed from raw pT with the Summer24 V2 L2Relative correction, plus
+the Run2024I nib1 V11M L2L3Residual correction for data. `RawPuppiMET` is
+rebuilt consistently with those jets. Empty optional arguments disable only
+the corresponding correction or selection and print no credential
+information.
 
 Example:
 
@@ -128,11 +134,13 @@ with:
 root -l -b -q drawControlData.C
 ```
 
-Data is normalized once to the MC parallel-region yield over
-`30 < pT(Z) < 200 GeV`; the same scale is used for every plot. This preserves
-the relative parallel, transverse, and subtracted yields instead of silently
-renormalizing each distribution. Input paths and the normalization interval
-can be changed through the macro arguments.
+Data is normalized once to the MC parallel-region jet-pT yield over
+`30 < pT(jet) < 200 GeV`; the same scale is used for every plot. The upper pad
+shows data and MC separately for the parallel, transverse and subtracted
+stages, while the lower pad shows their three data/MC ratios. This preserves
+the relative stage yields instead of silently renormalizing each distribution.
+Input paths and the normalization interval can be changed through the macro
+arguments.
 
 `drawPileupControl.C` writes DB and hybrid-MPF profiles versus `PV_npvs`, `rho`, and
 `mu`, together with selection efficiencies, truth-matched versus unmatched
@@ -142,27 +150,31 @@ pileup-jet definition is a missing valid `Jet_genJetIdx`. Extra generator-pT
 and DeltaR cuts are retained only as a diagnostic comparison because the
 NanoAOD index already encodes the reco-to-gen match.
 
-## jecsys3 raw-profile compatibility file
+## jecsys3 global-fit compatibility file
 
-Create the combined directory hierarchy expected by the standalone
-`jecsys3/L2Res.C` and `jecsys3/L3Res.C` macros:
+Create the combined directory hierarchy expected by the standalone L2/L3
+macros and the main `reprocess.C` -> `softrad3.C` -> `globalFit.C` workflow:
 
 ```bash
 root -l -b -q writeJecsys3.C
 ```
 
-The default output is `rootfiles/zjet_JMENANO_compat.root`, containing
-`data/l2res`, `data/l2res1`, `mc/l2res`, and `mc/l2res1`. Point both the
-`ZMM_<era>_DATA` and `ZMM_<era>_MC` entries in `jecsys3/Config.C` to this same
-file when testing the new method. Keeping the old file paths in a separate
-configuration makes the old/new comparison reversible.
+The default output is `rootfiles/zjet_JMENANO_compat.root`. It contains the raw
+`data|mc/l2res*` trees plus `data|mc/eta_00_13` profiles for MPF, direct
+balance, MPF recoil components, PF composition, rho, event counts, Z mass and
+MC reco/gen closure. Point both entries below to the same compatibility file:
 
-This file is not yet a drop-in input for the main `reprocess.C` workflow.
-`reprocess.C` additionally expects the processed per-eta response, mass,
-count, rho, and PF-composition objects. The distinction is intentional: a
-partial directory translation must not be presented as a complete global-fit
-input. The campaign metadata object is copied to the compatibility file when
-it is present in the merged data file.
+```cpp
+mfile["ZMM_2024I_nib1_DATA"] =
+  "/absolute/path/to/zjet/rootfiles/zjet_JMENANO_compat.root";
+mfile["ZMM_2024I_nib1_MC"] =
+  "/absolute/path/to/zjet/rootfiles/zjet_JMENANO_compat.root";
+```
+
+The normal jecsys3 chain can then run for `2024I_nib1`; its gamma+jet,
+multijet, inclusive-jet and W inputs remain configured as before. Keeping the
+old ZMM paths as commented alternatives makes the old/new comparison
+reversible. Campaign metadata is copied when present.
 
 ## lxplus small-file validation
 
@@ -207,7 +219,8 @@ Then repeat with a few files, for example by replacing the final `1,1` with
 - the `h_muon_selection` and `h_probe_veto` diagnostics are populated;
 - `l2res/p2m0tc` and `l2res/p2restc` both have entries;
 - the `l2res` eta underflow is empty;
-- the residual profile is exactly one in every populated bin;
+- the MC residual profile is one and the data residual profile contains the
+  inverse V11M residual correction;
 - the two half-weight transverse windows have the expected normalization.
 
 Do not submit the full sample or HTCondor jobs before the one- and few-file
@@ -277,7 +290,8 @@ python3 scripts/prepare_condor.py \
   --campaign run2024i_worker_test \
   --files-per-job 1 \
   --max-mc-files 1 \
-  --max-data-files 1
+  --max-data-files 1 \
+  --golden-json data/Cert_Collisions2024_378981_386951_Golden.json
 
 condor_submit condor/jobs/run2024i_worker_test/zjet.sub
 ```
@@ -310,6 +324,7 @@ python3 scripts/prepare_condor.py \
   --campaign run2024i_full \
   --files-per-job 10 \
   --job-flavour workday \
+  --golden-json data/Cert_Collisions2024_378981_386951_Golden.json \
   --eos-results \
     root://eosuser.cern.ch//eos/user/v/voutila/zjet/run2024i_full
 
@@ -323,9 +338,12 @@ The source is compiled inside each worker scratch directory, so compiled files
 are never shared between concurrent jobs.
 
 The generated `campaign.json` records the Git commit and dirty state, hashes
-and basenames of the input lists and optional correction files, the golden-JSON
-state, and the currently implemented JEC/JER/veto-map state. It intentionally
-does not copy the full private file URLs into the publishable provenance.
+and basenames of the input lists, golden JSON, L2 and residual JECs and
+optional pileup files, plus the JER/veto-map state. It intentionally does not
+copy the full private file URLs into the publishable provenance. JER smearing
+and the jet veto map remain disabled until their physics implementation is
+validated; this is recorded explicitly rather than inferred from the presence
+of files.
 
 In the morning, wait until `condor_q` shows no campaign jobs and merge only
 after every expected output has returned:

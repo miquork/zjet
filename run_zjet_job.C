@@ -8,6 +8,10 @@
 #include <iostream>
 #include <string>
 
+R__LOAD_LIBRARY(CondFormats/JetMETObjects/src/Utilities_cc.so)
+R__LOAD_LIBRARY(CondFormats/JetMETObjects/src/JetCorrectorParameters_cc.so)
+R__LOAD_LIBRARY(CondFormats/JetMETObjects/src/SimpleJetCorrector_cc.so)
+R__LOAD_LIBRARY(CondFormats/JetMETObjects/src/FactorizedJetCorrector_cc.so)
 R__LOAD_LIBRARY(zjet_C.so)
 
 namespace {
@@ -34,7 +38,8 @@ int addInputList(TChain *chain, const char *inputList) {
 
 void run_zjet_job(const char *inputList, bool isMC, const char *outputFile,
                   const char *goldenJson="", const char *lumiPileup="",
-                  const char *pileupWeights="") {
+                  const char *pileupWeights="", const char *jecL2="",
+                  const char *jecResidual="") {
   TChain *chain = new TChain("Events","Events");
   const int added = addInputList(chain,inputList);
   if (added<=0) {
@@ -46,7 +51,8 @@ void run_zjet_job(const char *inputList, bool isMC, const char *outputFile,
 
   std::cout << "Added " << added << " file(s) for the "
             << (isMC ? "MC" : "data") << " batch job." << std::endl;
-  zjet analysis(chain,isMC,outputFile,goldenJson,lumiPileup,pileupWeights);
+  zjet analysis(chain,isMC,outputFile,goldenJson,lumiPileup,pileupWeights,
+                jecL2,jecResidual);
   analysis.Loop();
 
   TFile check(outputFile,"READ");

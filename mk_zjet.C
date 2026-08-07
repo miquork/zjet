@@ -3,6 +3,10 @@
 #include <fstream>
 #include <string>
 
+R__LOAD_LIBRARY(CondFormats/JetMETObjects/src/Utilities_cc.so)
+R__LOAD_LIBRARY(CondFormats/JetMETObjects/src/JetCorrectorParameters_cc.so)
+R__LOAD_LIBRARY(CondFormats/JetMETObjects/src/SimpleJetCorrector_cc.so)
+R__LOAD_LIBRARY(CondFormats/JetMETObjects/src/FactorizedJetCorrector_cc.so)
 R__LOAD_LIBRARY(zjet_C.so)
 
 namespace {
@@ -39,7 +43,9 @@ void mk_zjet(
   const char *lumiPileup="",
   const char *pileupWeights="",
   int maximumMcFiles=-1,
-  int maximumDataFiles=-1) {
+  int maximumDataFiles=-1,
+  const char *jecL2="CondFormats/JetMETObjects/data/RunIII2024Summer24_V2_MC_L2Relative_AK4PUPPI.txt",
+  const char *jecResidual="CondFormats/JetMETObjects/data/Prompt24_Run2024I_nib1_V11M_DATA_L2L3Residual_AK4PFPuppi.txt") {
   
   bool isMC = false;
   TChain *cm = new TChain("Events","Events");
@@ -52,12 +58,12 @@ void mk_zjet(
 
   std::cout << "\n=== Starting MC analysis ===" << std::endl;
   zjet zm(cm, isMC = true, "rootfiles/zjet_MC.root", "", "",
-          pileupWeights);
+          pileupWeights,jecL2,"");
   zm.Loop();
 
   std::cout << "\n=== Starting data analysis ===" << std::endl;
   zjet zd(cd, isMC = false, "rootfiles/zjet_DATA.root", goldenJson,
-          lumiPileup, "");
+          lumiPileup,"",jecL2,jecResidual);
   zd.Loop();
 
 }

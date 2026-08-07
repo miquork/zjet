@@ -61,6 +61,8 @@ def provenance_log(provenance: Dict[str, object]) -> str:
         f"Golden JSON: {inputs.get('golden_json')}",
         f"Lumisection pileup: {inputs.get('lumi_pileup')}",
         f"Pileup weights: {inputs.get('pileup_weights')}",
+        f"L2 JEC: {inputs.get('jec_l2')}",
+        f"Data residual JEC: {inputs.get('jec_residual')}",
         f"Analysis settings: {analysis}",
         f"Inputs: {provenance['mc_files']} MC files in "
         f"{provenance['mc_jobs']} jobs; {provenance['data_files']} data "

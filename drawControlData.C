@@ -1,11 +1,14 @@
-// Optional shape comparison of data with the one-dimensional MC controls.
+// Compare every pileup-subtraction stage between data and simulation.
 #include "TFile.h"
 #include "TH1D.h"
 #include "TLatex.h"
+#include "TLine.h"
 #include "TSystem.h"
 
 #include <algorithm>
 #include <cassert>
+#include <cmath>
+#include <vector>
 
 #include "tdrstyle_mod22.C"
 
@@ -20,6 +23,25 @@ TH1D *getHistogram(TFile *file, const char *name, const char *suffix) {
   return copy;
 }
 
+TH1D *makeRatio(const TH1D *data, const TH1D *mc, const char *name) {
+  assert(data->GetNbinsX()==mc->GetNbinsX());
+  TH1D *ratio = dynamic_cast<TH1D*>(data->Clone(name));
+  assert(ratio);
+  ratio->Reset();
+  ratio->SetDirectory(nullptr);
+  for (int bin = 1; bin != ratio->GetNbinsX()+1; ++bin) {
+    const double d = data->GetBinContent(bin);
+    const double m = mc->GetBinContent(bin);
+    const double ed = data->GetBinError(bin);
+    const double em = mc->GetBinError(bin);
+    if (m==0. || !std::isfinite(d) || !std::isfinite(m)) continue;
+    ratio->SetBinContent(bin,d/m);
+    ratio->SetBinError(bin,std::sqrt(ed*ed/(m*m) +
+                                    d*d*em*em/(m*m*m*m)));
+  }
+  return ratio;
+}
+
 void drawComparison(const char *canvasName, const char *parallelName,
                     const char *transverseName, const char *subtractedName,
                     const char *xTitle, double xMin, double xMax,
@@ -29,38 +51,66 @@ void drawComparison(const char *canvasName, const char *parallelName,
   TFile data(dataFile,"READ");
   assert(!mc.IsZombie() && !data.IsZombie());
 
-  TH1D *parallel = getHistogram(&mc,parallelName,"mc");
-  TH1D *transverse = getHistogram(&mc,transverseName,"mc");
-  TH1D *subtracted = getHistogram(&mc,subtractedName,"mc");
-  TH1D *dataSubtracted = getHistogram(&data,subtractedName,"data");
-  dataSubtracted->Scale(dataScale);
+  TH1D *mcParallel = getHistogram(&mc,parallelName,"mc_parallel");
+  TH1D *mcTransverse = getHistogram(&mc,transverseName,"mc_transverse");
+  TH1D *mcSubtracted = getHistogram(&mc,subtractedName,"mc_subtracted");
+  TH1D *dataParallel = getHistogram(&data,parallelName,"data_parallel");
+  TH1D *dataTransverse = getHistogram(&data,transverseName,"data_transverse");
+  TH1D *dataSubtracted = getHistogram(&data,subtractedName,"data_subtracted");
+  for (TH1D *histogram : {dataParallel,dataTransverse,dataSubtracted})
+    histogram->Scale(dataScale);
 
-  const double maximum = std::max(parallel->GetMaximum(),
-                                  dataSubtracted->GetMaximum());
+  double maximum = 0.;
+  for (TH1D *histogram : {mcParallel,mcTransverse,mcSubtracted,
+                          dataParallel,dataTransverse,dataSubtracted})
+    maximum = std::max(maximum,histogram->GetMaximum());
   const double yMin = logarithmic ? std::max(0.1,1.e-5*maximum) : 0.;
-  const double yMax = (logarithmic ? 20. : 1.35)*maximum;
-  TH1D *frame = tdrHist(Form("frame_%s",canvasName),"Events / bin",
-                        yMin,yMax,xTitle,xMin,xMax);
+  const double yMax = (logarithmic ? 20. : 1.45)*maximum;
+  TH1D *upperFrame = tdrHist(Form("upper_%s",canvasName),"Events / bin",
+                             yMin,yMax,xTitle,xMin,xMax);
+  TH1D *lowerFrame = tdrHist(Form("lower_%s",canvasName),"Data / MC",
+                             0.5,1.5,xTitle,xMin,xMax);
   lumi_136TeV = "Run2024I data and Summer24 DY";
-  TCanvas *canvas = tdrCanvas(canvasName,frame,8,11,kSquare);
+  TCanvas *canvas = tdrDiCanvas(canvasName,upperFrame,lowerFrame,8,11);
+
+  canvas->cd(1);
   if (logarithmic) gPad->SetLogy();
+  tdrDraw(mcParallel,"HIST",kNone,kGray+2,kSolid,kGray+2,kNone,0,1.,2.);
+  tdrDraw(mcTransverse,"HIST",kNone,kRed-7,kSolid,kRed-7,kNone,0,1.,2.);
+  tdrDraw(mcSubtracted,"HIST",kNone,kGreen+2,kSolid,kGreen+2,kNone,0,1.,2.);
+  tdrDraw(dataParallel,"Pz",kOpenCircle,kGray+2,kSolid,kGray+2,kNone,0,0.7);
+  tdrDraw(dataTransverse,"Pz",kOpenTriangleUp,kRed+1,kSolid,kRed+1,kNone,0,0.7);
+  tdrDraw(dataSubtracted,"Pz",kOpenSquare,kGreen+3,kSolid,kGreen+3,kNone,0,0.8);
 
-  tdrDraw(parallel,"HIST",kNone,kGray+1,kSolid,-1,1001,kGray);
-  tdrDraw(transverse,"HIST",kNone,kRed-8,kSolid,-1,1001,kRed-9);
-  tdrDraw(subtracted,"Pz",kFullCircle,kGreen+2,kSolid,-1,kNone,0,0.5);
-  tdrDraw(dataSubtracted,"Pz",kOpenSquare,kBlack,kSolid,-1,kNone,0,0.8);
-
-  TLegend *legend = tdrLeg(0.48,0.87-5*0.05,0.86,0.87);
+  TLegend *legend = tdrLeg(0.46,0.87-6*0.045,0.88,0.87);
   legend->SetHeader("|#Delta#phi|<#pi/16, 0.5<p_{T,jet}/p_{T,Z}<2");
-  legend->AddEntry(parallel,"MC parallel");
-  legend->AddEntry(transverse,"MC transverse");
-  legend->AddEntry(subtracted,"MC parallel - transverse");
-  legend->AddEntry(dataSubtracted,"Data parallel - transverse");
+  legend->AddEntry(mcParallel,"MC parallel","L");
+  legend->AddEntry(dataParallel,"Data parallel","P");
+  legend->AddEntry(mcTransverse,"MC transverse","L");
+  legend->AddEntry(dataTransverse,"Data transverse","P");
+  legend->AddEntry(mcSubtracted,"MC parallel - transverse","L");
+  legend->AddEntry(dataSubtracted,"Data parallel - transverse","P");
 
   TLatex text;
   text.SetNDC();
-  text.SetTextSize(0.035);
-  text.DrawLatex(0.48,0.56,Form("Data scale factor: %.4g",dataScale));
+  text.SetTextSize(0.032);
+  text.DrawLatex(0.46,0.52,Form("Common data scale: %.4g",dataScale));
+  gPad->RedrawAxis();
+
+  TH1D *ratioParallel = makeRatio(dataParallel,mcParallel,
+                                  Form("ratio_parallel_%s",canvasName));
+  TH1D *ratioTransverse = makeRatio(dataTransverse,mcTransverse,
+                                    Form("ratio_transverse_%s",canvasName));
+  TH1D *ratioSubtracted = makeRatio(dataSubtracted,mcSubtracted,
+                                    Form("ratio_subtracted_%s",canvasName));
+  canvas->cd(2);
+  TLine unity(xMin,1.,xMax,1.);
+  unity.SetLineStyle(kDashed);
+  unity.SetLineColor(kGray+2);
+  unity.Draw("SAME");
+  tdrDraw(ratioParallel,"Pz",kOpenCircle,kGray+2,kSolid,kGray+2,kNone,0,0.55);
+  tdrDraw(ratioTransverse,"Pz",kOpenTriangleUp,kRed+1,kSolid,kRed+1,kNone,0,0.55);
+  tdrDraw(ratioSubtracted,"Pz",kOpenSquare,kGreen+3,kSolid,kGreen+3,kNone,0,0.65);
   gPad->RedrawAxis();
   canvas->SaveAs(Form("pdf/drawControl/%s.pdf",canvasName));
 }
@@ -68,8 +118,7 @@ void drawComparison(const char *canvasName, const char *parallelName,
 } // namespace
 
 // Data is scaled once using the parallel pT yield in the requested interval.
-// The same factor is then used for every observable so that the relative
-// parallel, transverse, and subtracted yields are preserved.
+// The same factor is used at all three stages and for every observable.
 void drawControlData(const char *mcFile="rootfiles/zjet_MC.root",
                      const char *dataFile="rootfiles/zjet_DATA.root",
                      double normalizationPtMin=30.,
@@ -90,7 +139,7 @@ void drawControlData(const char *mcFile="rootfiles/zjet_MC.root",
   const double dataScale = mcYield/dataYield;
 
   drawComparison("drawControlData_c1_1_pt","h_parpt","h_tranpt","h_mixpt",
-                 "p_{T,Z} (GeV)",0,200,true,dataScale,mcFile,dataFile);
+                 "p_{T,jet} (GeV)",0,200,true,dataScale,mcFile,dataFile);
   drawComparison("drawControlData_c1_2_eta","h_pareta","h_traneta","h_mixeta",
                  "#eta_{jet}",-5,5,false,dataScale,mcFile,dataFile);
   drawComparison("drawControlData_c1_3_db","h_dbp","h_dbt","h_db",

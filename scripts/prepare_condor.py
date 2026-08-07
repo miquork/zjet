@@ -18,6 +18,11 @@ from condor_storage import normalize_remote_directory
 REPOSITORY = Path(__file__).resolve().parents[1]
 CAMPAIGN_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 SAFE_FILENAME_PATTERN = re.compile(r"^[A-Za-z0-9_.+-]+$")
+DEFAULT_JEC_L2 = (REPOSITORY/"CondFormats/JetMETObjects/data"/
+                  "RunIII2024Summer24_V2_MC_L2Relative_AK4PUPPI.txt")
+DEFAULT_JEC_RESIDUAL = (REPOSITORY/"CondFormats/JetMETObjects/data"/
+                        "Prompt24_Run2024I_nib1_V11M_DATA_"
+                        "L2L3Residual_AK4PFPuppi.txt")
 
 
 def read_file_list(path: Path, maximum: int) -> List[str]:
@@ -90,6 +95,11 @@ def main() -> None:
     parser.add_argument("--golden-json", default="")
     parser.add_argument("--lumi-pileup", default="")
     parser.add_argument("--pileup-weights", default="")
+    parser.add_argument("--jec-l2", default=str(DEFAULT_JEC_L2),
+                        help="L2 correction applied to raw MC and data jets")
+    parser.add_argument(
+        "--jec-residual", default=str(DEFAULT_JEC_RESIDUAL),
+        help="additional residual correction applied to raw data jets")
     parser.add_argument("--job-flavour", default="longlunch",
                         choices=("espresso", "microcentury", "longlunch",
                                  "workday", "tomorrow", "testmatch", "nextweek"))
@@ -134,6 +144,9 @@ def main() -> None:
     lumi_path, lumi_name = optional_input(args.lumi_pileup,"lumi pileup file")
     weights_path, weights_name = optional_input(args.pileup_weights,
                                                  "pileup-weight file")
+    jec_l2_path, _ = optional_input(args.jec_l2,"L2 JEC file")
+    jec_residual_path, _ = optional_input(args.jec_residual,
+                                           "data residual JEC file")
     optional_paths = [path for path in (golden_path,lumi_path,weights_path)
                       if path is not None]
     optional_names = [path.name for path in optional_paths]
@@ -211,13 +224,15 @@ def main() -> None:
             "golden_json": file_description(golden_path),
             "lumi_pileup": file_description(lumi_path),
             "pileup_weights": file_description(weights_path),
+            "jec_l2": file_description(jec_l2_path),
+            "jec_residual": file_description(jec_residual_path),
         },
         "analysis": {
             "method": ("all accepted Z-jet pairs; +90 and -90 degree "
                        "sidebands, each with weight 0.5"),
-            "jet_pt": "Jet_pt stored in the input JMENANO",
-            "jec_recomputed_from_raw_pt": False,
-            "stored_residual_profile": "unity",
+            "jet_pt": "recomputed from raw pT with the configured JEC chain",
+            "jec_recomputed_from_raw_pt": True,
+            "stored_residual_profile": "inverse data residual correction",
             "jer_smearing": {"enabled": False},
             "jet_veto_map": {"enabled": False},
         },
@@ -229,12 +244,44 @@ def main() -> None:
     common_inputs = [
         "zjet.C", "zjet.h", "ZJetLumi.h", "mk_compile.C",
         "run_zjet_job.C",
+        "CondFormats/JetMETObjects/interface/FactorizedJetCorrector.h",
+        "CondFormats/JetMETObjects/interface/JetCorrectorParameters.h",
+        "CondFormats/JetMETObjects/interface/SimpleJetCorrector.h",
+        "CondFormats/JetMETObjects/src/Utilities.cc",
+        "CondFormats/JetMETObjects/src/JetCorrectorParameters.cc",
+        "CondFormats/JetMETObjects/src/SimpleJetCorrector.cc",
+        "CondFormats/JetMETObjects/src/FactorizedJetCorrector.cc",
     ]
-    transfer_inputs = common_inputs + [str(path) for path in optional_paths]
+    transfer_inputs = list(common_inputs)
+    staged_optional_names = []
+    for path in optional_paths:
+        try:
+            relative = path.relative_to(REPOSITORY)
+        except ValueError:
+            transfer_inputs.append(str(path))
+            staged_optional_names.append(path.name)
+        else:
+            transfer_inputs.append(str(relative))
+            staged_optional_names.append(str(relative))
+    correction_arguments = []
+    for path in (jec_l2_path,jec_residual_path):
+        if path is None:
+            correction_arguments.append("-")
+            continue
+        try:
+            relative = path.relative_to(REPOSITORY)
+        except ValueError:
+            transfer_inputs.append(str(path))
+            correction_arguments.append(path.name)
+        else:
+            transfer_inputs.append(str(relative))
+            correction_arguments.append(str(relative))
     transfer_inputs.append("$(chunk_path)")
-    golden_argument = golden_name or "-"
-    lumi_argument = lumi_name or "-"
-    weights_argument = weights_name or "-"
+    staged_optional = iter(staged_optional_names)
+    golden_argument = next(staged_optional) if golden_path else "-"
+    lumi_argument = next(staged_optional) if lumi_path else "-"
+    weights_argument = next(staged_optional) if weights_path else "-"
+    jec_l2_argument, jec_residual_argument = correction_arguments
     output_directive = (f"output_destination = {eos_results}\n"
                         "MY.XRDCP_CREATE_DIR = True\n"
                         if eos_results else
@@ -242,7 +289,7 @@ def main() -> None:
     submit_text = f"""universe = vanilla
 executable = condor/run_zjet_job.sh
 initialdir = {REPOSITORY}
-arguments = $(sample) $(chunk_name) $(output_file) {golden_argument} {lumi_argument} {weights_argument}
+arguments = $(sample) $(chunk_path) $(output_file) {golden_argument} {lumi_argument} {weights_argument} {jec_l2_argument} {jec_residual_argument}
 
 output = {log_dir}/$(sample)_$(chunk_id).out
 error = {log_dir}/$(sample)_$(chunk_id).err
@@ -260,6 +307,7 @@ x509userproxy = {proxy_path}
 
 should_transfer_files = YES
 when_to_transfer_output = ON_EXIT
+preserve_relative_paths = True
 transfer_input_files = {','.join(transfer_inputs)}
 transfer_output_files = $(output_file)
 {output_directive}

@@ -8,9 +8,12 @@
 #include "TH2D.h"
 #include "TProfile.h"
 #include "TProfile2D.h"
+#include "TObjString.h"
 #include "TSystem.h"
 
 #include "ZJetLumi.h"
+#include "CondFormats/JetMETObjects/interface/FactorizedJetCorrector.h"
+#include "CondFormats/JetMETObjects/interface/JetCorrectorParameters.h"
 
 #include <chrono>
 #include <cmath>
@@ -18,6 +21,7 @@
 #include <iomanip>
 #include <map>
 #include <string>
+#include <vector>
 
 void zjet::Loop()
 {
@@ -69,12 +73,15 @@ void zjet::Loop()
    fChain->SetBranchStatus("Jet_phi",1);
    fChain->SetBranchStatus("Jet_mass",1);
    fChain->SetBranchStatus("Jet_rawFactor",1);
+   fChain->SetBranchStatus("Jet_area",1);
    fChain->SetBranchStatus("Jet_chMultiplicity",1);
    fChain->SetBranchStatus("Jet_neMultiplicity",1);
    fChain->SetBranchStatus("Jet_nConstituents",1);
    fChain->SetBranchStatus("Jet_chHEF",1);
+   fChain->SetBranchStatus("Jet_chEmEF",1);
    fChain->SetBranchStatus("Jet_neHEF",1);
    fChain->SetBranchStatus("Jet_neEmEF",1);
+   fChain->SetBranchStatus("Jet_muEF",1);
 
    fChain->SetBranchStatus("PV_npvs",1);
    fChain->SetBranchStatus("Rho_fixedGridRhoFastjetAll",1);
@@ -155,6 +162,30 @@ void zjet::Loop()
      pileupWeights->SetDirectory(0);
    }
 
+   FactorizedJetCorrector *jec = 0;
+   if (!jecL2File.empty()) {
+     try {
+       std::vector<JetCorrectorParameters> corrections;
+       corrections.push_back(JetCorrectorParameters(jecL2File));
+       if (!isMC && !jecResidualFile.empty())
+         corrections.push_back(JetCorrectorParameters(jecResidualFile));
+       jec = new FactorizedJetCorrector(corrections);
+     }
+     catch (const std::exception &error) {
+       cout << "Failed to initialize JEC: " << error.what() << endl;
+       return;
+     }
+     cout << "Recomputing " << (isMC ? "MC" : "data")
+          << " jets from raw pT with L2 correction " << jecL2File;
+     if (!isMC && !jecResidualFile.empty())
+       cout << " and residual correction " << jecResidualFile;
+     cout << "." << endl;
+   }
+   else {
+     cout << "JEC recomputation disabled; using stored NanoAOD jet pT and "
+          << "PuppiMET." << endl;
+   }
+
    const std::string::size_type separator = outputFile.find_last_of("/\\");
    if (separator!=std::string::npos) {
      const std::string outputDirectory = outputFile.substr(0,separator);
@@ -171,6 +202,13 @@ void zjet::Loop()
      cout << "Failed to create output file " << outputFile << endl;
      return;
    }
+   fout->cd();
+   TObjString jecMode(jec ? "raw-pT JEC recomputation" : "stored NanoAOD JEC");
+   jecMode.Write("zjet_jec_mode");
+   TObjString jecL2(jecL2File.c_str());
+   jecL2.Write("zjet_jec_l2_file");
+   TObjString jecResidual((!isMC ? jecResidualFile : "").c_str());
+   jecResidual.Write("zjet_jec_residual_file");
 
    
    // Object pT plots
@@ -432,6 +470,18 @@ void zjet::Loop()
    TProfile2D *p2res_   = new TProfile2D("p2res",";eta;avp",ns,vs,np,vp);
    TProfile2D *p2restc_ = new TProfile2D("p2restc",";eta;tag",ns,vs,np,vp);
 
+   // Inputs used by the reprocess.C -> softrad3.C -> globalFit.C chain.
+   // They use the same signed signal-minus-sideband weights as the response.
+   TProfile2D *p2chftc_ = new TProfile2D("p2chftc",";eta;tag",ns,vs,np,vp);
+   TProfile2D *p2neftc_ = new TProfile2D("p2neftc",";eta;tag",ns,vs,np,vp);
+   TProfile2D *p2nhftc_ = new TProfile2D("p2nhftc",";eta;tag",ns,vs,np,vp);
+   TProfile2D *p2ceftc_ = new TProfile2D("p2ceftc",";eta;tag",ns,vs,np,vp);
+   TProfile2D *p2muftc_ = new TProfile2D("p2muftc",";eta;tag",ns,vs,np,vp);
+   TProfile2D *p2rhotc_ = new TProfile2D("p2rhotc",";eta;tag",ns,vs,np,vp);
+   TProfile2D *p2rgentc_ = new TProfile2D("p2rgentc",";eta;tag",ns,vs,np,vp);
+   TH2D *h2mztc_ = new TH2D("h2mztc",";p_{T,Z};m_{#mu#mu}",
+                             np,vp,120,60.,120.);
+
    fout->mkdir("l2res1");
    fout->cd("l2res1");
 
@@ -485,6 +535,7 @@ void zjet::Loop()
    TLorentzVector p4lplus, p4lminus, p4z, p4jet1, p4jet, p4sel1, p4tran1;
    TLorentzVector p4p, p4pz, p4t1, p4t1z, p4t2, p4t2z;
    TLorentzVector met, ht, met1, metn, metu, metnu, meta;
+   TLorentzVector rawjet, rawjets, corrjets;
 
    // JMENANOv15 does not store Jet_jetId. Reconstruct the Run-3 Tight
    // PF Jet ID used by the standard NanoAOD jetId tight bit.
@@ -592,6 +643,37 @@ void zjet::Loop()
              << nMuon << ", nJet=" << nJet << endl;
         continue;
       }
+
+      double jetInverseResidual[nJetMax];
+      for (int ijet = 0; ijet != nJet; ++ijet) {
+        jetInverseResidual[ijet] = 1.;
+        if (!jec) continue;
+
+        const double rawPt = Jet_pt[ijet]*(1.-Jet_rawFactor[ijet]);
+        const double rawMass = Jet_mass[ijet]*(1.-Jet_rawFactor[ijet]);
+        jec->setJetPt(rawPt);
+        jec->setJetEta(Jet_eta[ijet]);
+        jec->setJetPhi(Jet_phi[ijet]);
+        jec->setJetA(Jet_area[ijet]);
+        jec->setRho(Rho_fixedGridRhoFastjetAll);
+        jec->setNPV(PV_npvs);
+        const std::vector<float> subCorrections = jec->getSubCorrections();
+        if (subCorrections.empty() || !std::isfinite(subCorrections.back()) ||
+            subCorrections.back()<=0.) {
+          cout << "ERROR: invalid JEC for event " << jentry << ", jet "
+               << ijet << "." << endl;
+          readFailure = true;
+          break;
+        }
+        const double correction = subCorrections.back();
+        if (subCorrections.size()>1)
+          jetInverseResidual[ijet] =
+            subCorrections[subCorrections.size()-2]/correction;
+        Jet_pt[ijet] = correction*rawPt;
+        Jet_mass[ijet] = correction*rawMass;
+        Jet_rawFactor[ijet] = 1.-1./correction;
+      }
+      if (readFailure) break;
       h_muon_selection->Fill(1., eventWeight);
 
       p4lplus.SetPtEtaPhiM(0,0,0,0);
@@ -610,6 +692,9 @@ void zjet::Loop()
       metu.SetPtEtaPhiM(0,0,0,0);
       metnu.SetPtEtaPhiM(0,0,0,0);
       meta.SetPtEtaPhiM(0,0,0,0);
+      rawjet.SetPtEtaPhiM(0,0,0,0);
+      rawjets.SetPtEtaPhiM(0,0,0,0);
+      corrjets.SetPtEtaPhiM(0,0,0,0);
       int nlep(0);
       double nsel(0.);
       double ntran(0.);
@@ -786,7 +871,10 @@ void zjet::Loop()
       h_zpt_probeveto->Fill(p4z.Pt(), eventWeight*signalAcceptance);
       
       // Calculate MET and HT sum
-      met.SetPtEtaPhiM(PuppiMET_pt, 0., PuppiMET_phi, 0.0);
+      if (jec)
+        met.SetPtEtaPhiM(RawPuppiMET_pt,0.,RawPuppiMET_phi,0.);
+      else
+        met.SetPtEtaPhiM(PuppiMET_pt,0.,PuppiMET_phi,0.);
       ht += p4z;
       for (int ijet = 0; ijet != nJet; ++ijet) {
 	p4jet.SetPtEtaPhiM(Jet_pt[ijet], Jet_eta[ijet], Jet_phi[ijet],
@@ -796,9 +884,16 @@ void zjet::Loop()
             p4jet.DeltaR(p4lplus)>0.2 && p4jet.DeltaR(p4lminus)>0.2 &&
 	    p4jet.Pt()>15.) {
 	  ht += p4jet;
+	  if (jec) {
+	    rawjet = (1.-Jet_rawFactor[ijet])*p4jet;
+	    rawjets += rawjet;
+	    corrjets += p4jet;
+	  }
 	}
       }
       ht.SetPtEtaPhiM(ht.Pt(),0,ht.Phi(),0);
+      if (jec) met += rawjets-corrjets;
+      met.SetPtEtaPhiM(met.Pt(),0,met.Phi(),0.);
       metu = met + ht;
 
       auto fillPileupResponse = [&](const char *region, double db,
@@ -884,6 +979,8 @@ void zjet::Loop()
 	bool truthMatched = false;
 	bool passesExtraMatchCuts = false;
 	int truthMatchCategory = 0;
+	bool hasGenResponse = false;
+	double genBalance = 0.;
 	if (isMC && Jet_genJetIdx[ijet]>=0 && Jet_genJetIdx[ijet]<nGenJet) {
 	  hasGenIndex = true;
 	  // Jet_genJetIdx is the NanoAOD reco-to-particle-level match. Do not
@@ -894,6 +991,8 @@ void zjet::Loop()
 	  p4gen.SetPtEtaPhiM(GenJet_pt[igen],GenJet_eta[igen],GenJet_phi[igen],
 			     GenJet_mass[igen]);
 	  truthMatched = true;
+	  genBalance = -p4gen.Vect().Dot(p4z.Vect())/(ptz*ptz);
+	  hasGenResponse = std::isfinite(genBalance);
 	  if (p4gen.Pt()<=8.) truthMatchCategory = 1;
 	  else if (p4jet.DeltaR(p4gen)>=0.4) truthMatchCategory = 2;
 	  else {
@@ -975,6 +1074,7 @@ void zjet::Loop()
 		    pmzpf_->Fill(ptj,p4z.M(),wt); pmz_->Fill(pta,p4z.M(),wt);
 		    pmztc_->Fill(ptz,p4z.M(),wt); pmzpf->Fill(ptj,p4z.M(),wt);
 		    pmz->Fill(pta,p4z.M(),wt); pmztc->Fill(ptz,p4z.M(),wt);
+		    h2mztc_->Fill(ptz,p4z.M(),wt);
 
 		    p2jespf_->Fill(abseta,ptj,jes,wt); p2jes_->Fill(abseta,pta,jes,wt);
 		    p2jestc_->Fill(abseta,ptz,jes,wt); p2jespf->Fill(eta,ptj,jes,wt);
@@ -994,9 +1094,19 @@ void zjet::Loop()
 		    p2mupf_->Fill(abseta,ptj,mpfu,wt); p2mu_->Fill(abseta,pta,mpfu,wt);
 		    p2mutc_->Fill(abseta,ptz,mpfu,wt); p2mupf->Fill(eta,ptj,mpfu,wt);
 		    p2mu->Fill(eta,pta,mpfu,wt); p2mutc->Fill(eta,ptz,mpfu,wt);
-		    p2respf_->Fill(abseta,ptj,1.,wt); p2res_->Fill(abseta,pta,1.,wt);
-		    p2restc_->Fill(abseta,ptz,1.,wt); p2respf->Fill(eta,ptj,1.,wt);
-		    p2res->Fill(eta,pta,1.,wt); p2restc->Fill(eta,ptz,1.,wt);
+		    p2respf_->Fill(abseta,ptj,jetInverseResidual[ijet],wt);
+		    p2res_->Fill(abseta,pta,jetInverseResidual[ijet],wt);
+		    p2restc_->Fill(abseta,ptz,jetInverseResidual[ijet],wt);
+		    p2respf->Fill(eta,ptj,jetInverseResidual[ijet],wt);
+		    p2res->Fill(eta,pta,jetInverseResidual[ijet],wt);
+		    p2restc->Fill(eta,ptz,jetInverseResidual[ijet],wt);
+		    p2chftc_->Fill(abseta,ptz,Jet_chHEF[ijet],wt);
+		    p2neftc_->Fill(abseta,ptz,Jet_neEmEF[ijet],wt);
+		    p2nhftc_->Fill(abseta,ptz,Jet_neHEF[ijet],wt);
+		    p2ceftc_->Fill(abseta,ptz,Jet_chEmEF[ijet],wt);
+		    p2muftc_->Fill(abseta,ptz,Jet_muEF[ijet],wt);
+		    p2rhotc_->Fill(abseta,ptz,Rho_fixedGridRhoFastjetAll,wt);
+		    if (hasGenResponse) p2rgentc_->Fill(abseta,ptz,genBalance,wt);
 		  } // Parallel region
 
 		  const TLorentzVector *transverseProbe[] = {&p4t1,&p4t2};
@@ -1074,9 +1184,19 @@ void zjet::Loop()
 		    p2mupf_->Fill(abseta,ptj,mpfuT,wt); p2mu_->Fill(abseta,pta,mpfuT,wt);
 		    p2mutc_->Fill(abseta,ptz,mpfuT,wt); p2mupf->Fill(eta,ptj,mpfuT,wt);
 		    p2mu->Fill(eta,pta,mpfuT,wt); p2mutc->Fill(eta,ptz,mpfuT,wt);
-		    p2respf_->Fill(abseta,ptj,1.,wt); p2res_->Fill(abseta,pta,1.,wt);
-		    p2restc_->Fill(abseta,ptz,1.,wt); p2respf->Fill(eta,ptj,1.,wt);
-		    p2res->Fill(eta,pta,1.,wt); p2restc->Fill(eta,ptz,1.,wt);
+		    p2respf_->Fill(abseta,ptj,jetInverseResidual[ijet],wt);
+		    p2res_->Fill(abseta,pta,jetInverseResidual[ijet],wt);
+		    p2restc_->Fill(abseta,ptz,jetInverseResidual[ijet],wt);
+		    p2respf->Fill(eta,ptj,jetInverseResidual[ijet],wt);
+		    p2res->Fill(eta,pta,jetInverseResidual[ijet],wt);
+		    p2restc->Fill(eta,ptz,jetInverseResidual[ijet],wt);
+		    p2chftc_->Fill(abseta,ptz,Jet_chHEF[ijet],wt);
+		    p2neftc_->Fill(abseta,ptz,Jet_neEmEF[ijet],wt);
+		    p2nhftc_->Fill(abseta,ptz,Jet_neHEF[ijet],wt);
+		    p2ceftc_->Fill(abseta,ptz,Jet_chEmEF[ijet],wt);
+		    p2muftc_->Fill(abseta,ptz,Jet_muEF[ijet],wt);
+		    p2rhotc_->Fill(abseta,ptz,Rho_fixedGridRhoFastjetAll,wt);
+		    if (hasGenResponse) p2rgentc_->Fill(abseta,ptz,genBalance,wt);
 		  } // transverse direction
 	  
 	}
@@ -1116,4 +1236,5 @@ void zjet::Loop()
 
    fout->Write();
    fout->Close();
+   delete jec;
 }

@@ -7,10 +7,14 @@ output_file="${3:?missing output-file argument}"
 golden_json="${4:-}"
 lumi_pileup="${5:-}"
 pileup_weights="${6:-}"
+jec_l2="${7:-}"
+jec_residual="${8:-}"
 
 [[ "${golden_json}" == "-" ]] && golden_json=""
 [[ "${lumi_pileup}" == "-" ]] && lumi_pileup=""
 [[ "${pileup_weights}" == "-" ]] && pileup_weights=""
+[[ "${jec_l2}" == "-" ]] && jec_l2=""
+[[ "${jec_residual}" == "-" ]] && jec_residual=""
 
 preserve_failed_status() {
   status=$?
@@ -60,7 +64,7 @@ fi
 root-config --version
 root -l -b -q mk_compile.C
 
-root_macro="run_zjet_job.C(\"${input_list}\",${is_mc},\"${output_file}\",\"${golden_json}\",\"${lumi_pileup}\",\"${pileup_weights}\")"
+root_macro="run_zjet_job.C(\"${input_list}\",${is_mc},\"${output_file}\",\"${golden_json}\",\"${lumi_pileup}\",\"${pileup_weights}\",\"${jec_l2}\",\"${jec_residual}\")"
 root -l -b -q "${root_macro}"
 
 if [[ ! -s "${output_file}" ]]; then

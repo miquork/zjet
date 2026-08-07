@@ -700,11 +700,15 @@ public :
   std::string goldenJsonFile;
   std::string lumiPileupFile;
   std::string pileupWeightFile;
+  std::string jecL2File;
+  std::string jecResidualFile;
   zjet(TTree *tree=0, bool isMC=false,
        const char *outputFile="rootfiles/zjet.root",
        const char *goldenJsonFile="",
        const char *lumiPileupFile="",
-       const char *pileupWeightFile="");
+       const char *pileupWeightFile="",
+       const char *jecL2File="",
+       const char *jecResidualFile="");
    virtual ~zjet();
    virtual Int_t    Cut(Long64_t entry);
    virtual Int_t    GetEntry(Long64_t entry);
@@ -720,10 +724,12 @@ public :
 #ifdef zjet_cxx
 zjet::zjet(TTree *tree, bool _isMC, const char *_outputFile,
            const char *_goldenJsonFile, const char *_lumiPileupFile,
-           const char *_pileupWeightFile)
+           const char *_pileupWeightFile, const char *_jecL2File,
+           const char *_jecResidualFile)
   : fChain(0), isMC(_isMC), outputFile(_outputFile),
     goldenJsonFile(_goldenJsonFile), lumiPileupFile(_lumiPileupFile),
-    pileupWeightFile(_pileupWeightFile)
+    pileupWeightFile(_pileupWeightFile), jecL2File(_jecL2File),
+    jecResidualFile(_jecResidualFile)
 {
 // if parameter tree is not specified (or zero), connect the file
 // used to generate this class and read the Tree.
