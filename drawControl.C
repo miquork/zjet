@@ -7,6 +7,8 @@
 
 #include "tdrstyle_mod22.C"
 
+const double scale = 10*77.;
+
 void drawControl() {
 
   gSystem->mkdir("pdf/drawControl",true);
@@ -20,7 +22,8 @@ void drawControl() {
   TH1D *h_tranpt = (TH1D*)f->Get("control/h_tranpt"); assert(h_tranpt);
   TH1D *h_mixpt = (TH1D*)f->Get("control/h_mixpt");   assert(h_mixpt);
 
-  TH1D *h1_pt = tdrHist("h1_pt","N_{events} / GeV",1,5e3,"p_{T,Z} (GeV)",0,200);
+  TH1D *h1_pt = tdrHist("h1_pt","N_{events} / GeV",0.1*scale,5e4*scale,
+			"p_{T,Z} (GeV)",0,200);
   lumi_136TeV = "JMENano Summer24 DY";
   TCanvas *c1_pt = tdrCanvas("c1_pt",h1_pt,8,11,kSquare);
   gPad->SetLogy();
@@ -57,7 +60,8 @@ void drawControl() {
   TH1D *h_traneta = (TH1D*)f->Get("control/h_traneta"); assert(h_traneta);
   TH1D *h_mixeta = (TH1D*)f->Get("control/h_mixeta");   assert(h_mixeta);
 
-  TH1D *h1_eta = tdrHist("h1_eta","N_{events} / bin",0,1400,"#eta_{jet}",-5,5);
+  TH1D *h1_eta = tdrHist("h1_eta","N_{events} / bin",0,1400*scale,
+			 "#eta_{jet}",-5,5);
   lumi_136TeV = "JMENano Summer24 DY";
   TCanvas *c1_eta = tdrCanvas("c1_eta",h1_eta,8,11,kSquare);
 
@@ -90,7 +94,8 @@ void drawControl() {
   TH1D *h_dbt = (TH1D*)f->Get("control/h_dbt"); assert(h_dbt);
   TH1D *h_db = (TH1D*)f->Get("control/h_db");   assert(h_db);
 
-  TH1D *h1_db = tdrHist("h1_db","N_{events} / bin",0,900,"DB",0.,2.0);
+  TH1D *h1_db = tdrHist("h1_db","N_{events} / bin",0,900*scale,
+			"DB",0.,2.0);
   lumi_136TeV = "JMENano Summer24 DY";
   TCanvas *c1_db = tdrCanvas("c1_db",h1_db,8,11,kSquare);
 
@@ -123,7 +128,8 @@ void drawControl() {
   TH1D *h_mpft = (TH1D*)f->Get("control/h_mpft"); assert(h_mpft);
   TH1D *h_mpf = (TH1D*)f->Get("control/h_mpf");   assert(h_mpf);
 
-  TH1D *h1_mpf = tdrHist("h1_mpf","N_{events} / bin",0,0.5*900,"MPF",-3.0,4.0);
+  TH1D *h1_mpf = tdrHist("h1_mpf","N_{events} / bin",0,0.5*900*scale,
+			 "MPF",-3.0,4.0);
   lumi_136TeV = "JMENano Summer24 DY";
   TCanvas *c1_mpf = tdrCanvas("c1_mpf",h1_mpf,8,11,kSquare);
 
@@ -166,7 +172,7 @@ void drawControl() {
   c2_pteta->cd(1);
   h2_parpteta->Draw("COLZ");
   h2_parpteta->UseCurrentStyle();
-  h2_parpteta->GetZaxis()->SetRangeUser(1,150);
+  h2_parpteta->GetZaxis()->SetRangeUser(1,150*scale);
   h2_parpteta->GetXaxis()->SetTitle("p_{T,jet} (GeV)");
   h2_parpteta->GetYaxis()->SetTitle("#eta_{jet}");
 
@@ -176,7 +182,7 @@ void drawControl() {
   c2_pteta->cd(2);
   h2_tranpteta->Draw("COLZ");
   h2_tranpteta->UseCurrentStyle();
-  h2_tranpteta->GetZaxis()->SetRangeUser(1,150);
+  h2_tranpteta->GetZaxis()->SetRangeUser(1,150*scale);
   h2_tranpteta->GetXaxis()->SetTitle("p_{T,jet} (GeV)");
   h2_tranpteta->GetYaxis()->SetTitle("#eta_{jet}");
   
@@ -186,7 +192,7 @@ void drawControl() {
   c2_pteta->cd(3);
   h2_mixpteta->Draw("COLZ");
   h2_mixpteta->UseCurrentStyle();
-  h2_mixpteta->GetZaxis()->SetRangeUser(1,150);
+  h2_mixpteta->GetZaxis()->SetRangeUser(1,150*scale);
   h2_mixpteta->GetXaxis()->SetTitle("p_{T,jet} (GeV)");
   h2_mixpteta->GetYaxis()->SetTitle("#eta_{jet}");
   
