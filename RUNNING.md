@@ -367,10 +367,12 @@ python3 scripts/cleanup_condor.py run2024i_full \
   --delete --delete-remote-results
 ```
 
-The cleanup tool accepts only a directory below `condor/jobs`, requires the
-merge provenance to exist, and deletes only the exact EOS objects listed in
-that campaign's manifest. It keeps the small manifest directory so that the
-settings remain inspectable and remote partials can still be removed later.
+The cleanup tool accepts only a directory below `condor/jobs` and deletes only
+the exact EOS objects listed in that campaign's manifest. It normally requires
+merge provenance and keeps the small manifest directory so that the settings
+remain inspectable and remote partials can still be removed later. An
+intentionally abandoned smoke test can be cleaned without merging only by
+adding the explicit `--discard-unmerged` flag.
 
 Optional data certification, data pileup, and MC pileup-weight inputs can be
 transferred to every job with `--golden-json`, `--lumi-pileup`, and

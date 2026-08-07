@@ -44,6 +44,9 @@ def main() -> None:
     parser.add_argument(
         "--delete-remote-results", action="store_true",
         help="also remove exactly the EOS partial outputs listed in campaign.json")
+    parser.add_argument(
+        "--discard-unmerged", action="store_true",
+        help="allow removal of an intentionally abandoned, unmerged test campaign")
     parser.add_argument("--archive-dir", type=Path,
                         default=REPOSITORY/"rootfiles"/"campaigns")
     args = parser.parse_args()
@@ -72,13 +75,16 @@ def main() -> None:
             print("Add --delete-remote-results to remove EOS partial ROOT files too.")
         return
 
-    if not provenance.is_file() or not merge_log.is_file():
+    merged = provenance.is_file() and merge_log.is_file()
+    if not merged and not args.discard_unmerged:
         raise RuntimeError(
-            "merge provenance is missing; run scripts/merge_condor.py first")
+            "merge provenance is missing; merge first or explicitly pass "
+            "--discard-unmerged for an abandoned test campaign")
     archive_dir = args.archive_dir.expanduser().resolve()
     archive_dir.mkdir(parents=True,exist_ok=True)
-    shutil.copy2(provenance,archive_dir/provenance.name)
-    shutil.copy2(merge_log,archive_dir/merge_log.name)
+    if merged:
+        shutil.copy2(provenance,archive_dir/provenance.name)
+        shutil.copy2(merge_log,archive_dir/merge_log.name)
 
     if args.delete_remote_results:
         if not remote_results:
@@ -95,7 +101,10 @@ def main() -> None:
             removed.append(name)
     print(f"Removed campaign intermediates: {', '.join(removed) or 'none'}")
     print(f"Retained the small manifest in {campaign_dir}")
-    print(f"Archived provenance in {archive_dir}")
+    if merged:
+        print(f"Archived provenance in {archive_dir}")
+    else:
+        print("Discarded an unmerged campaign; no merge provenance was available.")
 
 
 if __name__ == "__main__":
