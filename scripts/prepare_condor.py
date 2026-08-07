@@ -2,12 +2,17 @@
 """Prepare a chunked CERN HTCondor campaign for the Z+jet analysis."""
 
 import argparse
+import hashlib
 import json
 import os
 import re
+import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+from condor_storage import normalize_remote_directory
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
@@ -44,6 +49,35 @@ def optional_input(path_value: str, label: str) -> Tuple[Optional[Path], str]:
     return path, path.name
 
 
+def sha256_bytes(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
+
+
+def file_description(path: Optional[Path]) -> Dict[str, object]:
+    if path is None:
+        return {"enabled": False}
+    return {
+        "enabled": True,
+        "basename": path.name,
+        "sha256": sha256_bytes(path.read_bytes()),
+    }
+
+
+def git_description() -> Dict[str, object]:
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=REPOSITORY, check=True,
+            text=True, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL).stdout.strip()
+        dirty = bool(subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            cwd=REPOSITORY, check=True, text=True, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL).stdout.strip())
+        return {"commit": commit, "tracked_files_modified": dirty}
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return {"commit": None, "tracked_files_modified": None}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mc-list", required=True, type=Path)
@@ -60,6 +94,11 @@ def main() -> None:
                         choices=("espresso", "microcentury", "longlunch",
                                  "workday", "tomorrow", "testmatch", "nextweek"))
     parser.add_argument("--retries", type=int, default=2)
+    parser.add_argument(
+        "--eos-results", default="",
+        help=("EOS root:// directory for partial ROOT files. This avoids "
+              "returning large outputs to AFS; for example "
+              "root://eosuser.cern.ch//eos/user/v/voutila/zjet/CAMPAIGN"))
     args = parser.parse_args()
 
     if not CAMPAIGN_PATTERN.fullmatch(args.campaign):
@@ -107,6 +146,8 @@ def main() -> None:
     if reserved_names.intersection(optional_names):
         raise ValueError("an optional input basename conflicts with source files")
 
+    eos_results = (normalize_remote_directory(args.eos_results)
+                   if args.eos_results else "")
     campaign_dir = REPOSITORY / "condor" / "jobs" / args.campaign
     if campaign_dir.exists():
         raise FileExistsError(
@@ -114,7 +155,9 @@ def main() -> None:
     chunk_dir = campaign_dir / "chunks"
     log_dir = campaign_dir / "logs"
     result_dir = campaign_dir / "results"
-    for directory in (chunk_dir,log_dir,result_dir):
+    directories = (chunk_dir,log_dir) if eos_results else \
+        (chunk_dir,log_dir,result_dir)
+    for directory in directories:
         directory.mkdir(parents=True,exist_ok=False)
 
     jobs: List[Dict[str, object]] = []
@@ -126,13 +169,15 @@ def main() -> None:
             chunk_path.write_text("".join(f"{value}\n" for value in group),
                                   encoding="utf-8")
             output_file = f"zjet_{output_tag}_{index:04d}.root"
+            result_path = (eos_results + output_file if eos_results else
+                           str((result_dir/output_file).resolve()))
             jobs.append({
                 "sample": sample,
                 "chunk_id": f"{index:04d}",
                 "chunk_name": chunk_name,
                 "chunk_path": str(chunk_path.relative_to(REPOSITORY)),
                 "output_file": output_file,
-                "result_path": str((result_dir/output_file).resolve()),
+                "result_path": result_path,
                 "input_files": len(group),
             })
 
@@ -144,6 +189,8 @@ def main() -> None:
             for job in jobs),
         encoding="utf-8")
 
+    selected_mc = "".join(f"{value}\n" for value in mc_files).encode("utf-8")
+    selected_data = "".join(f"{value}\n" for value in data_files).encode("utf-8")
     metadata = {
         "campaign": args.campaign,
         "created_utc": datetime.now(timezone.utc).isoformat(),
@@ -151,6 +198,30 @@ def main() -> None:
         "mc_files": len(mc_files),
         "data_files": len(data_files),
         "jobs": jobs,
+        "storage": {
+            "result_mode": "eos" if eos_results else "afs",
+            "result_directory": eos_results or str(result_dir.resolve()),
+        },
+        "source": git_description(),
+        "inputs": {
+            "mc_list": {"basename": mc_list.name,
+                        "selected_sha256": sha256_bytes(selected_mc)},
+            "data_list": {"basename": data_list.name,
+                          "selected_sha256": sha256_bytes(selected_data)},
+            "golden_json": file_description(golden_path),
+            "lumi_pileup": file_description(lumi_path),
+            "pileup_weights": file_description(weights_path),
+        },
+        "analysis": {
+            "method": ("all accepted Z-jet pairs; +90 and -90 degree "
+                       "sidebands, each with weight 0.5"),
+            "jet_pt": "Jet_pt stored in the input JMENANO",
+            "jec_recomputed_from_raw_pt": False,
+            "stored_residual_profile": "unity",
+            "jer_smearing": {"enabled": False},
+            "jet_veto_map": {"enabled": False},
+        },
+        "command": " ".join(sys.argv),
     }
     (campaign_dir/"campaign.json").write_text(
         json.dumps(metadata,indent=2) + "\n",encoding="utf-8")
@@ -164,6 +235,10 @@ def main() -> None:
     golden_argument = golden_name or "-"
     lumi_argument = lumi_name or "-"
     weights_argument = weights_name or "-"
+    output_directive = (f"output_destination = {eos_results}\n"
+                        "MY.XRDCP_CREATE_DIR = True\n"
+                        if eos_results else
+                        'transfer_output_remaps = "$(output_file)=$(result_path)"\n')
     submit_text = f"""universe = vanilla
 executable = condor/run_zjet_job.sh
 initialdir = {REPOSITORY}
@@ -187,7 +262,7 @@ should_transfer_files = YES
 when_to_transfer_output = ON_EXIT
 transfer_input_files = {','.join(transfer_inputs)}
 transfer_output_files = $(output_file)
-transfer_output_remaps = \"$(output_file)=$(result_path)\"
+{output_directive}
 
 on_exit_remove = (ExitBySignal == False) && (ExitCode == 0)
 max_retries = {args.retries}
@@ -203,7 +278,8 @@ queue sample,chunk_id,chunk_path,chunk_name,output_file,result_path from {manife
     print(f"Prepared campaign {args.campaign}: {len(mc_files)} MC files in "
           f"{mc_jobs} jobs and {len(data_files)} data files in {data_jobs} jobs.")
     print(f"Submit with: condor_submit {submit_path.relative_to(REPOSITORY)}")
-    print(f"Results will return to: {result_dir.relative_to(REPOSITORY)}")
+    print(f"Results will be written to: "
+          f"{eos_results or result_dir.relative_to(REPOSITORY)}")
     print(f"Check readiness with: python3 scripts/status_condor.py "
           f"{args.campaign}")
 

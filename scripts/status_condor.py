@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Dict, List
 
+from condor_storage import is_remote, remote_basenames
+
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 
@@ -29,6 +31,9 @@ def main() -> None:
     if not metadata_path.is_file():
         raise FileNotFoundError(f"campaign metadata not found: {metadata_path}")
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    result_directory = metadata.get("storage", {}).get("result_directory", "")
+    remote_results = is_remote(result_directory)
+    remote_files = remote_basenames(result_directory) if remote_results else set()
 
     counts: Dict[str, Dict[str, int]] = {
         sample: {"expected": 0, "ready": 0, "empty": 0, "missing": 0,
@@ -39,13 +44,21 @@ def main() -> None:
     for job in metadata["jobs"]:
         sample = job["sample"]
         chunk_id = job["chunk_id"]
-        result = Path(job["result_path"])
+        result_value = job["result_path"]
         log = campaign_dir/"logs"/f"{sample}_{chunk_id}.out"
         counts[sample]["expected"] += 1
 
-        if not result.exists():
+        if remote_results:
+            exists = job["output_file"] in remote_files
+            empty = False
+        else:
+            result = Path(result_value)
+            exists = result.exists()
+            empty = exists and result.stat().st_size == 0
+
+        if not exists:
             state = "missing"
-        elif result.stat().st_size == 0:
+        elif empty:
             state = "empty"
         elif not log.is_file() or "Job finished successfully" not in \
                 log.read_text(encoding="utf-8",errors="replace"):
@@ -59,6 +72,7 @@ def main() -> None:
     print(f"Campaign: {metadata['campaign']}")
     print(f"Input files: {metadata['mc_files']} MC, "
           f"{metadata['data_files']} data")
+    print(f"Partial results: {result_directory}")
     for sample in ("mc","data"):
         item = counts[sample]
         print(f"{sample.upper():4s}: {item['ready']}/{item['expected']} ready; "

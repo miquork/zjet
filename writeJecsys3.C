@@ -3,6 +3,7 @@
 #include "TFile.h"
 #include "TKey.h"
 #include "TNamed.h"
+#include "TObjString.h"
 #include "TProfile2D.h"
 #include "TROOT.h"
 
@@ -45,8 +46,8 @@ void copySample(TFile *source, TFile *target, const char *sample) {
 
 } // namespace
 
-// Create the hierarchy expected by jecsys3/L2Res.C. Point both the DATA and
-// MC entries in jecsys3/Config.C to the resulting combined file.
+// Create the raw-profile hierarchy expected by jecsys3/L2Res.C and L3Res.C.
+// This is not the high-level eta-bin hierarchy consumed by reprocess.C.
 void writeJecsys3(
   const char *dataFile="rootfiles/zjet_DATA.root",
   const char *mcFile="rootfiles/zjet_MC.root",
@@ -61,6 +62,8 @@ void writeJecsys3(
     TProfile2D *residual = dynamic_cast<TProfile2D*>(source->Get("l2res/p2restc"));
     assert(response && response->GetEntries()>0);
     assert(residual && residual->GetEntries()>0);
+    assert(source->Get("l2res/p2jes"));
+    assert(source->Get("l2res/p2res"));
   }
 
   TFile output(outputFile,"RECREATE");
@@ -71,6 +74,10 @@ void writeJecsys3(
   TNamed method("zjet_method",
                 "all accepted Z-jet pairs; two transverse sidebands with half weight");
   method.Write();
+  if (TObjString *metadata =
+        dynamic_cast<TObjString*>(data.Get("zjet_campaign_metadata"))) {
+    metadata->Write("zjet_campaign_metadata",TObject::kOverwrite);
+  }
   output.Write();
   output.Close();
 }

@@ -121,7 +121,20 @@ Pileup and truth-matching controls are produced with:
 root -l -b -q drawPileupControl.C
 ```
 
-The latter writes DB and hybrid-MPF profiles versus `PV_npvs`, `rho`, and
+An optional data overlay for the four one-dimensional controls is produced
+with:
+
+```bash
+root -l -b -q drawControlData.C
+```
+
+Data is normalized once to the MC parallel-region yield over
+`30 < pT(Z) < 200 GeV`; the same scale is used for every plot. This preserves
+the relative parallel, transverse, and subtracted yields instead of silently
+renormalizing each distribution. Input paths and the normalization interval
+can be changed through the macro arguments.
+
+`drawPileupControl.C` writes DB and hybrid-MPF profiles versus `PV_npvs`, `rho`, and
 `mu`, together with selection efficiencies, truth-matched versus unmatched
 jet controls, matching-definition comparisons, explicit signed-yield ratios,
 and eta-split closure plots under `pdf/drawPileupControl/`. The primary MC
@@ -129,9 +142,10 @@ pileup-jet definition is a missing valid `Jet_genJetIdx`. Extra generator-pT
 and DeltaR cuts are retained only as a diagnostic comparison because the
 NanoAOD index already encodes the reco-to-gen match.
 
-## jecsys3 compatibility file
+## jecsys3 raw-profile compatibility file
 
-Create the combined directory hierarchy expected by `jecsys3/L2Res.C`:
+Create the combined directory hierarchy expected by the standalone
+`jecsys3/L2Res.C` and `jecsys3/L3Res.C` macros:
 
 ```bash
 root -l -b -q writeJecsys3.C
@@ -142,6 +156,13 @@ The default output is `rootfiles/zjet_JMENANO_compat.root`, containing
 `ZMM_<era>_DATA` and `ZMM_<era>_MC` entries in `jecsys3/Config.C` to this same
 file when testing the new method. Keeping the old file paths in a separate
 configuration makes the old/new comparison reversible.
+
+This file is not yet a drop-in input for the main `reprocess.C` workflow.
+`reprocess.C` additionally expects the processed per-eta response, mass,
+count, rho, and PF-composition objects. The distinction is intentional: a
+partial directory translation must not be presented as a complete global-fit
+input. The campaign metadata object is copied to the compatibility file when
+it is present in the merged data file.
 
 ## lxplus small-file validation
 
@@ -276,38 +297,80 @@ Both logs must end in `Job finished successfully`, and both ROOT files must be
 present. The worker validates the proxy FQAN and output cutflow. Transient
 worker failures are retried twice on a different worker.
 
-After the smoke test succeeds, prepare and submit the full campaign:
+After the smoke test succeeds, prepare and submit the full campaign. Store the
+large partial ROOT files in EOS, not below the AFS checkout. CERN's batch
+XRootD transfer plugin uses the active Kerberos identity for this EOS transfer;
+the X.509 proxy is still needed separately by the analysis to read CMS input
+files.
 
 ```bash
 python3 scripts/prepare_condor.py \
   --mc-list textfiles/generated/summer24_mc.txt \
   --data-list textfiles/generated/run2024i_data.txt \
   --campaign run2024i_full \
-  --files-per-job 10
+  --files-per-job 10 \
+  --job-flavour workday \
+  --eos-results \
+    root://eosuser.cern.ch//eos/user/v/voutila/zjet/run2024i_full
 
 condor_submit condor/jobs/run2024i_full/zjet.sub
 ```
 
 `condor_submit` returns immediately; the campaign continues after the SSH
 connection closes. The generated submit file requests one CPU, 2 GB of memory,
-EL9, the two-hour `longlunch` flavour, and an HTCondor-delegated X.509 proxy.
+EL9, the selected job flavour, and an HTCondor-delegated X.509 proxy.
 The source is compiled inside each worker scratch directory, so compiled files
 are never shared between concurrent jobs.
+
+The generated `campaign.json` records the Git commit and dirty state, hashes
+and basenames of the input lists and optional correction files, the golden-JSON
+state, and the currently implemented JEC/JER/veto-map state. It intentionally
+does not copy the full private file URLs into the publishable provenance.
 
 In the morning, wait until `condor_q` shows no campaign jobs and merge only
 after every expected output has returned:
 
 ```bash
 python3 scripts/status_condor.py run2024i_full
-python3 scripts/merge_condor.py run2024i_full --force
+python3 scripts/merge_condor.py run2024i_full \
+  --output-dir \
+    root://eosuser.cern.ch//eos/user/v/voutila/zjet/run2024i_full/merged
 ```
 
 The status tool prints `READY TO MERGE` only after every output is non-empty
 and its worker log ends successfully. The merge tool independently refuses to
 run if any expected job output is missing or empty.
-Without `--force`, it also refuses to replace existing
-`rootfiles/zjet_MC.root` and `rootfiles/zjet_DATA.root`. After merging, rerun
-the normal control plots and compatibility writer.
+Without `--force`, it also refuses to replace existing output files. With an
+EOS output directory, the merge uses a local temporary directory and uploads
+the two merged outputs, their JSON provenance, and a human-readable merge log
+to EOS. The same JSON is embedded in both ROOT files as
+`zjet_campaign_metadata`.
+
+To merge into the checkout instead, omit `--output-dir`. This consumes the
+size of the final two files in AFS, but not an additional same-sized temporary
+file. After merging, rerun the normal control plots and compatibility writer.
+
+Inspect the space occupied by an old campaign before deleting anything:
+
+```bash
+python3 scripts/cleanup_condor.py run2024i_full
+```
+
+After a successful merge, archive its small provenance files and remove the
+AFS logs/chunks. Add the second flag only when the EOS partial files are no
+longer needed:
+
+```bash
+python3 scripts/cleanup_condor.py run2024i_full --delete
+# Or, when the EOS partial outputs are no longer needed:
+python3 scripts/cleanup_condor.py run2024i_full \
+  --delete --delete-remote-results
+```
+
+The cleanup tool accepts only a directory below `condor/jobs`, requires the
+merge provenance to exist, and deletes only the exact EOS objects listed in
+that campaign's manifest. It keeps the small manifest directory so that the
+settings remain inspectable and remote partials can still be removed later.
 
 Optional data certification, data pileup, and MC pileup-weight inputs can be
 transferred to every job with `--golden-json`, `--lumi-pileup`, and
