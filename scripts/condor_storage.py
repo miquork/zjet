@@ -48,6 +48,8 @@ def remote_basenames(directory: str) -> Set[str]:
             "neither xrdfs nor gfal-ls is available; run this on lxplus") from error
     except subprocess.CalledProcessError as error:
         detail = error.stderr.strip() or error.stdout.strip()
+        if "No such file or directory" in detail:
+            return set()
         raise RuntimeError(
             "could not list EOS result directory; check klist and the URL: "
             f"{detail}") from error
