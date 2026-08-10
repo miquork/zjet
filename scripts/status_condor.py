@@ -32,6 +32,8 @@ def main() -> None:
         raise FileNotFoundError(f"campaign metadata not found: {metadata_path}")
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     result_directory = metadata.get("storage", {}).get("result_directory", "")
+    log_directory = Path(metadata.get("storage", {}).get(
+        "log_directory",campaign_dir/"logs"))
     remote_results = is_remote(result_directory)
     remote_files = remote_basenames(result_directory) if remote_results else set()
 
@@ -45,7 +47,7 @@ def main() -> None:
         sample = job["sample"]
         chunk_id = job["chunk_id"]
         result_value = job["result_path"]
-        log = campaign_dir/"logs"/f"{sample}_{chunk_id}.out"
+        log = log_directory/f"{sample}_{chunk_id}.out"
         counts[sample]["expected"] += 1
 
         if remote_results:
@@ -73,6 +75,7 @@ def main() -> None:
     print(f"Input files: {metadata['mc_files']} MC, "
           f"{metadata['data_files']} data")
     print(f"Partial results: {result_directory}")
+    print(f"Job logs: {log_directory}")
     for sample in ("mc","data"):
         item = counts[sample]
         print(f"{sample.upper():4s}: {item['ready']}/{item['expected']} ready; "

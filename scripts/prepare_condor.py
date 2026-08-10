@@ -109,6 +109,11 @@ def main() -> None:
         help=("EOS root:// directory for partial ROOT files. This avoids "
               "returning large outputs to AFS; for example "
               "root://eosuser.cern.ch//eos/user/v/voutila/zjet/CAMPAIGN"))
+    parser.add_argument(
+        "--log-dir", type=Path, default=None,
+        help=("AFS directory for stdout, stderr and the HTCondor event log. "
+              "Use an /afs/cern.ch/work/... path when the home AFS quota is "
+              "small; the default is inside the campaign directory."))
     args = parser.parse_args()
 
     if not CAMPAIGN_PATTERN.fullmatch(args.campaign):
@@ -166,7 +171,11 @@ def main() -> None:
         raise FileExistsError(
             f"campaign directory already exists: {campaign_dir}; use a new name")
     chunk_dir = campaign_dir / "chunks"
-    log_dir = campaign_dir / "logs"
+    log_dir = (args.log_dir.expanduser().resolve()
+               if args.log_dir else campaign_dir / "logs")
+    if args.log_dir and log_dir.exists():
+        raise FileExistsError(
+            f"external log directory already exists: {log_dir}; use a new path")
     result_dir = campaign_dir / "results"
     directories = (chunk_dir,log_dir) if eos_results else \
         (chunk_dir,log_dir,result_dir)
@@ -222,6 +231,7 @@ def main() -> None:
         "storage": {
             "result_mode": "eos" if eos_results else "afs",
             "result_directory": eos_results or str(result_dir.resolve()),
+            "log_directory": str(log_dir.resolve()),
         },
         "source": git_description(),
         "inputs": {
@@ -336,6 +346,7 @@ queue {','.join(manifest_fields)} from {manifest_path}
     print(f"Submit with: condor_submit {submit_path.relative_to(REPOSITORY)}")
     print(f"Results will be written to: "
           f"{eos_results or result_dir.relative_to(REPOSITORY)}")
+    print(f"Job logs will be written to: {log_dir}")
     print(f"Check readiness with: python3 scripts/status_condor.py "
           f"{args.campaign}")
 

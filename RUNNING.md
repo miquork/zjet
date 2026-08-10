@@ -325,6 +325,8 @@ python3 scripts/prepare_condor.py \
   --files-per-job 10 \
   --job-flavour workday \
   --golden-json data/Cert_Collisions2024_378981_386951_Golden.json \
+  --log-dir \
+    /afs/cern.ch/work/v/voutila/zjet-condor/run2024i_full \
   --eos-results \
     root://eosuser.cern.ch//eos/user/v/voutila/zjet/run2024i_full
 
@@ -345,6 +347,13 @@ and the jet veto map remain disabled until their physics implementation is
 validated; this is recorded explicitly rather than inferred from the presence
 of files.
 
+The `--log-dir` path keeps stdout, stderr and the HTCondor event log outside
+the limited home AFS volume. Use a new campaign-specific directory below the
+CERN AFS work area. Do not use an `/eos/...` FUSE path for these submit-file
+fields; large ROOT outputs are transferred separately to the `root://`
+destination by HTCondor's XRootD plug-in. The selected log directory is stored
+in `campaign.json` and used automatically by `status_condor.py`.
+
 In the morning, wait until `condor_q` shows no campaign jobs and merge only
 after every expected output has returned:
 
@@ -363,6 +372,40 @@ EOS output directory, the merge uses a local temporary directory and uploads
 the two merged outputs, their JSON provenance, and a human-readable merge log
 to EOS. The same JSON is embedded in both ROOT files as
 `zjet_campaign_metadata`.
+
+### Recovering an AFS log quota hold
+
+A job held with code `12/122` and a reason naming its `.out` or `.err` file has
+finished the payload but could not return a standard-stream log because the
+AFS quota was exhausted. Do not remove the jobs. Either free enough space and
+release the cluster, or redirect the held jobs to a campaign-specific AFS work
+directory before releasing them:
+
+```bash
+cluster_id=1234567
+recovery_logs=/afs/cern.ch/work/u/username/zjet-condor/recovery_1234567
+mkdir -p "$recovery_logs"
+chmod 700 "$recovery_logs"
+
+while read -r proc_id old_out old_err; do
+  condor_qedit "${cluster_id}.${proc_id}" Out \
+    "\"${recovery_logs}/${old_out##*/}\""
+  condor_qedit "${cluster_id}.${proc_id}" Err \
+    "\"${recovery_logs}/${old_err##*/}\""
+done < <(condor_q -constraint \
+  "ClusterId == ${cluster_id} && JobStatus == 5" -af ProcId Out Err)
+
+condor_qedit -constraint \
+  "ClusterId == ${cluster_id} && JobStatus == 5" UserLog \
+  "\"${recovery_logs}/condor.log\""
+condor_release "$cluster_id"
+```
+
+Changing `Out`, `Err` and `UserLog` preserves the EOS `output_destination` for
+the ROOT files. Check EOS and `condor_q -hold` again after the release. A
+released transfer hold may retry the transfer or restart the payload, so do not
+delete any existing EOS partial output until the cluster has reached a stable
+completed state.
 
 To merge into the checkout instead, omit `--output-dir`. This consumes the
 size of the final two files in AFS, but not an additional same-sized temporary
