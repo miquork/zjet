@@ -24,6 +24,10 @@ def main() -> None:
     parser.add_argument("campaign", help="campaign name or directory")
     parser.add_argument("--details", action="store_true",
                         help="list every job that is not ready")
+    parser.add_argument(
+        "--additional-log-dir", action="append", type=Path, default=[],
+        help=("also search this directory for worker .out logs; repeat for "
+              "campaigns recovered from an AFS quota hold"))
     args = parser.parse_args()
 
     campaign_dir = campaign_path(args.campaign)
@@ -32,8 +36,13 @@ def main() -> None:
         raise FileNotFoundError(f"campaign metadata not found: {metadata_path}")
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     result_directory = metadata.get("storage", {}).get("result_directory", "")
-    log_directory = Path(metadata.get("storage", {}).get(
+    configured_log_directory = Path(metadata.get("storage", {}).get(
         "log_directory",campaign_dir/"logs"))
+    log_directories = [configured_log_directory]
+    for value in args.additional_log_dir:
+        directory = value.expanduser().resolve()
+        if directory not in log_directories:
+            log_directories.append(directory)
     remote_results = is_remote(result_directory)
     remote_files = remote_basenames(result_directory) if remote_results else set()
 
@@ -47,7 +56,8 @@ def main() -> None:
         sample = job["sample"]
         chunk_id = job["chunk_id"]
         result_value = job["result_path"]
-        log = log_directory/f"{sample}_{chunk_id}.out"
+        logs = [directory/f"{sample}_{chunk_id}.out"
+                for directory in log_directories]
         counts[sample]["expected"] += 1
 
         if remote_results:
@@ -62,8 +72,9 @@ def main() -> None:
             state = "missing"
         elif empty:
             state = "empty"
-        elif not log.is_file() or "Job finished successfully" not in \
-                log.read_text(encoding="utf-8",errors="replace"):
+        elif not any(log.is_file() and "Job finished successfully" in
+                     log.read_text(encoding="utf-8",errors="replace")
+                     for log in logs):
             state = "unvalidated"
         else:
             state = "ready"
@@ -75,7 +86,7 @@ def main() -> None:
     print(f"Input files: {metadata['mc_files']} MC, "
           f"{metadata['data_files']} data")
     print(f"Partial results: {result_directory}")
-    print(f"Job logs: {log_directory}")
+    print("Job logs: " + ", ".join(str(path) for path in log_directories))
     for sample in ("mc","data"):
         item = counts[sample]
         print(f"{sample.upper():4s}: {item['ready']}/{item['expected']} ready; "

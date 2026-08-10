@@ -399,6 +399,9 @@ condor_qedit -constraint \
   "ClusterId == ${cluster_id} && JobStatus == 5" UserLog \
   "\"${recovery_logs}/condor.log\""
 condor_release "$cluster_id"
+
+python3 scripts/status_condor.py run2024i_full \
+  --additional-log-dir "$recovery_logs"
 ```
 
 Changing `Out`, `Err` and `UserLog` preserves the EOS `output_destination` for
