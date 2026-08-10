@@ -9,28 +9,74 @@
 #include "TProfile2D.h"
 #include "TROOT.h"
 
-#include <cassert>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace {
 
+template <typename ObjectType>
+ObjectType *requireObject(TDirectory *source, const std::string &path) {
+  if (!source)
+    throw std::runtime_error("Cannot read " + path + " from a null directory");
+  TObject *object = source->Get(path.c_str());
+  if (!object)
+    throw std::runtime_error(
+      "Missing object " + std::string(source->GetName()) + ":" + path);
+  ObjectType *typed = dynamic_cast<ObjectType*>(object);
+  if (!typed)
+    throw std::runtime_error(
+      "Object " + std::string(source->GetName()) + ":" + path +
+      " has class " + object->ClassName() + ", expected " +
+      ObjectType::Class()->GetName());
+  return typed;
+}
+
+TDirectory *requireDirectory(TDirectory *source, const std::string &path) {
+  if (!source)
+    throw std::runtime_error("Cannot read " + path + " from a null directory");
+  TDirectory *directory = source->GetDirectory(path.c_str());
+  if (!directory)
+    throw std::runtime_error(
+      "Missing directory " + std::string(source->GetName()) + ":" + path);
+  return directory;
+}
+
+TDirectory *makeDirectory(TDirectory *parent, const char *name) {
+  if (!parent)
+    throw std::runtime_error(
+      "Cannot create directory " + std::string(name) + " below null parent");
+  TDirectory *directory = parent->mkdir(name);
+  if (!directory)
+    throw std::runtime_error(
+      "Failed to create directory " + std::string(parent->GetName()) + "/" +
+      name);
+  return directory;
+}
+
 void copyDirectory(TDirectory *source, TDirectory *target) {
-  assert(source);
-  assert(target);
+  if (!source || !target)
+    throw std::runtime_error("copyDirectory received a null directory");
 
   TIter next(source->GetListOfKeys());
   while (TKey *key = static_cast<TKey*>(next())) {
     TClass *objectClass = gROOT->GetClass(key->GetClassName());
-    assert(objectClass);
+    if (!objectClass)
+      throw std::runtime_error(
+        "Unknown ROOT class " + std::string(key->GetClassName()) + " for " +
+        source->GetPath() + "/" + key->GetName());
     if (objectClass->InheritsFrom(TDirectory::Class())) {
-      TDirectory *sourceChild = source->GetDirectory(key->GetName());
-      TDirectory *targetChild = target->mkdir(key->GetName());
+      TDirectory *sourceChild = requireDirectory(source,key->GetName());
+      TDirectory *targetChild = makeDirectory(target,key->GetName());
       copyDirectory(sourceChild,targetChild);
     }
     else {
       TObject *object = key->ReadObj();
+      if (!object)
+        throw std::runtime_error(
+          "Failed to read " + std::string(source->GetPath()) + "/" +
+          key->GetName());
       target->cd();
       object->Write(key->GetName());
       delete object;
@@ -41,12 +87,14 @@ void copyDirectory(TDirectory *source, TDirectory *target) {
 void writeProfile(TFile *source, TDirectory *target,
                   const char *sourceName, const char *targetName,
                   int firstEtaBin, int lastEtaBin) {
-  TProfile2D *profile =
-    dynamic_cast<TProfile2D*>(source->Get(Form("l2res/%s",sourceName)));
-  assert(profile);
+  TProfile2D *profile = requireObject<TProfile2D>(
+    source,"l2res/" + std::string(sourceName));
   TProfile *projection =
     profile->ProfileY(Form("tmp_%s",targetName),firstEtaBin,lastEtaBin);
-  assert(projection);
+  if (!projection)
+    throw std::runtime_error(
+      "Failed to project " + std::string(source->GetName()) + ":l2res/" +
+      sourceName);
   projection->SetDirectory(nullptr);
   target->cd();
   projection->Write(targetName);
@@ -55,11 +103,13 @@ void writeProfile(TFile *source, TDirectory *target,
 
 void writeCounts(TFile *source, TDirectory *target,
                  int firstEtaBin, int lastEtaBin) {
-  TH2D *counts = dynamic_cast<TH2D*>(source->Get("l2res/h2ptetatc"));
-  assert(counts);
+  TH2D *counts = requireObject<TH2D>(source,"l2res/h2ptetatc");
   TH1D *projection = counts->ProjectionY(
     "statistics_rmpf_zmmjet_a100",firstEtaBin,lastEtaBin,"e");
-  assert(projection);
+  if (!projection)
+    throw std::runtime_error(
+      "Failed to project " + std::string(source->GetName()) +
+      ":l2res/h2ptetatc");
   projection->SetDirectory(nullptr);
   target->cd();
   projection->Write();
@@ -69,13 +119,11 @@ void writeCounts(TFile *source, TDirectory *target,
 void writeGlobalFitInputs(TFile *source, TDirectory *sampleDirectory,
                           bool isMC) {
   TProfile2D *etaReference =
-    dynamic_cast<TProfile2D*>(source->Get("l2res/p2m0tc"));
-  assert(etaReference);
+    requireObject<TProfile2D>(source,"l2res/p2m0tc");
   const int firstEtaBin = etaReference->GetXaxis()->FindFixBin(0.+1.e-6);
   const int lastEtaBin = etaReference->GetXaxis()->FindFixBin(1.305-1.e-6);
 
-  TDirectory *etaDirectory = sampleDirectory->mkdir("eta_00_13");
-  assert(etaDirectory);
+  TDirectory *etaDirectory = makeDirectory(sampleDirectory,"eta_00_13");
   const std::vector<std::pair<std::string,std::string> > profiles = {
     {"p2m0tc", "rmpf_zmmjet_a100"},
     {"p2m2tc", "rmpfjet1_zmmjet_a100"},
@@ -97,23 +145,20 @@ void writeGlobalFitInputs(TFile *source, TDirectory *sampleDirectory,
                  firstEtaBin,lastEtaBin);
   writeCounts(source,etaDirectory,firstEtaBin,lastEtaBin);
 
-  TH2D *mass = dynamic_cast<TH2D*>(source->Get("l2res/h2mztc"));
-  assert(mass);
+  TH2D *mass = requireObject<TH2D>(source,"l2res/h2mztc");
   etaDirectory->cd();
   mass->Write("h_Zpt_mZ_alpha100");
 }
 
 void copySample(TFile *source, TFile *target, const char *sample,
                 bool isMC) {
-  TDirectory *sampleDirectory = target->mkdir(sample);
-  assert(sampleDirectory);
+  TDirectory *sampleDirectory = makeDirectory(target,sample);
+  writeGlobalFitInputs(source,sampleDirectory,isMC);
   for (const char *name : {"l2res","l2res1"}) {
-    TDirectory *sourceDirectory = source->GetDirectory(name);
-    assert(sourceDirectory);
-    TDirectory *targetDirectory = sampleDirectory->mkdir(name);
+    TDirectory *sourceDirectory = requireDirectory(source,name);
+    TDirectory *targetDirectory = makeDirectory(sampleDirectory,name);
     copyDirectory(sourceDirectory,targetDirectory);
   }
-  writeGlobalFitInputs(source,sampleDirectory,isMC);
 }
 
 } // namespace
@@ -127,22 +172,40 @@ void writeJecsys3(
   const char *outputFile="rootfiles/zjet_JMENANO_compat.root") {
   TFile data(dataFile,"READ");
   TFile mc(mcFile,"READ");
-  assert(!data.IsZombie());
-  assert(!mc.IsZombie());
+  if (data.IsZombie())
+    throw std::runtime_error("Failed to open data input " +
+                             std::string(dataFile));
+  if (mc.IsZombie())
+    throw std::runtime_error("Failed to open MC input " + std::string(mcFile));
 
-  for (TFile *source : {&data,&mc}) {
-    TProfile2D *response = dynamic_cast<TProfile2D*>(source->Get("l2res/p2m0tc"));
-    TProfile2D *residual = dynamic_cast<TProfile2D*>(source->Get("l2res/p2restc"));
-    assert(response && response->GetEntries()>0);
-    assert(residual && residual->GetEntries()>0);
-    assert(source->Get("l2res/p2jes"));
-    assert(source->Get("l2res/p2res"));
-    assert(source->Get("l2res/p2chftc"));
-    assert(source->Get("l2res/h2mztc"));
+  for (const auto &sample :
+       std::vector<std::pair<TFile*,bool> >{{&data,false},{&mc,true}}) {
+    TFile *source = sample.first;
+    requireDirectory(source,"l2res");
+    requireDirectory(source,"l2res1");
+    const std::vector<std::string> requiredProfiles = {
+      "p2m0tc", "p2m2tc", "p2mntc", "p2mutc", "p2restc", "p2jes",
+      "p2res", "p2chftc", "p2neftc", "p2nhftc", "p2ceftc", "p2muftc",
+      "p2rhotc",
+    };
+    for (const std::string &name : requiredProfiles)
+      requireObject<TProfile2D>(source,"l2res/" + name);
+    if (sample.second)
+      requireObject<TProfile2D>(source,"l2res/p2rgentc");
+    requireObject<TH2D>(source,"l2res/h2ptetatc");
+    requireObject<TH2D>(source,"l2res/h2mztc");
+    if (requireObject<TProfile2D>(source,"l2res/p2m0tc")->GetEntries()<=0)
+      throw std::runtime_error(
+        "Response profile has no entries in " + std::string(source->GetName()));
+    if (requireObject<TProfile2D>(source,"l2res/p2restc")->GetEntries()<=0)
+      throw std::runtime_error(
+        "Residual profile has no entries in " + std::string(source->GetName()));
   }
 
   TFile output(outputFile,"RECREATE");
-  assert(!output.IsZombie());
+  if (output.IsZombie())
+    throw std::runtime_error("Failed to create output " +
+                             std::string(outputFile));
   copySample(&data,&output,"data",false);
   copySample(&mc,&output,"mc",true);
   output.cd();

@@ -194,11 +194,19 @@ def main() -> None:
                 "input_files": len(group),
             })
 
+    # Keep the submit manifest limited to values referenced by the submit
+    # description.  Descriptive values such as chunk_name and the per-job EOS
+    # result URL remain available in campaign.json.  HTCondor warns about Queue
+    # columns which are not expanded anywhere in the submit description.
     manifest_path = campaign_dir / "jobs.tsv"
+    if eos_results:
+        manifest_fields = ("sample", "chunk_id", "chunk_path", "output_file")
+    else:
+        manifest_fields = (
+            "sample", "chunk_id", "chunk_path", "output_file", "result_path")
     manifest_path.write_text(
         "".join(
-            "{sample}\t{chunk_id}\t{chunk_path}\t{chunk_name}\t"
-            "{output_file}\t{result_path}\n".format(**job)
+            "\t".join(str(job[field]) for field in manifest_fields) + "\n"
             for job in jobs),
         encoding="utf-8")
 
@@ -316,7 +324,7 @@ on_exit_remove = (ExitBySignal == False) && (ExitCode == 0)
 max_retries = {args.retries}
 requirements = (Machine =!= split(LastRemoteHost, \"@\")[1])
 
-queue sample,chunk_id,chunk_path,chunk_name,output_file,result_path from {manifest_path}
+queue {','.join(manifest_fields)} from {manifest_path}
 """
     submit_path = campaign_dir / "zjet.sub"
     submit_path.write_text(submit_text,encoding="utf-8")
