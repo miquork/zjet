@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Dict, List
 
-from condor_storage import is_remote, remote_basenames
+from condor_storage import is_remote, remote_file_sizes
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
@@ -44,7 +44,7 @@ def main() -> None:
         if directory not in log_directories:
             log_directories.append(directory)
     remote_results = is_remote(result_directory)
-    remote_files = remote_basenames(result_directory) if remote_results else set()
+    remote_sizes = remote_file_sizes(result_directory) if remote_results else {}
 
     counts: Dict[str, Dict[str, int]] = {
         sample: {"expected": 0, "ready": 0, "empty": 0, "missing": 0,
@@ -61,8 +61,8 @@ def main() -> None:
         counts[sample]["expected"] += 1
 
         if remote_results:
-            exists = job["output_file"] in remote_files
-            empty = False
+            exists = job["output_file"] in remote_sizes
+            empty = exists and remote_sizes[job["output_file"]] == 0
         else:
             result = Path(result_value)
             exists = result.exists()

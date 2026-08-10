@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import Dict, List, Union
 
 from condor_storage import (ensure_remote_directory, is_remote,
-                            normalize_remote_directory, remote_basenames)
+                            normalize_remote_directory, remote_basenames,
+                            remote_file_sizes)
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
@@ -103,13 +104,13 @@ def main() -> None:
 
     result_directory = metadata.get("storage", {}).get("result_directory", "")
     remote_results = is_remote(result_directory)
-    remote_files = remote_basenames(result_directory) if remote_results else set()
+    remote_sizes = remote_file_sizes(result_directory) if remote_results else {}
     groups: Dict[str, List[str]] = {"mc": [], "data": []}
     missing: List[str] = []
     for job in metadata["jobs"]:
         value = job["result_path"]
         if remote_results:
-            valid = job["output_file"] in remote_files
+            valid = remote_sizes.get(job["output_file"],0)>0
         else:
             path = Path(value)
             valid = path.is_file() and path.stat().st_size > 0
