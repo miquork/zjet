@@ -1,5 +1,6 @@
 #include "TDirectory.h"
 #include "TFile.h"
+#include "TH1.h"
 #include "TH1D.h"
 #include "TH2D.h"
 #include "TKey.h"
@@ -142,6 +143,60 @@ void writeResponseBinning(TFile *source, TDirectory *target,
               firstEtaBin,lastEtaBin);
 }
 
+void writeEmptyFlavorObject(TDirectory *models, TDirectory *target,
+                            const std::string &baseName,
+                            const std::string &tag) {
+  const std::string modelName = baseName + "_zmmjet_a100";
+  TH1 *model = requireObject<TH1>(models,modelName);
+  const std::string targetName = baseName + tag + "_zmmjet_a100";
+  TH1 *placeholder = dynamic_cast<TH1*>(model->Clone(targetName.c_str()));
+  if (!placeholder)
+    throw std::runtime_error("Failed to clone flavor placeholder " + targetName);
+  placeholder->Reset("ICES");
+  placeholder->SetDirectory(nullptr);
+  placeholder->SetTitle("PLACEHOLDER: Z+flavor analysis not implemented");
+  target->cd();
+  placeholder->Write();
+  delete placeholder;
+}
+
+void writeEmptyFlavorSet(TDirectory *models, TDirectory *target,
+                         const std::string &tag, bool isMC) {
+  const std::vector<std::string> common = {
+    "statistics_rmpf", "rmpf", "rmpfjet1", "rmpfjetn", "rmpfuncl",
+  };
+  for (const std::string &baseName : common)
+    writeEmptyFlavorObject(models,target,baseName,tag);
+  if (isMC) {
+    writeEmptyFlavorObject(models,target,"rbal",tag);
+    writeEmptyFlavorObject(models,target,"rgenjet1",tag);
+  }
+}
+
+void writeFlavorPlaceholders(TDirectory *sampleDirectory, bool isMC) {
+  TDirectory *inclusive = requireDirectory(sampleDirectory,"eta_00_13");
+  const std::vector<std::string> recoTags = {
+    "_btag", "_ctag", "_quarktag", "_gluontag", "_notag",
+  };
+  for (const std::string &tag : recoTags)
+    writeEmptyFlavorSet(inclusive,inclusive,tag,isMC);
+
+  if (!isMC)
+    return;
+  const std::vector<std::string> genDirectories = {
+    "eta_00_13_genb", "eta_00_13_genc", "eta_00_13_genuds",
+    "eta_00_13_geng", "eta_00_13_unclassified",
+  };
+  const std::vector<std::string> allRecoTags = {
+    "", "_btag", "_ctag", "_quarktag", "_gluontag", "_notag",
+  };
+  for (const std::string &directoryName : genDirectories) {
+    TDirectory *directory = makeDirectory(sampleDirectory,directoryName.c_str());
+    for (const std::string &tag : allRecoTags)
+      writeEmptyFlavorSet(inclusive,directory,tag,true);
+  }
+}
+
 void writeGlobalFitInputs(TFile *source, TDirectory *sampleDirectory,
                           bool isMC) {
   TProfile2D *etaReference =
@@ -182,9 +237,11 @@ void writeGlobalFitInputs(TFile *source, TDirectory *sampleDirectory,
 }
 
 void copySample(TFile *source, TFile *target, const char *sample,
-                bool isMC) {
+                bool isMC, bool addFlavorPlaceholders) {
   TDirectory *sampleDirectory = makeDirectory(target,sample);
   writeGlobalFitInputs(source,sampleDirectory,isMC);
+  if (addFlavorPlaceholders)
+    writeFlavorPlaceholders(sampleDirectory,isMC);
   for (const char *name : {"l2res","l2res1"}) {
     TDirectory *sourceDirectory = requireDirectory(source,name);
     TDirectory *targetDirectory = makeDirectory(sampleDirectory,name);
@@ -200,7 +257,8 @@ void copySample(TFile *source, TFile *target, const char *sample,
 void writeJecsys3(
   const char *dataFile="rootfiles/zjet_DATA.root",
   const char *mcFile="rootfiles/zjet_MC.root",
-  const char *outputFile="rootfiles/zjet_JMENANO_compat.root") {
+  const char *outputFile="rootfiles/zjet_JMENANO_compat.root",
+  bool addFlavorPlaceholders=false) {
   TFile data(dataFile,"READ");
   TFile mc(mcFile,"READ");
   if (data.IsZombie())
@@ -241,8 +299,8 @@ void writeJecsys3(
   if (output.IsZombie())
     throw std::runtime_error("Failed to create output " +
                              std::string(outputFile));
-  copySample(&data,&output,"data",false);
-  copySample(&mc,&output,"mc",true);
+  copySample(&data,&output,"data",false,addFlavorPlaceholders);
+  copySample(&mc,&output,"mc",true,addFlavorPlaceholders);
   output.cd();
   TNamed method("zjet_method",
                 "all accepted Z-jet pairs; two transverse sidebands with half weight");
@@ -251,6 +309,14 @@ void writeJecsys3(
     "jecsys3_compatibility",
     "reprocess.C, softrad3.C and globalFit.C central eta input contract");
   compatibility.Write();
+  if (addFlavorPlaceholders) {
+    TNamed flavorStatus(
+      "zjet_flavor_status",
+      "PLACEHOLDER ONLY: empty reco-tag and generator-flavor inputs; do not use for physics");
+    flavorStatus.Write();
+    Warning("writeJecsys3",
+            "Writing empty Z+flavor placeholders; they are not physics inputs");
+  }
   if (TObjString *metadata =
         dynamic_cast<TObjString*>(data.Get("zjet_campaign_metadata"))) {
     metadata->Write("zjet_campaign_metadata",TObject::kOverwrite);

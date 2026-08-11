@@ -185,6 +185,21 @@ Pull the updated code and rerun only `writeJecsys3.C`; the macro projects all
 three pT representations from the raw `l2res` profiles already stored in the
 merged files.
 
+The current event loop does not yet fill the reco-tag and generator-flavor
+subsamples expected by `reprocess.C`. For short-term integration testing only,
+the fourth argument can create the complete Z+flavor directory and object
+contract as empty placeholders:
+
+```bash
+root -l -b -q \
+  'writeJecsys3.C("rootfiles/zjet_DATA.root","rootfiles/zjet_MC.root","rootfiles/zjet_JMENANO_compat.root",true)'
+```
+
+This mode prints a warning, labels every placeholder histogram, and writes the
+top-level `zjet_flavor_status` marker. The placeholders only let downstream
+code traverse the expected ROOT hierarchy; they contain no flavor measurement
+and must not be used as physics input. The default fourth argument is `false`.
+
 ## lxplus small-file validation
 
 Log in with the CERN account and verify the proxy:
@@ -381,6 +396,51 @@ EOS output directory, the merge uses a local temporary directory and uploads
 the two merged outputs, their JSON provenance, and a human-readable merge log
 to EOS. The same JSON is embedded in both ROOT files as
 `zjet_campaign_metadata`.
+
+### Checkpointed one-command driver
+
+`runCondorAnalysis.py` wraps the same small scripts without hiding their
+commands or safety checks. It currently supports only the Run 2024I preset.
+List or inspect the supported plan without changing anything:
+
+```bash
+python3 runCondorAnalysis.py --list-presets
+python3 runCondorAnalysis.py --preset run2024i --plan
+```
+
+Start a new, immutable workflow name after the generated MC and data lists are
+available:
+
+```bash
+python3 runCondorAnalysis.py \
+  --preset run2024i \
+  --campaign run2024i_v11m_20260811 \
+  --flavor-placeholders
+```
+
+The driver validates Kerberos and a CMS VOMS proxy with at least 24 hours
+remaining, copies a valid `/tmp` proxy to protected AFS storage after approval,
+optionally pulls with `git pull --ff-only`, reports AFS/work space, compiles the
+analysis, tests the first MC and data URLs, and prepares a one-file-per-sample
+worker smoke test. It then prepares the full campaign only after the smoke test
+has completed and passed `status_condor.py`.
+
+Submission, merging, and replacement of the compatibility ROOT file each
+require a separate `y` answer. Answering `n` stops at a recorded checkpoint;
+submitted jobs continue independently. Resume later with the command printed
+by the driver, for example:
+
+```bash
+python3 runCondorAnalysis.py --resume run2024i_v11m_20260811
+```
+
+Workflow state is stored below the git-ignored `condor/jobs/_workflows`
+directory. `Ctrl-C` is also safe between polling calls and prints the same
+resume command. The displayed CPU and wall-time estimates are deliberately
+rough planning numbers based on the first Run 2024I tests, not scheduler
+guarantees. Keep eras as separate workflow names; their EOS partial and merged
+outputs remain separate and can be combined explicitly only after each era has
+been validated.
 
 ### Recovering an AFS log quota hold
 
