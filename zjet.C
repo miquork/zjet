@@ -82,6 +82,10 @@ void zjet::Loop()
    fChain->SetBranchStatus("Jet_neHEF",1);
    fChain->SetBranchStatus("Jet_neEmEF",1);
    fChain->SetBranchStatus("Jet_muEF",1);
+   fChain->SetBranchStatus("Jet_btagDeepFlavB",1);
+   fChain->SetBranchStatus("Jet_btagDeepFlavCvB",1);
+   fChain->SetBranchStatus("Jet_btagDeepFlavCvL",1);
+   fChain->SetBranchStatus("Jet_btagDeepFlavQG",1);
 
    fChain->SetBranchStatus("PV_npvs",1);
    fChain->SetBranchStatus("Rho_fixedGridRhoFastjetAll",1);
@@ -104,6 +108,7 @@ void zjet::Loop()
      fChain->SetBranchStatus("GenJet_eta",1);
      fChain->SetBranchStatus("GenJet_phi",1);
      fChain->SetBranchStatus("GenJet_mass",1);
+     fChain->SetBranchStatus("GenJet_partonFlavour",1);
      fChain->SetBranchStatus("Jet_genJetIdx",1);
    }
 
@@ -209,6 +214,9 @@ void zjet::Loop()
    jecL2.Write("zjet_jec_l2_file");
    TObjString jecResidual((!isMC ? jecResidualFile : "").c_str());
    jecResidual.Write("zjet_jec_residual_file");
+   TObjString flavorDefinition(
+     "Bettina/Sami DeepJet: B>0.7527; C=0.5*(CvB+CvL)>0.3985 after B veto; QG split at 0.5 after B/C veto");
+   flavorDefinition.Write("zjet_flavor_definition");
 
    
    // Object pT plots
@@ -481,6 +489,43 @@ void zjet::Loop()
    TProfile2D *p2rgentc_ = new TProfile2D("p2rgentc",";eta;tag",ns,vs,np,vp);
    TH2D *h2mztc_ = new TH2D("h2mztc",";p_{T,Z};m_{#mu#mu}",
                              np,vp,120,60.,120.);
+
+   // Flavor subsets follow the gamma+jet implementation maintained by
+   // Bettina and Sami.  The first index is the reconstructed DeepJet tag and
+   // the second is the matched generator parton flavor.  "i" is inclusive
+   // and "n" means no classified tag/flavor.  These profiles use the same
+   // signed signal-minus-sideband weights as the inclusive response above.
+   fout->mkdir("flavor");
+   fout->cd("flavor");
+   std::map<std::string,
+            std::map<std::string,std::map<std::string,TH1*> > > flavorProfiles;
+   const std::vector<std::string> flavorVariables = {
+     "counts", "mpfchs1", "ptchs", "mpf1", "mpfn", "mpfu",
+     "rjet", "gjet",
+   };
+   const std::vector<std::string> recoFlavorTags = {
+     "i", "b", "c", "q", "g", "n",
+   };
+   const std::vector<std::string> genFlavorTags = {
+     "i", "b", "c", "q", "g", "n",
+   };
+   for (const std::string &variable : flavorVariables) {
+     for (const std::string &recoTag : recoFlavorTags) {
+       for (const std::string &genTag : genFlavorTags) {
+         const std::string name =
+           variable + "_g" + recoTag + genTag;
+         if (variable=="counts") {
+           TH1D *histogram = new TH1D(name.c_str(),";p_{T,Z};Events",np,vp);
+           histogram->Sumw2();
+           flavorProfiles[variable][recoTag][genTag] = histogram;
+         }
+         else {
+           flavorProfiles[variable][recoTag][genTag] =
+             new TProfile(name.c_str(),";p_{T,Z};Response",np,vp);
+         }
+       }
+     }
+   }
 
    fout->mkdir("l2res1");
    fout->cd("l2res1");
@@ -960,6 +1005,68 @@ void zjet::Loop()
             ->Fill(p4z.Pt(), mpfValue, weight);
         }
       };
+
+      auto fillFlavor = [&](int ijet, int generatorFlavor,
+                            bool hasGeneratorResponse,
+                            double generatorResponse, double db,
+                            double mpfValue, double mpfJet,
+                            double mpfNeutral, double mpfUnclustered,
+                            double weight) {
+        if (fabs(Jet_eta[ijet])>=1.305) return;
+
+        // Keep these definitions synchronized with Bettina's gamma+jet
+        // flavor analysis.  The b and c selections have priority over Q/G.
+        const double bScore = Jet_btagDeepFlavB[ijet];
+        const double cScore =
+          0.5*(Jet_btagDeepFlavCvB[ijet]+Jet_btagDeepFlavCvL[ijet]);
+        const double qgScore = Jet_btagDeepFlavQG[ijet];
+        const bool isB = (bScore>0.7527);
+        const bool isC = (cScore>0.3985 && !isB);
+        const bool isQ = (qgScore>=0.5 && !isB && !isC);
+        const bool isG = (qgScore>=0. && qgScore<0.5 && !isB && !isC);
+        const std::string recoTag =
+          (isB ? "b" : isC ? "c" : isQ ? "q" : isG ? "g" : "n");
+
+        std::string genTag = "n";
+        if (std::abs(generatorFlavor)==5) genTag = "b";
+        else if (std::abs(generatorFlavor)==4) genTag = "c";
+        else if (std::abs(generatorFlavor)>=1 &&
+                 std::abs(generatorFlavor)<=3) genTag = "q";
+        else if (generatorFlavor==21) genTag = "g";
+
+        const std::vector<std::string> selectedRecoTags = {"i",recoTag};
+        std::vector<std::string> selectedGenTags = {"i"};
+        if (isMC) selectedGenTags.push_back(genTag);
+        for (const std::string &selectedReco : selectedRecoTags) {
+          for (const std::string &selectedGen : selectedGenTags) {
+            dynamic_cast<TH1D*>(
+              flavorProfiles["counts"][selectedReco][selectedGen])
+              ->Fill(p4z.Pt(),weight);
+            dynamic_cast<TProfile*>(
+              flavorProfiles["mpfchs1"][selectedReco][selectedGen])
+              ->Fill(p4z.Pt(),mpfValue,weight);
+            dynamic_cast<TProfile*>(
+              flavorProfiles["ptchs"][selectedReco][selectedGen])
+              ->Fill(p4z.Pt(),db,weight);
+            dynamic_cast<TProfile*>(
+              flavorProfiles["mpf1"][selectedReco][selectedGen])
+              ->Fill(p4z.Pt(),mpfJet,weight);
+            dynamic_cast<TProfile*>(
+              flavorProfiles["mpfn"][selectedReco][selectedGen])
+              ->Fill(p4z.Pt(),mpfNeutral,weight);
+            dynamic_cast<TProfile*>(
+              flavorProfiles["mpfu"][selectedReco][selectedGen])
+              ->Fill(p4z.Pt(),mpfUnclustered,weight);
+            dynamic_cast<TProfile*>(
+              flavorProfiles["rjet"][selectedReco][selectedGen])
+              ->Fill(p4z.Pt(),db,weight);
+            if (hasGeneratorResponse)
+              dynamic_cast<TProfile*>(
+                flavorProfiles["gjet"][selectedReco][selectedGen])
+                ->Fill(p4z.Pt(),generatorResponse,weight);
+          }
+        }
+      };
       
       // Select leading jet
       h_njet->Fill(nJet, eventWeight);
@@ -981,12 +1088,14 @@ void zjet::Loop()
 	int truthMatchCategory = 0;
 	bool hasGenResponse = false;
 	double genBalance = 0.;
+	int genJetIndex = -1;
 	if (isMC && Jet_genJetIdx[ijet]>=0 && Jet_genJetIdx[ijet]<nGenJet) {
 	  hasGenIndex = true;
 	  // Jet_genJetIdx is the NanoAOD reco-to-particle-level match. Do not
 	  // impose a second generator-pT cut on the nominal pileup classification:
 	  // it creates a strong migration bias precisely in the low-pT region.
 	  const int igen = Jet_genJetIdx[ijet];
+	  genJetIndex = igen;
 	  TLorentzVector p4gen;
 	  p4gen.SetPtEtaPhiM(GenJet_pt[igen],GenJet_eta[igen],GenJet_phi[igen],
 			     GenJet_mass[igen]);
@@ -1066,6 +1175,10 @@ void zjet::Loop()
 		              hasGenIndex,truthMatchCategory,db,mpf,wt);
 		    fillTruth("subtracted",truthMatched,passesExtraMatchCuts,
 		              hasGenIndex,truthMatchCategory,db,mpf,wt);
+		    fillFlavor(ijet,
+		               (isMC && genJetIndex>=0
+		                  ? GenJet_partonFlavour[genJetIndex] : 0),
+		               hasGenResponse,genBalance,db,mpf,mpf1,mpfn,mpfu,wt);
 
 		    h2ptetapf_->Fill(abseta,ptj,wt); h2pteta_->Fill(abseta,pta,wt);
 		    h2ptetatc_->Fill(abseta,ptz,wt);
@@ -1162,6 +1275,11 @@ void zjet::Loop()
 		              hasGenIndex,truthMatchCategory,db,mpfT,wraw);
 		    fillTruth("subtracted",truthMatched,passesExtraMatchCuts,
 		              hasGenIndex,truthMatchCategory,db,mpfT,wt);
+		    fillFlavor(ijet,
+		               (isMC && genJetIndex>=0
+		                  ? GenJet_partonFlavour[genJetIndex] : 0),
+		               hasGenResponse,genBalance,db,mpfT,mpf1T,mpfnT,
+		               mpfuT,wt);
 
 		    h2ptetapf_->Fill(abseta,ptj,wt); h2pteta_->Fill(abseta,pta,wt);
 		    h2ptetatc_->Fill(abseta,ptz,wt); h2ptetapf->Fill(eta,ptj,wt);

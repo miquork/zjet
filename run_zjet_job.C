@@ -2,8 +2,12 @@
 
 #include <TChain.h>
 #include <TFile.h>
+#include <TH1.h>
+#include <TH2.h>
 #include <TSystem.h>
 
+#include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -56,7 +60,26 @@ void run_zjet_job(const char *inputList, bool isMC, const char *outputFile,
   analysis.Loop();
 
   TFile check(outputFile,"READ");
-  if (check.IsZombie() || !check.Get("control/h_cutflow")) {
+  TH2 *inclusiveCounts =
+    dynamic_cast<TH2*>(check.Get("l2res/h2ptetatc"));
+  TH1 *flavorCounts =
+    dynamic_cast<TH1*>(check.Get("flavor/counts_gii"));
+  bool flavorCountsClose = false;
+  if (inclusiveCounts && flavorCounts) {
+    const int firstEtaBin =
+      inclusiveCounts->GetXaxis()->FindFixBin(0.+1.e-6);
+    const int lastEtaBin =
+      inclusiveCounts->GetXaxis()->FindFixBin(1.305-1.e-6);
+    const double inclusiveIntegral = inclusiveCounts->Integral(
+      firstEtaBin,lastEtaBin,1,inclusiveCounts->GetNbinsY());
+    const double flavorIntegral = flavorCounts->Integral();
+    flavorCountsClose =
+      (std::fabs(inclusiveIntegral-flavorIntegral) <=
+       1.e-9*std::max(1.,std::fabs(inclusiveIntegral)));
+  }
+  if (check.IsZombie() || !check.Get("control/h_cutflow") ||
+      !flavorCounts || !check.Get("zjet_flavor_definition") ||
+      !flavorCountsClose) {
     std::cerr << "ERROR: output validation failed for " << outputFile
               << std::endl;
     gSystem->Exit(3);

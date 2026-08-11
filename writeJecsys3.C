@@ -90,12 +90,14 @@ void writeProfile(TFile *source, TDirectory *target,
                   int firstEtaBin, int lastEtaBin) {
   TProfile2D *profile = requireObject<TProfile2D>(
     source,"l2res/" + std::string(sourceName));
+  TDirectory::TContext directoryContext(gROOT);
   TProfile *projection =
     profile->ProfileY(Form("tmp_%s",targetName),firstEtaBin,lastEtaBin);
   if (!projection)
     throw std::runtime_error(
       "Failed to project " + std::string(source->GetName()) + ":l2res/" +
       sourceName);
+  projection->SetName(targetName);
   projection->SetDirectory(nullptr);
   target->cd();
   projection->Write(targetName);
@@ -107,6 +109,7 @@ void writeCounts(TFile *source, TDirectory *target,
                  int firstEtaBin, int lastEtaBin) {
   TH2D *counts = requireObject<TH2D>(
     source,"l2res/" + std::string(sourceName));
+  TDirectory::TContext directoryContext(gROOT);
   TH1D *projection = counts->ProjectionY(
     targetName,firstEtaBin,lastEtaBin,"e");
   if (!projection)
@@ -148,7 +151,7 @@ void writeEmptyFlavorObject(TDirectory *models, TDirectory *target,
                             const std::string &tag) {
   const std::string modelName = baseName + "_zmmjet_a100";
   TH1 *model = requireObject<TH1>(models,modelName);
-  const std::string targetName = baseName + tag + "_zmmjet_a100";
+  const std::string targetName = baseName + "_zmmjet" + tag + "_a100";
   TH1 *placeholder = dynamic_cast<TH1*>(model->Clone(targetName.c_str()));
   if (!placeholder)
     throw std::runtime_error("Failed to clone flavor placeholder " + targetName);
@@ -158,6 +161,68 @@ void writeEmptyFlavorObject(TDirectory *models, TDirectory *target,
   target->cd();
   placeholder->Write();
   delete placeholder;
+}
+
+void writeStoredFlavorObject(TDirectory *source, TDirectory *target,
+                             const std::string &sourceName,
+                             const std::string &targetName) {
+  TH1 *input = requireObject<TH1>(source,sourceName);
+  TH1 *output = dynamic_cast<TH1*>(input->Clone(targetName.c_str()));
+  if (!output)
+    throw std::runtime_error("Failed to clone measured flavor input " +
+                             sourceName);
+  output->SetDirectory(nullptr);
+  target->cd();
+  output->Write();
+  delete output;
+}
+
+bool writeStoredFlavorInputs(TFile *source, TDirectory *sampleDirectory,
+                             bool isMC) {
+  TDirectory *flavor = source->GetDirectory("flavor");
+  if (!flavor)
+    return false;
+
+  const std::vector<std::pair<std::string,std::string> > objects = {
+    {"statistics_rmpf", "counts"},
+    {"rmpf", "mpfchs1"},
+    {"rmpfjet1", "mpf1"},
+    {"rmpfjetn", "mpfn"},
+    {"rmpfuncl", "mpfu"},
+    {"rbal", "rjet"},
+    {"rgenjet1", "gjet"},
+  };
+  const std::vector<std::pair<std::string,std::string> > recoTags = {
+    {"i", ""}, {"b", "_btag"}, {"c", "_ctag"},
+    {"q", "_quarktag"}, {"g", "_gluontag"}, {"n", "_notag"},
+  };
+  const std::vector<std::pair<std::string,std::string> > genTags = {
+    {"i", "eta_00_13"}, {"b", "eta_00_13_genb"},
+    {"c", "eta_00_13_genc"}, {"q", "eta_00_13_genuds"},
+    {"g", "eta_00_13_geng"}, {"n", "eta_00_13_unclassified"},
+  };
+
+  for (const auto &genTag : genTags) {
+    if (!isMC && genTag.first!="i") continue;
+    TDirectory *target =
+      (genTag.first=="i"
+         ? requireDirectory(sampleDirectory,"eta_00_13")
+         : makeDirectory(sampleDirectory,genTag.second.c_str()));
+    for (const auto &recoTag : recoTags) {
+      // The inclusive object was already written from the main l2res profile.
+      if (genTag.first=="i" && recoTag.first=="i") continue;
+      for (const auto &object : objects) {
+        if (!isMC && (object.first=="rbal" || object.first=="rgenjet1"))
+          continue;
+        const std::string sourceName =
+          object.second + "_g" + recoTag.first + genTag.first;
+        const std::string targetName =
+          object.first + "_zmmjet" + recoTag.second + "_a100";
+        writeStoredFlavorObject(flavor,target,sourceName,targetName);
+      }
+    }
+  }
+  return true;
 }
 
 void writeEmptyFlavorSet(TDirectory *models, TDirectory *target,
@@ -236,17 +301,20 @@ void writeGlobalFitInputs(TFile *source, TDirectory *sampleDirectory,
   mass->Write("h_Zpt_mZ_alpha100");
 }
 
-void copySample(TFile *source, TFile *target, const char *sample,
+bool copySample(TFile *source, TFile *target, const char *sample,
                 bool isMC, bool addFlavorPlaceholders) {
   TDirectory *sampleDirectory = makeDirectory(target,sample);
   writeGlobalFitInputs(source,sampleDirectory,isMC);
-  if (addFlavorPlaceholders)
+  const bool storedFlavorInputs =
+    writeStoredFlavorInputs(source,sampleDirectory,isMC);
+  if (!storedFlavorInputs && addFlavorPlaceholders)
     writeFlavorPlaceholders(sampleDirectory,isMC);
   for (const char *name : {"l2res","l2res1"}) {
     TDirectory *sourceDirectory = requireDirectory(source,name);
     TDirectory *targetDirectory = makeDirectory(sampleDirectory,name);
     copyDirectory(sourceDirectory,targetDirectory);
   }
+  return storedFlavorInputs;
 }
 
 } // namespace
@@ -299,8 +367,13 @@ void writeJecsys3(
   if (output.IsZombie())
     throw std::runtime_error("Failed to create output " +
                              std::string(outputFile));
-  copySample(&data,&output,"data",false,addFlavorPlaceholders);
-  copySample(&mc,&output,"mc",true,addFlavorPlaceholders);
+  const bool dataFlavorInputs =
+    copySample(&data,&output,"data",false,addFlavorPlaceholders);
+  const bool mcFlavorInputs =
+    copySample(&mc,&output,"mc",true,addFlavorPlaceholders);
+  if (dataFlavorInputs!=mcFlavorInputs)
+    throw std::runtime_error(
+      "Measured flavor inputs exist in only one of data and MC");
   output.cd();
   TNamed method("zjet_method",
                 "all accepted Z-jet pairs; two transverse sidebands with half weight");
@@ -309,7 +382,16 @@ void writeJecsys3(
     "jecsys3_compatibility",
     "reprocess.C, softrad3.C and globalFit.C central eta input contract");
   compatibility.Write();
-  if (addFlavorPlaceholders) {
+  if (dataFlavorInputs) {
+    TNamed flavorStatus(
+      "zjet_flavor_status",
+      "measured DeepJet reco-tag and matched generator-flavor inputs");
+    flavorStatus.Write();
+    if (TObjString *definition =
+          dynamic_cast<TObjString*>(data.Get("zjet_flavor_definition")))
+      definition->Write("zjet_flavor_definition",TObject::kOverwrite);
+  }
+  else if (addFlavorPlaceholders) {
     TNamed flavorStatus(
       "zjet_flavor_status",
       "PLACEHOLDER ONLY: empty reco-tag and generator-flavor inputs; do not use for physics");
@@ -321,6 +403,5 @@ void writeJecsys3(
         dynamic_cast<TObjString*>(data.Get("zjet_campaign_metadata"))) {
     metadata->Write("zjet_campaign_metadata",TObject::kOverwrite);
   }
-  output.Write();
   output.Close();
 }

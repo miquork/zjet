@@ -185,10 +185,18 @@ Pull the updated code and rerun only `writeJecsys3.C`; the macro projects all
 three pT representations from the raw `l2res` profiles already stored in the
 merged files.
 
-The current event loop does not yet fill the reco-tag and generator-flavor
-subsamples expected by `reprocess.C`. For short-term integration testing only,
-the fourth argument can create the complete Z+flavor directory and object
-contract as empty placeholders:
+Current outputs fill the reco-tag and generator-flavor subsamples expected by
+`reprocess.C`. The reco categories use the Bettina/Sami DeepJet definition:
+`DeepFlavB > 0.7527`; otherwise
+`0.5*(DeepFlavCvB+DeepFlavCvL) > 0.3985` for c; otherwise the quark/gluon split
+is `DeepFlavQG = 0.5`. MC generator categories use the matched
+`GenJet_partonFlavour`; an unmatched jet is unclassified. Flavor profiles use
+the same signed signal-minus-sideband weights as the inclusive response.
+
+`writeJecsys3.C` automatically writes measured flavor inputs when both merged
+files contain the `flavor` directory. For older output files, the fourth
+argument can create the complete Z+flavor directory and object contract as
+empty placeholders for short-term integration testing only:
 
 ```bash
 root -l -b -q \
@@ -199,6 +207,8 @@ This mode prints a warning, labels every placeholder histogram, and writes the
 top-level `zjet_flavor_status` marker. The placeholders only let downstream
 code traverse the expected ROOT hierarchy; they contain no flavor measurement
 and must not be used as physics input. The default fourth argument is `false`.
+When measured inputs are present they take precedence even if the fallback
+argument is `true`; `zjet_flavor_status` then identifies them as measured.
 
 ## lxplus small-file validation
 
