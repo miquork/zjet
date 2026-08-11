@@ -11,6 +11,7 @@
 #include "TROOT.h"
 
 #include <stdexcept>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -60,8 +61,18 @@ void copyDirectory(TDirectory *source, TDirectory *target) {
   if (!source || !target)
     throw std::runtime_error("copyDirectory received a null directory");
 
-  TIter next(source->GetListOfKeys());
-  while (TKey *key = static_cast<TKey*>(next())) {
+  // A ROOT directory may contain many cycles of an identically named object.
+  // Copy only the newest cycle so compatibility files stay compact and do not
+  // accumulate tmp_* or response-profile duplicates on regeneration.
+  std::map<std::string,TKey*> newestKeys;
+  TIter findKeys(source->GetListOfKeys());
+  while (TKey *key = static_cast<TKey*>(findKeys())) {
+    auto found = newestKeys.find(key->GetName());
+    if (found==newestKeys.end() || key->GetCycle()>found->second->GetCycle())
+      newestKeys[key->GetName()] = key;
+  }
+  for (const auto &entry : newestKeys) {
+    TKey *key = entry.second;
     TClass *objectClass = gROOT->GetClass(key->GetClassName());
     if (!objectClass)
       throw std::runtime_error(
@@ -83,6 +94,19 @@ void copyDirectory(TDirectory *source, TDirectory *target) {
       delete object;
     }
   }
+}
+
+void writeStoredHistogram(TDirectory *source, TDirectory *target,
+                          const std::string &sourceName,
+                          const std::string &targetName) {
+  TH1 *input = requireObject<TH1>(source,sourceName);
+  TH1 *output = dynamic_cast<TH1*>(input->Clone(targetName.c_str()));
+  if (!output)
+    throw std::runtime_error("Failed to clone " + sourceName);
+  output->SetDirectory(nullptr);
+  target->cd();
+  output->Write(targetName.c_str());
+  delete output;
 }
 
 void writeProfile(TFile *source, TDirectory *target,
@@ -144,6 +168,18 @@ void writeResponseBinning(TFile *source, TDirectory *target,
     "statistics_rmpf_" + std::string(targetAxis) + "_a100";
   writeCounts(source,target,countsName,targetCounts.c_str(),
               firstEtaBin,lastEtaBin);
+}
+
+void writeNativeResponseBinning(TDirectory *profiles, TDirectory *target,
+                                const char *axisName) {
+  TDirectory *axis = requireDirectory(profiles,axisName);
+  const std::vector<std::string> names = {
+    "statistics_rmpf", "rmpf", "rmpfjet1", "rmpfjetn", "rmpfuncl",
+    "rmpfjetnu",
+  };
+  for (const std::string &name : names)
+    writeStoredHistogram(axis,target,name,
+                         name+"_"+axisName+"_a100");
 }
 
 void writeEmptyFlavorObject(TDirectory *models, TDirectory *target,
@@ -262,49 +298,89 @@ void writeFlavorPlaceholders(TDirectory *sampleDirectory, bool isMC) {
   }
 }
 
-void writeGlobalFitInputs(TFile *source, TDirectory *sampleDirectory,
-                          bool isMC) {
+bool writeGlobalFitInputs(TFile *source, TDirectory *sampleDirectory,
+                          bool isMC, bool useLegacyMethod,
+                          bool preferOneDimensional) {
   TProfile2D *etaReference =
     requireObject<TProfile2D>(source,"l2res/p2m0tc");
   const int firstEtaBin = etaReference->GetXaxis()->FindFixBin(0.+1.e-6);
   const int lastEtaBin = etaReference->GetXaxis()->FindFixBin(1.305-1.e-6);
 
   TDirectory *etaDirectory = makeDirectory(sampleDirectory,"eta_00_13");
+  const std::string nativePath =
+    (useLegacyMethod ? "legacy/profiles1d" : "profiles1d");
+  TDirectory *nativeProfiles = source->GetDirectory(nativePath.c_str());
+  const bool useNativeProfiles = preferOneDimensional && nativeProfiles;
+
   // reprocess.C uses three complementary reference-pT choices. The tc, pf
   // and unsuffixed raw profiles are binned in Z pT, jet pT and average pT,
   // respectively. All three are projections of the same accepted pairs.
-  writeResponseBinning(source,etaDirectory,"tc","zmmjet","h2ptetatc",
-                       firstEtaBin,lastEtaBin);
-  writeResponseBinning(source,etaDirectory,"pf","jetpt","h2ptetapf",
-                       firstEtaBin,lastEtaBin);
-  writeResponseBinning(source,etaDirectory,"","ptave","h2pteta",
-                       firstEtaBin,lastEtaBin);
+  if (useNativeProfiles) {
+    writeNativeResponseBinning(nativeProfiles,etaDirectory,"zmmjet");
+    writeNativeResponseBinning(nativeProfiles,etaDirectory,"jetpt");
+    writeNativeResponseBinning(nativeProfiles,etaDirectory,"ptave");
+  }
+  else {
+    if (useLegacyMethod)
+      throw std::runtime_error(
+        "Legacy method requested but legacy/profiles1d is unavailable");
+    writeResponseBinning(source,etaDirectory,"tc","zmmjet","h2ptetatc",
+                         firstEtaBin,lastEtaBin);
+    writeResponseBinning(source,etaDirectory,"pf","jetpt","h2ptetapf",
+                         firstEtaBin,lastEtaBin);
+    writeResponseBinning(source,etaDirectory,"","ptave","h2pteta",
+                         firstEtaBin,lastEtaBin);
+  }
 
-  const std::vector<std::pair<std::string,std::string> > profiles = {
-    {"p2chftc", "h_Zpt_chHEF_alpha100"},
-    {"p2neftc", "h_Zpt_neEmEF_alpha100"},
-    {"p2nhftc", "h_Zpt_neHEF_alpha100"},
-    {"p2ceftc", "h_Zpt_chEmEF_alpha100"},
-    {"p2muftc", "h_Zpt_muEF_alpha100"},
-    {"p2rhotc", "h_Zpt_rho_alpha100"},
-    {"p2m2tc", "rbal_zmmjet_a100"},
-  };
-  for (const auto &entry : profiles)
-    writeProfile(source,etaDirectory,entry.first.c_str(),entry.second.c_str(),
-                 firstEtaBin,lastEtaBin);
-  if (isMC)
-    writeProfile(source,etaDirectory,"p2rgentc","rgenjet1_zmmjet_a100",
-                 firstEtaBin,lastEtaBin);
-
-  TH2D *mass = requireObject<TH2D>(source,"l2res/h2mztc");
-  etaDirectory->cd();
-  mass->Write("h_Zpt_mZ_alpha100");
+  if (useNativeProfiles) {
+    TDirectory *zmm = requireDirectory(nativeProfiles,"zmmjet");
+    const std::vector<std::pair<std::string,std::string> > profiles = {
+      {"chHEF", "h_Zpt_chHEF_alpha100"},
+      {"neEmEF", "h_Zpt_neEmEF_alpha100"},
+      {"neHEF", "h_Zpt_neHEF_alpha100"},
+      {"chEmEF", "h_Zpt_chEmEF_alpha100"},
+      {"muEF", "h_Zpt_muEF_alpha100"},
+      {"rho", "h_Zpt_rho_alpha100"},
+      {"rbal", "rbal_zmmjet_a100"},
+      {"residual", "residual_zmmjet_a100"},
+      {"mass", "h_Zpt_mZ_alpha100"},
+    };
+    for (const auto &entry : profiles)
+      writeStoredHistogram(zmm,etaDirectory,entry.first,entry.second);
+    if (isMC)
+      writeStoredHistogram(zmm,etaDirectory,"rgenjet1",
+                           "rgenjet1_zmmjet_a100");
+  }
+  else {
+    const std::vector<std::pair<std::string,std::string> > profiles = {
+      {"p2chftc", "h_Zpt_chHEF_alpha100"},
+      {"p2neftc", "h_Zpt_neEmEF_alpha100"},
+      {"p2nhftc", "h_Zpt_neHEF_alpha100"},
+      {"p2ceftc", "h_Zpt_chEmEF_alpha100"},
+      {"p2muftc", "h_Zpt_muEF_alpha100"},
+      {"p2rhotc", "h_Zpt_rho_alpha100"},
+      {"p2m2tc", "rbal_zmmjet_a100"},
+    };
+    for (const auto &entry : profiles)
+      writeProfile(source,etaDirectory,entry.first.c_str(),entry.second.c_str(),
+                   firstEtaBin,lastEtaBin);
+    if (isMC)
+      writeProfile(source,etaDirectory,"p2rgentc","rgenjet1_zmmjet_a100",
+                   firstEtaBin,lastEtaBin);
+    TH2D *mass = requireObject<TH2D>(source,"l2res/h2mztc");
+    etaDirectory->cd();
+    mass->Write("h_Zpt_mZ_alpha100");
+  }
+  return useNativeProfiles;
 }
 
 bool copySample(TFile *source, TFile *target, const char *sample,
-                bool isMC, bool addFlavorPlaceholders) {
+                bool isMC, bool addFlavorPlaceholders,
+                bool useLegacyMethod, bool preferOneDimensional,
+                bool &usedNativeProfiles) {
   TDirectory *sampleDirectory = makeDirectory(target,sample);
-  writeGlobalFitInputs(source,sampleDirectory,isMC);
+  usedNativeProfiles = writeGlobalFitInputs(
+    source,sampleDirectory,isMC,useLegacyMethod,preferOneDimensional);
   const bool storedFlavorInputs =
     writeStoredFlavorInputs(source,sampleDirectory,isMC);
   if (!storedFlavorInputs && addFlavorPlaceholders)
@@ -326,7 +402,9 @@ void writeJecsys3(
   const char *dataFile="rootfiles/zjet_DATA.root",
   const char *mcFile="rootfiles/zjet_MC.root",
   const char *outputFile="rootfiles/zjet_JMENANO_compat.root",
-  bool addFlavorPlaceholders=false) {
+  bool addFlavorPlaceholders=false,
+  bool useLegacyMethod=false,
+  bool preferOneDimensional=true) {
   TFile data(dataFile,"READ");
   TFile mc(mcFile,"READ");
   if (data.IsZombie())
@@ -367,17 +445,43 @@ void writeJecsys3(
   if (output.IsZombie())
     throw std::runtime_error("Failed to create output " +
                              std::string(outputFile));
-  const bool dataFlavorInputs =
-    copySample(&data,&output,"data",false,addFlavorPlaceholders);
-  const bool mcFlavorInputs =
-    copySample(&mc,&output,"mc",true,addFlavorPlaceholders);
+  bool dataNativeProfiles = false;
+  bool mcNativeProfiles = false;
+  const bool dataFlavorInputs = copySample(
+    &data,&output,"data",false,addFlavorPlaceholders,useLegacyMethod,
+    preferOneDimensional,dataNativeProfiles);
+  const bool mcFlavorInputs = copySample(
+    &mc,&output,"mc",true,addFlavorPlaceholders,useLegacyMethod,
+    preferOneDimensional,mcNativeProfiles);
+  if (dataNativeProfiles!=mcNativeProfiles)
+    throw std::runtime_error(
+      "Native one-dimensional profiles exist in only one sample");
   if (dataFlavorInputs!=mcFlavorInputs)
     throw std::runtime_error(
       "Measured flavor inputs exist in only one of data and MC");
   output.cd();
-  TNamed method("zjet_method",
-                "all accepted Z-jet pairs; two transverse sidebands with half weight");
+  TNamed method(
+    "zjet_method",
+    useLegacyMethod
+      ? "legacy leading jet; synchronized dimuon selection; no transverse subtraction"
+      : "all accepted Z-jet pairs; two transverse sidebands with half weight");
   method.Write();
+  TNamed profileSource(
+    "zjet_profile_source",
+    dataNativeProfiles
+      ? "native one-dimensional ZbAnalysis pT binning"
+      : "central-eta projection of two-dimensional L2Res profiles");
+  profileSource.Write();
+  if (useLegacyMethod && dataFlavorInputs) {
+    TNamed flavorMethod(
+      "zjet_legacy_flavor_note",
+      "inclusive inputs use legacy leading jet; flavor-tagged inputs remain from all-pairs method during synchronization");
+    flavorMethod.Write();
+    TNamed l2resMethod(
+      "zjet_legacy_l2res_note",
+      "eta_00_13 inclusive inputs use legacy leading jet; copied l2res and l2res1 directories remain from all-pairs method");
+    l2resMethod.Write();
+  }
   TNamed compatibility(
     "jecsys3_compatibility",
     "reprocess.C, softrad3.C and globalFit.C central eta input contract");

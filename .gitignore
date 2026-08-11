@@ -73,6 +73,7 @@ Testing/
 rootfiles/*
 !rootfiles/.gitkeep
 pdf/
+output/
 tmp/
 textfiles/generated/
 condor/jobs/

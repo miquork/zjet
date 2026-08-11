@@ -15,13 +15,130 @@
 #include "CondFormats/JetMETObjects/interface/FactorizedJetCorrector.h"
 #include "CondFormats/JetMETObjects/interface/JetCorrectorParameters.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <ctime>
 #include <iomanip>
 #include <map>
+#include <stdexcept>
 #include <string>
 #include <vector>
+
+namespace {
+
+struct ResponseAxis1D {
+  TH1D *statistics = nullptr;
+  TProfile *rmpf = nullptr;
+  TProfile *rmpfjet1 = nullptr;
+  TProfile *rmpfjetn = nullptr;
+  TProfile *rmpfuncl = nullptr;
+  TProfile *rmpfjetnu = nullptr;
+  TProfile *rbal = nullptr;
+  TProfile *rgenjet1 = nullptr;
+  TProfile *residual = nullptr;
+  TProfile *chHEF = nullptr;
+  TProfile *neEmEF = nullptr;
+  TProfile *neHEF = nullptr;
+  TProfile *chEmEF = nullptr;
+  TProfile *muEF = nullptr;
+  TProfile *rho = nullptr;
+  TH2D *mass = nullptr;
+};
+
+struct ResponseProfiles1D {
+  std::map<std::string,ResponseAxis1D> axes;
+};
+
+ResponseProfiles1D bookResponseProfiles1D(TDirectory *parent,
+                                          const char *directoryName) {
+  if (!parent)
+    throw std::runtime_error("Cannot book one-dimensional response profiles");
+  TDirectory *directory = parent->mkdir(directoryName);
+  if (!directory)
+    throw std::runtime_error("Failed to create response directory " +
+                             std::string(directoryName));
+
+  const double bins[] = {
+    12.,15.,20.,25.,30.,35.,40.,45.,50.,60.,70.,85.,105.,130.,175.,
+    230.,300.,400.,500.,700.,1000.,1500.
+  };
+  const int nBins = sizeof(bins)/sizeof(bins[0])-1;
+  ResponseProfiles1D result;
+  for (const char *axisName : {"zmmjet","jetpt","ptave"}) {
+    TDirectory *axisDirectory = directory->mkdir(axisName);
+    if (!axisDirectory)
+      throw std::runtime_error("Failed to create one-dimensional axis " +
+                               std::string(axisName));
+    axisDirectory->cd();
+    ResponseAxis1D &axis = result.axes[axisName];
+    axis.statistics = new TH1D("statistics_rmpf",";p_{T} (GeV);Pairs",
+                               nBins,bins);
+    axis.statistics->Sumw2();
+    axis.rmpf = new TProfile("rmpf",";p_{T} (GeV);MPF",nBins,bins);
+    axis.rmpfjet1 = new TProfile("rmpfjet1",";p_{T} (GeV);MPF1",nBins,bins);
+    axis.rmpfjetn = new TProfile("rmpfjetn",";p_{T} (GeV);MPFn",nBins,bins);
+    axis.rmpfuncl = new TProfile("rmpfuncl",";p_{T} (GeV);MPFu",nBins,bins);
+    axis.rmpfjetnu = new TProfile("rmpfjetnu",";p_{T} (GeV);MPFnu",nBins,bins);
+    axis.rbal = new TProfile("rbal",";p_{T} (GeV);DB",nBins,bins);
+    axis.rgenjet1 = new TProfile("rgenjet1",";p_{T} (GeV);Gen balance",
+                                 nBins,bins);
+    axis.residual = new TProfile("residual",";p_{T} (GeV);Previous residual",
+                                 nBins,bins);
+    axis.chHEF = new TProfile("chHEF",";p_{T} (GeV);chHEF",nBins,bins);
+    axis.neEmEF = new TProfile("neEmEF",";p_{T} (GeV);neEmEF",nBins,bins);
+    axis.neHEF = new TProfile("neHEF",";p_{T} (GeV);neHEF",nBins,bins);
+    axis.chEmEF = new TProfile("chEmEF",";p_{T} (GeV);chEmEF",nBins,bins);
+    axis.muEF = new TProfile("muEF",";p_{T} (GeV);muEF",nBins,bins);
+    axis.rho = new TProfile("rho",";p_{T} (GeV);#rho",nBins,bins);
+    axis.mass = new TH2D("mass",";p_{T} (GeV);m_{#mu#mu} (GeV)",
+                         nBins,bins,120,60.,120.);
+  }
+  return result;
+}
+
+void fillResponseAxis1D(ResponseAxis1D &axis, double x, double db,
+                        double mpf, double mpf1, double mpfn, double mpfu,
+                        double mpfnu, double residual, double chHEF,
+                        double neEmEF, double neHEF, double chEmEF,
+                        double muEF, double rho, bool hasGenResponse,
+                        double genResponse, double weight) {
+  axis.statistics->Fill(x,weight);
+  axis.rmpf->Fill(x,mpf,weight);
+  axis.rmpfjet1->Fill(x,mpf1,weight);
+  axis.rmpfjetn->Fill(x,mpfn,weight);
+  axis.rmpfuncl->Fill(x,mpfu,weight);
+  axis.rmpfjetnu->Fill(x,mpfnu,weight);
+  axis.rbal->Fill(x,db,weight);
+  axis.residual->Fill(x,residual,weight);
+  axis.chHEF->Fill(x,chHEF,weight);
+  axis.neEmEF->Fill(x,neEmEF,weight);
+  axis.neHEF->Fill(x,neHEF,weight);
+  axis.chEmEF->Fill(x,chEmEF,weight);
+  axis.muEF->Fill(x,muEF,weight);
+  axis.rho->Fill(x,rho,weight);
+  if (hasGenResponse) axis.rgenjet1->Fill(x,genResponse,weight);
+}
+
+void fillResponseProfiles1D(ResponseProfiles1D &profiles, double ptz,
+                            double ptj, double ptave, double db, double mpf,
+                            double mpf1, double mpfn, double mpfu,
+                            double mpfnu, double residual, double chHEF,
+                            double neEmEF, double neHEF, double chEmEF,
+                            double muEF, double rho, bool hasGenResponse,
+                            double genResponse, double weight) {
+  fillResponseAxis1D(profiles.axes.at("zmmjet"),ptz,db,mpf,mpf1,mpfn,mpfu,
+                     mpfnu,residual,chHEF,neEmEF,neHEF,chEmEF,muEF,rho,
+                     hasGenResponse,genResponse,weight);
+  fillResponseAxis1D(profiles.axes.at("jetpt"),ptj,db,mpf,mpf1,mpfn,mpfu,
+                     mpfnu,residual,chHEF,neEmEF,neHEF,chEmEF,muEF,rho,
+                     hasGenResponse,genResponse,weight);
+  fillResponseAxis1D(profiles.axes.at("ptave"),ptave,db,mpf,mpf1,mpfn,mpfu,
+                     mpfnu,residual,chHEF,neEmEF,neHEF,chEmEF,muEF,rho,
+                     hasGenResponse,genResponse,weight);
+}
+
+} // namespace
 
 void zjet::Loop()
 {
@@ -66,6 +183,7 @@ void zjet::Loop()
    fChain->SetBranchStatus("Muon_mediumId",1);
    fChain->SetBranchStatus("Muon_tightId",1);
    fChain->SetBranchStatus("Muon_pfIsoId",1);
+   fChain->SetBranchStatus("Muon_pfRelIso04_all",1);
 
    fChain->SetBranchStatus("nJet",1);
    fChain->SetBranchStatus("Jet_pt",1);
@@ -99,6 +217,12 @@ void zjet::Loop()
    fChain->SetBranchStatus("Flag_eeBadScFilter",1);
    fChain->SetBranchStatus("Flag_ecalBadCalibFilter",1);
    fChain->SetBranchStatus("HLT_IsoMu24",1);
+   fChain->SetBranchStatus("HLT_Mu17_TrkIsoVVL_Mu8_TrkIsoVVL_DZ_Mass8",1);
+   fChain->SetBranchStatus("nTrigObj",1);
+   fChain->SetBranchStatus("TrigObj_id",1);
+   fChain->SetBranchStatus("TrigObj_pt",1);
+   fChain->SetBranchStatus("TrigObj_eta",1);
+   fChain->SetBranchStatus("TrigObj_phi",1);
 
    if (isMC) {
      fChain->SetBranchStatus("genWeight",1);
@@ -226,9 +350,9 @@ void zjet::Loop()
    h_cutflow->GetXaxis()->SetBinLabel(1,"all");
    h_cutflow->GetXaxis()->SetBinLabel(2,"golden JSON");
    h_cutflow->GetXaxis()->SetBinLabel(3,"MET filters");
-   h_cutflow->GetXaxis()->SetBinLabel(4,"HLT IsoMu24");
-   h_cutflow->GetXaxis()->SetBinLabel(5,"tag-probe muons");
-   h_cutflow->GetXaxis()->SetBinLabel(6,"Z mass");
+   h_cutflow->GetXaxis()->SetBinLabel(4,"HLT dimuon Mass8");
+   h_cutflow->GetXaxis()->SetBinLabel(5,"synchronized dimuon");
+   h_cutflow->GetXaxis()->SetBinLabel(6,"Z pT and mass");
    h_cutflow->GetXaxis()->SetBinLabel(7,"paired probe veto");
 
    // Alternative Z selections evaluated on the same HLT+filter event sample.
@@ -346,17 +470,17 @@ void zjet::Loop()
    TH2D *h2_lepdphimin_vs_ptz = new TH2D("h2_lepdphimin_vs_ptz","",200,0,200,120,0,TMath::Pi());
 
    TH1D *h_zpt_precut = new TH1D("h_zpt_precut","",200,0,200);
-   TH1D *h_zmass_precut = new TH1D("h_zmass_precut","",300,75,105);
+   TH1D *h_zmass_precut = new TH1D("h_zmass_precut","",300,60,120);
    TH1D *h_zeta_precut = new TH1D("h_zeta_precut","",100,-5,5);
    TH2D *h2_zeta_precut_vs_ptz = new TH2D("h2_zeta_precut_vs_ptz","",200,0,200,100,-5,5);
-   TH2D *h2_zmass_precut_vs_pt = new TH2D("h2_zmass_precut_vs_pt","",200,0,200,300,75,105);
+   TH2D *h2_zmass_precut_vs_pt = new TH2D("h2_zmass_precut_vs_pt","",200,0,200,300,60,120);
    TProfile *p_zmass_precut_vs_pt = new TProfile("p_zmass_precut_vs_pt","",200,0,200);
    
    TH1D *h_zpt = new TH1D("h_zpt","",200,0,200);
    TH1D *h_zeta = new TH1D("h_zeta","",100,-5,5);
    TH2D *h2_zeta_vs_ptz = new TH2D("h2_zeta_vs_ptz","",200,0,200,100,-5,5);
-   TH1D *h_zmass = new TH1D("h_zmass","",300,75,105);
-   TH2D *h2_zmass_vs_pt = new TH2D("h2_zmass_vs_pt","",200,0,200,300,75,105);
+   TH1D *h_zmass = new TH1D("h_zmass","",300,60,120);
+   TH2D *h2_zmass_vs_pt = new TH2D("h2_zmass_vs_pt","",200,0,200,300,60,120);
    TProfile *p_zmass_vs_pt = new TProfile("p_zmass_vs_pt","",200,0,200);
 
    TH1D *h_zpt_probeveto = new TH1D("h_zpt_probeveto","",200,0,200);
@@ -574,6 +698,36 @@ void zjet::Loop()
    TProfile2D *p2respf = new TProfile2D("p2respf",";eta;probe",nx,vx,ny,vy);
    TProfile2D *p2res   = new TProfile2D("p2res",";eta;avp",nx,vx,ny,vy);
    TProfile2D *p2restc = new TProfile2D("p2restc",";eta;tag",nx,vx,ny,vy);
+
+   // Preserve the native ZbAnalysis pT binning in genuine one-dimensional
+   // profiles.  writeJecsys3.C prefers these over projections of the coarse
+   // L2Res two-dimensional profiles, while retaining the latter for the
+   // relative-eta workflow.
+   ResponseProfiles1D allPairsProfiles =
+     bookResponseProfiles1D(fout,"profiles1d");
+   TDirectory *legacyDirectory = fout->mkdir("legacy");
+   ResponseProfiles1D legacyProfiles =
+     bookResponseProfiles1D(legacyDirectory,"profiles1d");
+   TDirectory *legacyControlDirectory = legacyDirectory->mkdir("control");
+   legacyControlDirectory->cd();
+   TH1D *h_legacy_cutflow = new TH1D("h_cutflow","",8,0.5,8.5);
+   const char *legacyCutLabels[] = {
+     "all", "golden JSON", "MET filters", "dimuon trigger",
+     "trigger-matched tight muons", "Z pT and mass", "leading jet",
+     "back-to-back"
+   };
+   for (int ibin=1; ibin<=8; ++ibin)
+     h_legacy_cutflow->GetXaxis()->SetBinLabel(ibin,legacyCutLabels[ibin-1]);
+   TH1D *h_legacy_zpt = new TH1D("h_zpt",";p_{T,Z} (GeV);Events",
+                                 200,0.,200.);
+   TH1D *h_legacy_jetpt = new TH1D("h_jetpt",";p_{T,jet} (GeV);Events",
+                                   200,0.,200.);
+   TH1D *h_legacy_dphi = new TH1D("h_dphi",";|#Delta#phi|-#pi;Events",
+                                  120,-TMath::Pi(),TMath::Pi());
+   fout->cd();
+   TObjString synchronizedSelection(
+     "ZbAnalysis master 46dbf340: HLT_Mu17_TrkIsoVVL_Mu8_TrkIsoVVL_DZ_Mass8; both muons trigger matched within DeltaR<0.3; tight ID; pfRelIso04<0.15; pT>20/10 GeV; |eta|<2.3; pT(Z)>12 GeV; |m-90 GeV|<20 GeV");
+   synchronizedSelection.Write("zjet_synchronized_selection");
    
    curdir->cd();
 
@@ -669,8 +823,10 @@ void zjet::Loop()
                               : lumiData.pileup(run, luminosityBlock));
 
       h_cutflow->Fill(1., eventWeight);
+      h_legacy_cutflow->Fill(1.,eventWeight);
       if (!isMC && !lumiData.accept(run, luminosityBlock)) continue;
       h_cutflow->Fill(2., eventWeight);
+      h_legacy_cutflow->Fill(2.,eventWeight);
 
       const bool passMetFilters =
         (Flag_goodVertices && Flag_globalSuperTightHalo2016Filter &&
@@ -679,13 +835,16 @@ void zjet::Loop()
          Flag_eeBadScFilter && Flag_ecalBadCalibFilter);
       if (!passMetFilters) continue;
       h_cutflow->Fill(3., eventWeight);
+      h_legacy_cutflow->Fill(3.,eventWeight);
 
-      if (!HLT_IsoMu24) continue;
+      if (!HLT_Mu17_TrkIsoVVL_Mu8_TrkIsoVVL_DZ_Mass8) continue;
       h_cutflow->Fill(4., eventWeight);
+      h_legacy_cutflow->Fill(4.,eventWeight);
 
-      if (nMuon>nMuonMax || nJet>nJetMax) {
+      if (nMuon>nMuonMax || nJet>nJetMax || nTrigObj>nMaxTrigObj) {
         cout << "ERROR: collection size exceeds fixed MakeClass buffer: nMuon="
-             << nMuon << ", nJet=" << nJet << endl;
+             << nMuon << ", nJet=" << nJet << ", nTrigObj=" << nTrigObj
+             << endl;
         continue;
       }
 
@@ -744,10 +903,22 @@ void zjet::Loop()
       double nsel(0.);
       double ntran(0.);
 
-      // Scan all opposite-sign pairs passing a configurable working point and
-      // keep the pair closest to the Z mass. The tag requirement models IsoMu24
-      // path: one tight, tightly isolated muon above the offline plateau;
-      // the other muon can be a lower-pT medium-ID, loose-isolation probe.
+      // The configurable selector below is retained for the control cut-flow.
+      // The nominal analysis uses selectSynchronizedMuonPair further below.
+      auto triggerMatchedMuon = [&](int ilep) {
+        TLorentzVector muon;
+        muon.SetPtEtaPhiM(Muon_pt[ilep],Muon_eta[ilep],Muon_phi[ilep],
+                          Muon_mass[ilep]);
+        for (int iobj=0; iobj<nTrigObj; ++iobj) {
+          if (std::abs(int(TrigObj_id[iobj]))!=13) continue;
+          TLorentzVector triggerObject;
+          triggerObject.SetPtEtaPhiM(TrigObj_pt[iobj],TrigObj_eta[iobj],
+                                     TrigObj_phi[iobj],0.);
+          if (muon.DeltaR(triggerObject)<0.3) return true;
+        }
+        return false;
+      };
+
       auto selectMuonPair = [&](int idWorkingPoint, int isolationWorkingPoint,
                                 double minimumPt, double leadingPt,
                                 bool requireTag, TLorentzVector &plus,
@@ -793,6 +964,44 @@ void zjet::Loop()
         return (bestMassDistance<1.e8);
       };
 
+      // Synchronized with the 2024 dimuon selection in ZbAnalysis master.
+      // The closest opposite-sign pair to 90 GeV is retained.
+      auto selectSynchronizedMuonPair = [&](TLorentzVector &plus,
+                                            TLorentzVector &minus) {
+        plus.SetPtEtaPhiM(0,0,0,0);
+        minus.SetPtEtaPhiM(0,0,0,0);
+        double bestMassDistance = 1.e9;
+        for (int iplus=0; iplus<nMuon; ++iplus) {
+          if (Muon_charge[iplus]<=0 || Muon_pt[iplus]<=8. ||
+              fabs(Muon_eta[iplus])>=2.3 || !Muon_tightId[iplus] ||
+              Muon_pfRelIso04_all[iplus]>=0.15 ||
+              !triggerMatchedMuon(iplus)) continue;
+          TLorentzVector plusCandidate;
+          plusCandidate.SetPtEtaPhiM(Muon_pt[iplus],Muon_eta[iplus],
+                                     Muon_phi[iplus],Muon_mass[iplus]);
+          for (int iminus=0; iminus<nMuon; ++iminus) {
+            if (Muon_charge[iminus]>=0 || Muon_pt[iminus]<=8. ||
+                fabs(Muon_eta[iminus])>=2.3 || !Muon_tightId[iminus] ||
+                Muon_pfRelIso04_all[iminus]>=0.15 ||
+                !triggerMatchedMuon(iminus)) continue;
+            TLorentzVector minusCandidate;
+            minusCandidate.SetPtEtaPhiM(Muon_pt[iminus],Muon_eta[iminus],
+                                        Muon_phi[iminus],Muon_mass[iminus]);
+            if (std::max(plusCandidate.Pt(),minusCandidate.Pt())<=20. ||
+                std::min(plusCandidate.Pt(),minusCandidate.Pt())<=10.)
+              continue;
+            const double massDistance =
+              fabs((plusCandidate+minusCandidate).M()-90.);
+            if (massDistance<bestMassDistance) {
+              bestMassDistance = massDistance;
+              plus = plusCandidate;
+              minus = minusCandidate;
+            }
+          }
+        }
+        return bestMassDistance<20.;
+      };
+
       auto fillMuonSelection = [&](int bin, int idWorkingPoint,
                                    int isolationWorkingPoint,
                                    double minimumPt, double leadingPt,
@@ -817,9 +1026,10 @@ void zjet::Loop()
       fillMuonSelection(11,2,2,20.,27.,false);
       fillMuonSelection(12,3,4,20.,27.,false);
 
-      // Select the nominal tag-probe pair.
+      // Select the nominal synchronized dimuon pair.
       h_nlep->Fill(nMuon, eventWeight);
-      if (!selectMuonPair(2,2,10.,27.,true,p4lplus,p4lminus)) continue;
+      if (!selectSynchronizedMuonPair(p4lplus,p4lminus)) continue;
+      h_legacy_cutflow->Fill(5.,eventWeight);
 
       // Reconstruct Z boson
       if (p4lplus.Pt()>0) ++nlep;
@@ -830,7 +1040,7 @@ void zjet::Loop()
       if (nlep != 2) continue;
       h_cutflow->Fill(5., eventWeight);
       //if (p4z.Pt()>0 && p4z.M()>80 && p4z.M()<100) {
-      if (p4z.Pt()>0 && p4z.M()>75 && p4z.M()<105) {
+      if (p4z.Pt()>0) {
 	h_zpt_precut->Fill(p4z.Pt());
 	h_zeta_precut->Fill(p4z.Eta());
 	h2_zeta_precut_vs_ptz->Fill(p4z.Pt(), p4z.Eta());
@@ -838,7 +1048,7 @@ void zjet::Loop()
 	h2_zmass_precut_vs_pt->Fill(p4z.Pt(),p4z.M());
 	p_zmass_precut_vs_pt->Fill(p4z.Pt(),p4z.M());
       }
-      if (p4z.Pt()>0 && fabs(p4z.M()-mz)<dmz) {
+      if (p4z.Pt()>12. && fabs(p4z.M()-90.)<20.) {
 	h_lep1pt->Fill(max(p4lplus.Pt(),p4lminus.Pt()));
 	h_lep2pt->Fill(min(p4lplus.Pt(),p4lminus.Pt()));
 	h_leppt->Fill(p4lplus.Pt());
@@ -877,7 +1087,101 @@ void zjet::Loop()
       else
 	continue;
       h_cutflow->Fill(6., eventWeight);
+      h_legacy_cutflow->Fill(6.,eventWeight);
       h_probe_veto->Fill(1., eventWeight);
+
+      // Legacy leading-jet reference.  It shares the synchronized event and
+      // dimuon selection above, so comparisons isolate the jet-response
+      // method rather than trigger or lepton-selection differences.
+      TLorentzVector legacyMet, legacyHt, legacyRawJets, legacyCorrJets;
+      legacyMet.SetPtEtaPhiM(jec ? RawPuppiMET_pt : PuppiMET_pt,0.,
+                             jec ? RawPuppiMET_phi : PuppiMET_phi,0.);
+      legacyHt = p4z;
+      int legacyJetIndex = -1;
+      TLorentzVector legacyJet;
+      legacyJet.SetPtEtaPhiM(0.,0.,0.,0.);
+      for (int ijet=0; ijet<nJet; ++ijet) {
+        TLorentzVector candidate;
+        candidate.SetPtEtaPhiM(Jet_pt[ijet],Jet_eta[ijet],Jet_phi[ijet],
+                               Jet_mass[ijet]);
+        if (!passTightJetId(ijet) || fabs(candidate.Eta())>=5. ||
+            candidate.DeltaR(p4lplus)<=0.3 ||
+            candidate.DeltaR(p4lminus)<=0.3) continue;
+        if (candidate.Pt()>12. && candidate.Pt()>legacyJet.Pt()) {
+          legacyJet = candidate;
+          legacyJetIndex = ijet;
+        }
+        if (candidate.Pt()<=15.) continue;
+        legacyHt += candidate;
+        if (jec) {
+          legacyRawJets += (1.-Jet_rawFactor[ijet])*candidate;
+          legacyCorrJets += candidate;
+        }
+      }
+      legacyHt.SetPtEtaPhiM(legacyHt.Pt(),0.,legacyHt.Phi(),0.);
+      if (jec) legacyMet += legacyRawJets-legacyCorrJets;
+      legacyMet.SetPtEtaPhiM(legacyMet.Pt(),0.,legacyMet.Phi(),0.);
+      const TLorentzVector legacyMetu = legacyMet+legacyHt;
+
+      if (legacyJetIndex>=0) {
+        h_legacy_cutflow->Fill(7.,eventWeight);
+        h_legacy_zpt->Fill(p4z.Pt(),eventWeight);
+        h_legacy_jetpt->Fill(legacyJet.Pt(),eventWeight);
+        const double legacyDphiResidual =
+          fabs(fabs(legacyJet.DeltaPhi(p4z))-TMath::Pi());
+        h_legacy_dphi->Fill(legacyDphiResidual,eventWeight);
+        if (legacyDphiResidual<0.44) {
+          h_legacy_cutflow->Fill(8.,eventWeight);
+          const double ptz = p4z.Pt();
+          const double ptj = legacyJet.Pt();
+          const double ptave = 0.5*(ptz+ptj);
+          const TLorentzVector legacyMet1 = -p4z-legacyJet;
+          const TLorentzVector legacyMetn =
+            -legacyHt+p4z+legacyJet;
+          const TLorentzVector legacyMetnu = legacyMetn+legacyMetu;
+          const TLorentzVector legacyMeta =
+            legacyMet1+legacyMetn+legacyMetu;
+          const double denominator = ptz*ptz;
+          const double db = ptj/ptz;
+          const double mpf =
+            1.+legacyMeta.Vect().Dot(p4z.Vect())/denominator;
+          const double mpf1 =
+            1.+legacyMet1.Vect().Dot(p4z.Vect())/denominator;
+          const double mpfn =
+            legacyMetn.Vect().Dot(p4z.Vect())/denominator;
+          const double mpfu =
+            legacyMetu.Vect().Dot(p4z.Vect())/denominator;
+          const double mpfnu =
+            legacyMetnu.Vect().Dot(p4z.Vect())/denominator;
+          bool hasGenResponse = false;
+          double genResponse = 0.;
+          if (isMC && Jet_genJetIdx[legacyJetIndex]>=0 &&
+              Jet_genJetIdx[legacyJetIndex]<nGenJet) {
+            const int igen = Jet_genJetIdx[legacyJetIndex];
+            TLorentzVector generatorJet;
+            generatorJet.SetPtEtaPhiM(GenJet_pt[igen],GenJet_eta[igen],
+                                      GenJet_phi[igen],GenJet_mass[igen]);
+            genResponse =
+              -generatorJet.Vect().Dot(p4z.Vect())/denominator;
+            hasGenResponse = std::isfinite(genResponse);
+          }
+          if (fabs(legacyJet.Eta())<1.305) {
+            fillResponseProfiles1D(
+              legacyProfiles,ptz,ptj,ptave,db,mpf,mpf1,mpfn,mpfu,mpfnu,
+              jetInverseResidual[legacyJetIndex],
+              Jet_chHEF[legacyJetIndex],Jet_neEmEF[legacyJetIndex],
+              Jet_neHEF[legacyJetIndex],Jet_chEmEF[legacyJetIndex],
+              Jet_muEF[legacyJetIndex],Rho_fixedGridRhoFastjetAll,
+              hasGenResponse,genResponse,eventWeight);
+            legacyProfiles.axes.at("zmmjet").mass->Fill(
+              ptz,p4z.M(),eventWeight);
+            legacyProfiles.axes.at("jetpt").mass->Fill(
+              ptj,p4z.M(),eventWeight);
+            legacyProfiles.axes.at("ptave").mass->Fill(
+              ptave,p4z.M(),eventWeight);
+          }
+        }
+      }
 
       // Set Z-parallel (probe) directions
       p4p.SetPtEtaPhiM(p4z.Pt(),p4z.Eta(),p4z.Phi()+TMath::Pi(),p4z.M());
@@ -926,7 +1230,7 @@ void zjet::Loop()
 			   Jet_mass[ijet]);
 	//if (p4jet.DeltaR(p4lplus)>0.4 && p4jet.DeltaR(p4lminus)>0.4 &&
 	if (passTightJetId(ijet) &&
-            p4jet.DeltaR(p4lplus)>0.2 && p4jet.DeltaR(p4lminus)>0.2 &&
+            p4jet.DeltaR(p4lplus)>0.3 && p4jet.DeltaR(p4lminus)>0.3 &&
 	    p4jet.Pt()>15.) {
 	  ht += p4jet;
 	  if (jec) {
@@ -1123,7 +1427,7 @@ void zjet::Loop()
 	double mpfnu = metnu.Vect().Dot(p4z.Vect()) / (ptz*ptz);
 	
 	//if (p4jet.DeltaR(p4lplus)>0.4 && p4jet.DeltaR(p4lminus)>0.4) {
-	if (p4jet.DeltaR(p4lplus)>0.2 && p4jet.DeltaR(p4lminus)>0.2) {
+	if (p4jet.DeltaR(p4lplus)>0.3 && p4jet.DeltaR(p4lminus)>0.3) {
 
 	  h_jetpt->Fill(p4jet.Pt());
 	  h_jeteta->Fill(p4jet.Eta());
@@ -1179,6 +1483,16 @@ void zjet::Loop()
 		               (isMC && genJetIndex>=0
 		                  ? GenJet_partonFlavour[genJetIndex] : 0),
 		               hasGenResponse,genBalance,db,mpf,mpf1,mpfn,mpfu,wt);
+		    if (abseta<1.305) {
+		      fillResponseProfiles1D(
+		        allPairsProfiles,ptz,ptj,pta,db,mpf,mpf1,mpfn,mpfu,mpfnu,
+		        jetInverseResidual[ijet],Jet_chHEF[ijet],Jet_neEmEF[ijet],
+		        Jet_neHEF[ijet],Jet_chEmEF[ijet],Jet_muEF[ijet],
+		        Rho_fixedGridRhoFastjetAll,hasGenResponse,genBalance,wt);
+		      allPairsProfiles.axes.at("zmmjet").mass->Fill(ptz,p4z.M(),wt);
+		      allPairsProfiles.axes.at("jetpt").mass->Fill(ptj,p4z.M(),wt);
+		      allPairsProfiles.axes.at("ptave").mass->Fill(pta,p4z.M(),wt);
+		    }
 
 		    h2ptetapf_->Fill(abseta,ptj,wt); h2pteta_->Fill(abseta,pta,wt);
 		    h2ptetatc_->Fill(abseta,ptz,wt);
@@ -1280,6 +1594,13 @@ void zjet::Loop()
 		                  ? GenJet_partonFlavour[genJetIndex] : 0),
 		               hasGenResponse,genBalance,db,mpfT,mpf1T,mpfnT,
 		               mpfuT,wt);
+		    if (abseta<1.305)
+		      fillResponseProfiles1D(
+		        allPairsProfiles,ptz,ptj,pta,db,mpfT,mpf1T,mpfnT,mpfuT,
+		        mpfnuT,jetInverseResidual[ijet],Jet_chHEF[ijet],
+		        Jet_neEmEF[ijet],Jet_neHEF[ijet],Jet_chEmEF[ijet],
+		        Jet_muEF[ijet],Rho_fixedGridRhoFastjetAll,hasGenResponse,
+		        genBalance,wt);
 
 		    h2ptetapf_->Fill(abseta,ptj,wt); h2pteta_->Fill(abseta,pta,wt);
 		    h2ptetatc_->Fill(abseta,ptz,wt); h2ptetapf->Fill(eta,ptj,wt);
