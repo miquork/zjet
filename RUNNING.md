@@ -162,7 +162,10 @@ root -l -b -q writeJecsys3.C
 The default output is `rootfiles/zjet_JMENANO_compat.root`. It contains the raw
 `data|mc/l2res*` trees plus `data|mc/eta_00_13` profiles for MPF, direct
 balance, MPF recoil components, PF composition, rho, event counts, Z mass and
-MC reco/gen closure. Point both entries below to the same compatibility file:
+MC reco/gen closure. The response and count objects are written for all three
+reference-pT choices used by `reprocess.C`: `zmmjet` (Z pT), `jetpt` (probe-jet
+pT), and `ptave` (average Z--jet pT). Point both entries below to the same
+compatibility file:
 
 ```cpp
 mfile["ZMM_2024I_nib1_DATA"] =
@@ -175,6 +178,12 @@ The normal jecsys3 chain can then run for `2024I_nib1`; its gamma+jet,
 multijet, inclusive-jet and W inputs remain configured as before. Keeping the
 old ZMM paths as commented alternatives makes the old/new comparison
 reversible. Campaign metadata is copied when present.
+
+If the merged `zjet_DATA.root` and `zjet_MC.root` files already exist, changes
+to this compatibility mapping do not require rerunning the NanoAOD event loop.
+Pull the updated code and rerun only `writeJecsys3.C`; the macro projects all
+three pT representations from the raw `l2res` profiles already stored in the
+merged files.
 
 ## lxplus small-file validation
 

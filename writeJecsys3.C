@@ -102,18 +102,44 @@ void writeProfile(TFile *source, TDirectory *target,
 }
 
 void writeCounts(TFile *source, TDirectory *target,
+                 const char *sourceName, const char *targetName,
                  int firstEtaBin, int lastEtaBin) {
-  TH2D *counts = requireObject<TH2D>(source,"l2res/h2ptetatc");
+  TH2D *counts = requireObject<TH2D>(
+    source,"l2res/" + std::string(sourceName));
   TH1D *projection = counts->ProjectionY(
-    "statistics_rmpf_zmmjet_a100",firstEtaBin,lastEtaBin,"e");
+    targetName,firstEtaBin,lastEtaBin,"e");
   if (!projection)
     throw std::runtime_error(
       "Failed to project " + std::string(source->GetName()) +
-      ":l2res/h2ptetatc");
+      ":l2res/" + sourceName);
   projection->SetDirectory(nullptr);
   target->cd();
   projection->Write();
   delete projection;
+}
+
+void writeResponseBinning(TFile *source, TDirectory *target,
+                          const char *sourceSuffix, const char *targetAxis,
+                          const char *countsName,
+                          int firstEtaBin, int lastEtaBin) {
+  const std::vector<std::pair<std::string,std::string> > profiles = {
+    {"m0", "rmpf"},
+    {"m2", "rmpfjet1"},
+    {"mn", "rmpfjetn"},
+    {"mu", "rmpfuncl"},
+  };
+  for (const auto &entry : profiles) {
+    const std::string sourceName =
+      "p2" + entry.first + std::string(sourceSuffix);
+    const std::string targetName =
+      entry.second + "_" + targetAxis + "_a100";
+    writeProfile(source,target,sourceName.c_str(),targetName.c_str(),
+                 firstEtaBin,lastEtaBin);
+  }
+  const std::string targetCounts =
+    "statistics_rmpf_" + std::string(targetAxis) + "_a100";
+  writeCounts(source,target,countsName,targetCounts.c_str(),
+              firstEtaBin,lastEtaBin);
 }
 
 void writeGlobalFitInputs(TFile *source, TDirectory *sampleDirectory,
@@ -124,11 +150,17 @@ void writeGlobalFitInputs(TFile *source, TDirectory *sampleDirectory,
   const int lastEtaBin = etaReference->GetXaxis()->FindFixBin(1.305-1.e-6);
 
   TDirectory *etaDirectory = makeDirectory(sampleDirectory,"eta_00_13");
+  // reprocess.C uses three complementary reference-pT choices. The tc, pf
+  // and unsuffixed raw profiles are binned in Z pT, jet pT and average pT,
+  // respectively. All three are projections of the same accepted pairs.
+  writeResponseBinning(source,etaDirectory,"tc","zmmjet","h2ptetatc",
+                       firstEtaBin,lastEtaBin);
+  writeResponseBinning(source,etaDirectory,"pf","jetpt","h2ptetapf",
+                       firstEtaBin,lastEtaBin);
+  writeResponseBinning(source,etaDirectory,"","ptave","h2pteta",
+                       firstEtaBin,lastEtaBin);
+
   const std::vector<std::pair<std::string,std::string> > profiles = {
-    {"p2m0tc", "rmpf_zmmjet_a100"},
-    {"p2m2tc", "rmpfjet1_zmmjet_a100"},
-    {"p2mntc", "rmpfjetn_zmmjet_a100"},
-    {"p2mutc", "rmpfuncl_zmmjet_a100"},
     {"p2chftc", "h_Zpt_chHEF_alpha100"},
     {"p2neftc", "h_Zpt_neEmEF_alpha100"},
     {"p2nhftc", "h_Zpt_neHEF_alpha100"},
@@ -143,7 +175,6 @@ void writeGlobalFitInputs(TFile *source, TDirectory *sampleDirectory,
   if (isMC)
     writeProfile(source,etaDirectory,"p2rgentc","rgenjet1_zmmjet_a100",
                  firstEtaBin,lastEtaBin);
-  writeCounts(source,etaDirectory,firstEtaBin,lastEtaBin);
 
   TH2D *mass = requireObject<TH2D>(source,"l2res/h2mztc");
   etaDirectory->cd();
@@ -185,6 +216,8 @@ void writeJecsys3(
     requireDirectory(source,"l2res1");
     const std::vector<std::string> requiredProfiles = {
       "p2m0tc", "p2m2tc", "p2mntc", "p2mutc", "p2restc", "p2jes",
+      "p2m0pf", "p2m2pf", "p2mnpf", "p2mupf",
+      "p2m0", "p2m2", "p2mn", "p2mu",
       "p2res", "p2chftc", "p2neftc", "p2nhftc", "p2ceftc", "p2muftc",
       "p2rhotc",
     };
@@ -193,6 +226,8 @@ void writeJecsys3(
     if (sample.second)
       requireObject<TProfile2D>(source,"l2res/p2rgentc");
     requireObject<TH2D>(source,"l2res/h2ptetatc");
+    requireObject<TH2D>(source,"l2res/h2ptetapf");
+    requireObject<TH2D>(source,"l2res/h2pteta");
     requireObject<TH2D>(source,"l2res/h2mztc");
     if (requireObject<TProfile2D>(source,"l2res/p2m0tc")->GetEntries()<=0)
       throw std::runtime_error(
