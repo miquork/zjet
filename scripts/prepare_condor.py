@@ -23,6 +23,18 @@ DEFAULT_JEC_L2 = (REPOSITORY/"CondFormats/JetMETObjects/data"/
 DEFAULT_JEC_RESIDUAL = (REPOSITORY/"CondFormats/JetMETObjects/data"/
                         "Prompt24_Run2024I_nib1_V11M_DATA_"
                         "L2L3Residual_AK4PFPuppi.txt")
+DEFAULT_JER_RESOLUTION = (REPOSITORY/"CondFormats/JetMETObjects/data"/
+                          "JR_Winter22Run3_V1_MC_PtResolution_"
+                          "AK4PFPuppi.txt")
+DEFAULT_JER_SCALE_FACTOR = (REPOSITORY/"CondFormats/JetMETObjects/data"/
+                            "Prompt24_2024_nib_JRV11M_MC_SF_"
+                            "AK4PFPuppi.txt")
+DEFAULT_MUON_CORRECTIONS = (REPOSITORY/"data/MuonCorrections"/
+                            "2024_Summer24.json")
+GENERATED_MUON_HEADER = (REPOSITORY/"data/MuonCorrections"/
+                         "2024_Summer24_generated.h")
+DEFAULT_JET_VETO_MAP = (REPOSITORY/"data/JetVetoMaps"/
+                        "jetvetoReReco2024_V9M.root")
 
 
 def read_file_list(path: Path, maximum: int) -> List[str]:
@@ -100,6 +112,18 @@ def main() -> None:
     parser.add_argument(
         "--jec-residual", default=str(DEFAULT_JEC_RESIDUAL),
         help="additional residual correction applied to raw data jets")
+    parser.add_argument(
+        "--jer-resolution", default=str(DEFAULT_JER_RESOLUTION),
+        help="MC jet pT resolution parametrization")
+    parser.add_argument(
+        "--jer-scale-factor", default=str(DEFAULT_JER_SCALE_FACTOR),
+        help="MC JER scale factors")
+    parser.add_argument(
+        "--muon-corrections", default=str(DEFAULT_MUON_CORRECTIONS),
+        help="Summer24 nominal muon scale and resolution corrections")
+    parser.add_argument(
+        "--jet-veto-map", default=str(DEFAULT_JET_VETO_MAP),
+        help="data-only jet veto map")
     parser.add_argument("--job-flavour", default="longlunch",
                         choices=("espresso", "microcentury", "longlunch",
                                  "workday", "tomorrow", "testmatch", "nextweek"))
@@ -152,9 +176,40 @@ def main() -> None:
     jec_l2_path, _ = optional_input(args.jec_l2,"L2 JEC file")
     jec_residual_path, _ = optional_input(args.jec_residual,
                                            "data residual JEC file")
+    jer_resolution_path, _ = optional_input(args.jer_resolution,
+                                             "JER resolution file")
+    jer_scale_factor_path, _ = optional_input(args.jer_scale_factor,
+                                               "JER scale-factor file")
+    muon_correction_path, _ = optional_input(args.muon_corrections,
+                                              "muon correction file")
+    jet_veto_map_path, _ = optional_input(args.jet_veto_map,
+                                           "jet veto map")
+    if ((jer_resolution_path is None) != (jer_scale_factor_path is None)):
+        raise ValueError(
+            "JER resolution and scale-factor files must be enabled together")
+    generated_muon_text = GENERATED_MUON_HEADER.read_text(encoding="utf-8")
+    generated_muon_match = re.search(
+        r'sourceSha256\[\]\s*=\s*"([0-9a-f]{64})"',
+        generated_muon_text,
+    )
+    if not generated_muon_match:
+        raise ValueError(
+            f"could not read source SHA256 from {GENERATED_MUON_HEADER}")
+    if (muon_correction_path is not None and
+            generated_muon_match.group(1) !=
+            sha256_bytes(muon_correction_path.read_bytes())):
+        raise ValueError(
+            "generated Summer24 muon tables do not match the selected JSON")
     optional_paths = [path for path in (golden_path,lumi_path,weights_path)
                       if path is not None]
-    optional_names = [path.name for path in optional_paths]
+    auxiliary_paths = [
+        path for path in (
+            golden_path,lumi_path,weights_path,jec_l2_path,jec_residual_path,
+            jer_resolution_path,jer_scale_factor_path,muon_correction_path,
+            jet_veto_map_path)
+        if path is not None
+    ]
+    optional_names = [path.name for path in auxiliary_paths]
     if len(optional_names) != len(set(optional_names)):
         raise ValueError("optional input files must have distinct basenames")
     reserved_names = {
@@ -237,7 +292,10 @@ def main() -> None:
         "source_files": {
             name: file_description(REPOSITORY/name)
             for name in ("zjet.C", "zjet.h", "mk_compile.C",
-                         "run_zjet_job.C", "condor/run_zjet_job.sh")
+                         "run_zjet_job.C", "condor/run_zjet_job.sh",
+                         "ZJetMuonCorrections.h",
+                         "data/MuonCorrections/2024_Summer24_generated.h",
+                         "scripts/generate_muon_corrections.py")
         },
         "inputs": {
             "mc_list": {"basename": mc_list.name,
@@ -249,6 +307,11 @@ def main() -> None:
             "pileup_weights": file_description(weights_path),
             "jec_l2": file_description(jec_l2_path),
             "jec_residual": file_description(jec_residual_path),
+            "jer_resolution": file_description(jer_resolution_path),
+            "jer_scale_factor": file_description(jer_scale_factor_path),
+            "muon_corrections": file_description(muon_correction_path),
+            "muon_lookup_header": file_description(GENERATED_MUON_HEADER),
+            "jet_veto_map": file_description(jet_veto_map_path),
         },
         "analysis": {
             "method": ("all accepted Z-jet pairs; +90 and -90 degree "
@@ -264,11 +327,31 @@ def main() -> None:
             "native_response_binning": (
                 "1D profiles under profiles1d/ and legacy/profiles1d/"
             ),
-            "jet_pt": "recomputed from raw pT with the configured JEC chain",
+            "jet_pt": (
+                "recomputed from raw pT with the configured JEC chain; "
+                "the first three lepton-cleaned MC jets are JER smeared"
+            ),
             "jec_recomputed_from_raw_pt": True,
             "stored_residual_profile": "inverse data residual correction",
-            "jer_smearing": {"enabled": False},
-            "jet_veto_map": {"enabled": False},
+            "jer_smearing": {
+                "enabled": jer_resolution_path is not None,
+                "maximum_lepton_cleaned_jets": 3,
+                "random_seed": 92837465,
+            },
+            "muon_corrections": {
+                "enabled": muon_correction_path is not None,
+                "scale": "nominal Summer24 data/MC scale",
+                "resolution": "deterministic nominal Summer24 MC smearing",
+            },
+            "jet_veto_map": {
+                "enabled": jet_veto_map_path is not None,
+                "scope": "data analysis probe jets only",
+                "histogram": "jetvetomap",
+            },
+            "type1_puppi_met": (
+                "RawPuppiMET plus raw-minus-JEC/JER-corrected "
+                "lepton-cleaned jets with corrected pT>15 GeV"
+            ),
             "worker_compilation": {
                 "forced_rebuild": True,
                 "ccache_disabled": True,
@@ -281,7 +364,8 @@ def main() -> None:
         json.dumps(metadata,indent=2) + "\n",encoding="utf-8")
 
     common_inputs = [
-        "zjet.C", "zjet.h", "ZJetLumi.h", "mk_compile.C",
+        "zjet.C", "zjet.h", "ZJetLumi.h", "ZJetMuonCorrections.h",
+        "data/MuonCorrections/2024_Summer24_generated.h", "mk_compile.C",
         "run_zjet_job.C",
         "CondFormats/JetMETObjects/interface/FactorizedJetCorrector.h",
         "CondFormats/JetMETObjects/interface/JetCorrectorParameters.h",
@@ -303,7 +387,9 @@ def main() -> None:
             transfer_inputs.append(str(relative))
             staged_optional_names.append(str(relative))
     correction_arguments = []
-    for path in (jec_l2_path,jec_residual_path):
+    for path in (jec_l2_path,jec_residual_path,jer_resolution_path,
+                 jer_scale_factor_path,muon_correction_path,
+                 jet_veto_map_path):
         if path is None:
             correction_arguments.append("-")
             continue
@@ -320,7 +406,9 @@ def main() -> None:
     golden_argument = next(staged_optional) if golden_path else "-"
     lumi_argument = next(staged_optional) if lumi_path else "-"
     weights_argument = next(staged_optional) if weights_path else "-"
-    jec_l2_argument, jec_residual_argument = correction_arguments
+    (jec_l2_argument,jec_residual_argument,jer_resolution_argument,
+     jer_scale_factor_argument,muon_correction_argument,
+     jet_veto_map_argument) = correction_arguments
     output_directive = (f"output_destination = {eos_results}\n"
                         "MY.XRDCP_CREATE_DIR = True\n"
                         if eos_results else
@@ -328,7 +416,7 @@ def main() -> None:
     submit_text = f"""universe = vanilla
 executable = condor/run_zjet_job.sh
 initialdir = {REPOSITORY}
-arguments = $(sample) $(chunk_path) $(output_file) {golden_argument} {lumi_argument} {weights_argument} {jec_l2_argument} {jec_residual_argument}
+arguments = $(sample) $(chunk_path) $(output_file) {golden_argument} {lumi_argument} {weights_argument} {jec_l2_argument} {jec_residual_argument} {jer_resolution_argument} {jer_scale_factor_argument} {muon_correction_argument} {jet_veto_map_argument}
 
 output = {log_dir}/$(sample)_$(chunk_id).out
 error = {log_dir}/$(sample)_$(chunk_id).err

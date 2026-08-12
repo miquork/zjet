@@ -39,43 +39,26 @@ commit.
 - The `ZbAnalysis` MET-filter list and its data-only application are used.
 - Legacy MC profiles use unit event weights, matching `ZbAnalysis`. The new
   all-pairs method retains signed generator weights.
+- Summer24 nominal muon scale corrections are applied before pair ranking and
+  kinematic cuts; the deterministic additional resolution is applied to MC.
+- The first three lepton-cleaned MC jets in NanoAOD order are smeared with the
+  same JER resolution, scale-factor parametrization, and random-engine seed as
+  `ZbAnalysis`.
+- `jetvetoReReco2024_V9M.root:jetvetomap` is applied only to data analysis
+  jets. It is deliberately absent from MC and from the Type-I MET sum.
+- Type-I PUPPI MET is rebuilt from `RawPuppiMET` with the same lepton-cleaned,
+  JEC/JER-corrected jets above 15 GeV used in the recoil sum.
 
 These changes require a new event-processing pass before they can appear in a
 compatibility file.
 
-## Remaining differences requiring implementation
+## Remaining difference requiring investigation
 
-1. **JER smearing (high priority).** `ZbAnalysis` enables smearing by default
-   for MC. For 2024 it uses
-   `JR_Winter22Run3_V1_MC_PtResolution_AK4PFPuppi.txt` and
-   `Prompt24_2024_nib_JRV11M_MC_SF_AK4PFPuppi.txt`. Only the first three
-   lepton-cleaned jets in NanoAOD order are smeared before pT reordering. The
-   local analysis currently records JER smearing as disabled. This affects
-   reference-pT migrations and is the most direct missing correction for the
-   MC response.
-
-2. **Muon scale and resolution (high priority for exact event sync).**
-   `ZbAnalysis` applies `2024_Summer24.json` to data and MC muons before the
-   final pT, eta, mass, and pair-ranking decisions. The local analysis uses
-   stored muon kinematics. The response effect should be smaller than the JER
-   effect, but events near thresholds and pT-bin edges will differ.
-
-3. **Jet veto map (data only).** `ZbAnalysis` applies
-   `jetvetoReReco2024_V9M.root:jetvetomap` to the leading data jet and does not
-   apply a 2024 map to MC. The local analysis has no jet-veto-map interface.
-   The direct effect on the central `|eta| < 1.305` input may be modest, but it
-   is required for an event-by-event synchronization.
-
-4. **Jet ID source.** `ZbAnalysis` reads `Jet_jetId >= 4`; JMENANOv15 inputs
+1. **Jet ID source.** `ZbAnalysis` reads `Jet_jetId >= 4`; JMENANOv15 inputs
    used locally do not expose that branch, so the local code reconstructs the
    Run-3 tight PF Jet ID from jet fractions and multiplicities. This should be
    validated event by event against the stored bit in a file that contains
    both representations.
-
-5. **Type-1 MET after JER.** Once JER is added, the smeared jet momenta must be
-   propagated through the raw-PUPPI-MET correction exactly as in
-   `ZbAnalysis::recalculateMET`. Adding JER only to the leading-jet response
-   would leave MPF inconsistent.
 
 ## Statistics normalization
 

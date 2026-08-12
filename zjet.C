@@ -12,8 +12,10 @@
 #include "TSystem.h"
 
 #include "ZJetLumi.h"
+#include "ZJetMuonCorrections.h"
 #include "CondFormats/JetMETObjects/interface/FactorizedJetCorrector.h"
 #include "CondFormats/JetMETObjects/interface/JetCorrectorParameters.h"
+#include "CondFormats/JetMETObjects/interface/SimpleJetCorrector.h"
 
 #include <algorithm>
 #include <chrono>
@@ -21,6 +23,8 @@
 #include <ctime>
 #include <iomanip>
 #include <map>
+#include <memory>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -184,6 +188,7 @@ void zjet::Loop()
    fChain->SetBranchStatus("Muon_tightId",1);
    fChain->SetBranchStatus("Muon_pfIsoId",1);
    fChain->SetBranchStatus("Muon_pfRelIso04_all",1);
+   fChain->SetBranchStatus("Muon_nTrackerLayers",1);
 
    fChain->SetBranchStatus("nJet",1);
    fChain->SetBranchStatus("Jet_pt",1);
@@ -293,6 +298,21 @@ void zjet::Loop()
      pileupWeights->SetDirectory(0);
    }
 
+   const bool applyMuonCorrections = !muonCorrectionFile.empty();
+   if (applyMuonCorrections) {
+     std::ifstream input(muonCorrectionFile);
+     if (!input.good()) {
+       cout << "Failed to open Summer24 muon correction source "
+            << muonCorrectionFile << endl;
+       return;
+     }
+     cout << "Applying Summer24 nominal muon scale corrections to "
+          << (isMC ? "MC" : "data");
+     if (isMC) cout << " and the deterministic MC resolution correction";
+     cout << "." << endl;
+   }
+   zjetcorrections::Summer24MuonCorrections muonCorrections;
+
    FactorizedJetCorrector *jec = 0;
    if (!jecL2File.empty()) {
      try {
@@ -312,7 +332,51 @@ void zjet::Loop()
        cout << " and residual correction " << jecResidualFile;
      cout << "." << endl;
    }
-   else {
+
+   SimpleJetCorrector *jerResolution = 0;
+   FactorizedJetCorrector *jerScaleFactor = 0;
+   if (isMC && (jerResolutionFile.empty()!=jerScaleFactorFile.empty())) {
+     cout << "JER smearing requires both a resolution and a scale-factor file."
+          << endl;
+     return;
+   }
+   if (isMC && !jerResolutionFile.empty()) {
+     try {
+       jerResolution = new SimpleJetCorrector(jerResolutionFile);
+       std::vector<JetCorrectorParameters> scaleFactors;
+       scaleFactors.push_back(JetCorrectorParameters(jerScaleFactorFile));
+       jerScaleFactor = new FactorizedJetCorrector(scaleFactors);
+     }
+     catch (const std::exception &error) {
+       cout << "Failed to initialize JER: " << error.what() << endl;
+       return;
+     }
+     cout << "Applying MC JER smearing with resolution " << jerResolutionFile
+          << " and scale factors " << jerScaleFactorFile << "." << endl;
+   }
+   else if (isMC) {
+     cout << "MC JER smearing disabled." << endl;
+   }
+
+   TH2 *jetVetoMap = 0;
+   if (!isMC && !jetVetoMapFile.empty()) {
+     std::unique_ptr<TFile> mapFile(TFile::Open(jetVetoMapFile.c_str(),"READ"));
+     TH2 *source = mapFile && !mapFile->IsZombie()
+       ? dynamic_cast<TH2*>(mapFile->Get("jetvetomap")) : nullptr;
+     if (!source) {
+       cout << "Failed to load jetvetomap from " << jetVetoMapFile << endl;
+       return;
+     }
+     jetVetoMap = dynamic_cast<TH2*>(source->Clone("zjet_jetvetomap"));
+     jetVetoMap->SetDirectory(0);
+     cout << "Applying data-only jet veto map " << jetVetoMapFile
+          << ":jetvetomap." << endl;
+   }
+
+   const bool recalculatePuppiMet =
+     (jec!=nullptr) || (isMC && jerResolution && jerScaleFactor);
+   std::mt19937 jerRandomNumberGenerator(92837465);
+   if (!recalculatePuppiMet) {
      cout << "JEC recomputation disabled; using stored NanoAOD jet pT and "
           << "PuppiMET." << endl;
    }
@@ -340,6 +404,25 @@ void zjet::Loop()
    jecL2.Write("zjet_jec_l2_file");
    TObjString jecResidual((!isMC ? jecResidualFile : "").c_str());
    jecResidual.Write("zjet_jec_residual_file");
+   TObjString jerResolutionMetadata(
+     (isMC ? jerResolutionFile : "").c_str());
+   jerResolutionMetadata.Write("zjet_jer_resolution_file");
+   TObjString jerScaleFactorMetadata(
+     (isMC ? jerScaleFactorFile : "").c_str());
+   jerScaleFactorMetadata.Write("zjet_jer_scale_factor_file");
+   TObjString muonCorrectionMetadata(muonCorrectionFile.c_str());
+   muonCorrectionMetadata.Write("zjet_muon_correction_file");
+   TObjString muonCorrectionSha(
+     applyMuonCorrections ? ZJetMuonCorrectionData::sourceSha256 : "");
+   muonCorrectionSha.Write("zjet_muon_correction_sha256");
+   TObjString jetVetoMapMetadata(
+     (!isMC ? jetVetoMapFile : "").c_str());
+   jetVetoMapMetadata.Write("zjet_jet_veto_map_file");
+   TObjString type1MetMetadata(
+     recalculatePuppiMet
+       ? "RawPuppiMET plus raw-minus-JEC/JER-corrected lepton-cleaned jets with corrected pT>15 GeV"
+       : "stored PuppiMET");
+   type1MetMetadata.Write("zjet_type1_met_definition");
    TObjString flavorDefinition(
      "Bettina/Sami DeepJet: B>0.7527; C=0.5*(CvB+CvL)>0.3985 after B veto; QG split at 0.5 after B/C veto");
    flavorDefinition.Write("zjet_flavor_definition");
@@ -381,6 +464,18 @@ void zjet::Loop()
    h_probe_pair_state->GetXaxis()->SetBinLabel(2,"+90 only");
    h_probe_pair_state->GetXaxis()->SetBinLabel(3,"-90 only");
    h_probe_pair_state->GetXaxis()->SetBinLabel(4,"both");
+
+   TH1D *h_muon_scale_factor = new TH1D(
+     "h_muon_scale_factor",";Muon scale factor;Muons",200,0.98,1.02);
+   TH1D *h_muon_resolution_factor = new TH1D(
+     "h_muon_resolution_factor",";Muon resolution factor;Muons",
+     300,0.85,1.15);
+   TH1D *h_jer_smear_factor = new TH1D(
+     "h_jer_smear_factor",";JER smearing factor;Jets",300,0.7,1.3);
+   TH1D *h_jet_veto_map = new TH1D("h_jet_veto_map","",3,0.5,3.5);
+   h_jet_veto_map->GetXaxis()->SetBinLabel(1,"checked");
+   h_jet_veto_map->GetXaxis()->SetBinLabel(2,"passed");
+   h_jet_veto_map->GetXaxis()->SetBinLabel(3,"vetoed");
 
    std::map<std::string, TProfile*> pileupControl;
    const char *observables[] = {"npvs", "rho", "mu"};
@@ -857,35 +952,38 @@ void zjet::Loop()
       }
 
       double jetInverseResidual[nJetMax];
-      for (int ijet = 0; ijet != nJet; ++ijet) {
+      double jetRawPt[nJetMax];
+      double jetRawMass[nJetMax];
+      for (int ijet=0; ijet<nJet; ++ijet) {
         jetInverseResidual[ijet] = 1.;
-        if (!jec) continue;
-
-        const double rawPt = Jet_pt[ijet]*(1.-Jet_rawFactor[ijet]);
-        const double rawMass = Jet_mass[ijet]*(1.-Jet_rawFactor[ijet]);
-        jec->setJetPt(rawPt);
-        jec->setJetEta(Jet_eta[ijet]);
-        jec->setJetPhi(Jet_phi[ijet]);
-        jec->setJetA(Jet_area[ijet]);
-        jec->setRho(Rho_fixedGridRhoFastjetAll);
-        jec->setNPV(PV_npvs);
-        const std::vector<float> subCorrections = jec->getSubCorrections();
-        if (subCorrections.empty() || !std::isfinite(subCorrections.back()) ||
-            subCorrections.back()<=0.) {
-          cout << "ERROR: invalid JEC for event " << jentry << ", jet "
-               << ijet << "." << endl;
-          readFailure = true;
-          break;
-        }
-        const double correction = subCorrections.back();
-        if (subCorrections.size()>1)
-          jetInverseResidual[ijet] =
-            subCorrections[subCorrections.size()-2]/correction;
-        Jet_pt[ijet] = correction*rawPt;
-        Jet_mass[ijet] = correction*rawMass;
-        Jet_rawFactor[ijet] = 1.-1./correction;
+        jetRawPt[ijet] = Jet_pt[ijet]*(1.-Jet_rawFactor[ijet]);
+        jetRawMass[ijet] = Jet_mass[ijet]*(1.-Jet_rawFactor[ijet]);
       }
-      if (readFailure) break;
+
+      // Keep trigger matching on the uncorrected NanoAOD muon, as in the
+      // reference analysis, but use corrected four-vectors for pair ranking,
+      // kinematic cuts, the Z boson, and lepton-jet cleaning.
+      std::vector<TLorentzVector> correctedMuonP4(nMuon);
+      for (int ilep=0; ilep<nMuon; ++ilep) {
+        const double scaleFactor = applyMuonCorrections
+          ? muonCorrections.scaleFactor(!isMC,Muon_pt[ilep],Muon_eta[ilep],
+                                        Muon_phi[ilep],Muon_charge[ilep])
+          : 1.;
+        const double scaledPt = Muon_pt[ilep]*scaleFactor;
+        const double resolutionFactor =
+          (isMC && applyMuonCorrections)
+          ? muonCorrections.resolutionFactor(
+              scaledPt,Muon_eta[ilep],Muon_phi[ilep],
+              Muon_nTrackerLayers[ilep],static_cast<int>(event),
+              static_cast<int>(luminosityBlock))
+          : 1.;
+        correctedMuonP4[ilep].SetPtEtaPhiM(
+          scaledPt*resolutionFactor,Muon_eta[ilep],Muon_phi[ilep],
+          Muon_mass[ilep]*scaleFactor*resolutionFactor);
+        h_muon_scale_factor->Fill(scaleFactor,eventWeight);
+        if (isMC)
+          h_muon_resolution_factor->Fill(resolutionFactor,eventWeight);
+      }
       h_muon_selection->Fill(1., eventWeight);
 
       p4lplus.SetPtEtaPhiM(0,0,0,0);
@@ -941,22 +1039,19 @@ void zjet::Loop()
              (idWorkingPoint==2 && Muon_mediumId[ilep]) ||
              (idWorkingPoint==3 && Muon_tightId[ilep]));
           return (passId && Muon_pfIsoId[ilep]>=isolationWorkingPoint &&
-                  Muon_pt[ilep]>minimumPt && fabs(Muon_eta[ilep])<2.4);
+                  correctedMuonP4[ilep].Pt()>minimumPt &&
+                  fabs(correctedMuonP4[ilep].Eta())<2.4);
         };
         auto isTag = [&](int ilep) {
-          return (Muon_pt[ilep]>27. && Muon_tightId[ilep] &&
+          return (correctedMuonP4[ilep].Pt()>27. && Muon_tightId[ilep] &&
                   Muon_pfIsoId[ilep]>=4);
         };
         for (int iplus = 0; iplus != nMuon; ++iplus) {
           if (Muon_charge[iplus]<=0 || !passMuon(iplus)) continue;
-          TLorentzVector plusCandidate;
-          plusCandidate.SetPtEtaPhiM(Muon_pt[iplus],Muon_eta[iplus],
-                                     Muon_phi[iplus],Muon_mass[iplus]);
+          const TLorentzVector &plusCandidate = correctedMuonP4[iplus];
           for (int iminus = 0; iminus != nMuon; ++iminus) {
             if (Muon_charge[iminus]>=0 || !passMuon(iminus)) continue;
-            TLorentzVector minusCandidate;
-            minusCandidate.SetPtEtaPhiM(Muon_pt[iminus],Muon_eta[iminus],
-                                        Muon_phi[iminus],Muon_mass[iminus]);
+            const TLorentzVector &minusCandidate = correctedMuonP4[iminus];
             if (max(plusCandidate.Pt(),minusCandidate.Pt())<=leadingPt)
               continue;
             if (requireTag && !isTag(iplus) && !isTag(iminus)) continue;
@@ -985,10 +1080,7 @@ void zjet::Loop()
           if (Muon_pt[ilep]<=8. || !Muon_tightId[ilep] ||
               Muon_pfRelIso04_all[ilep]>=0.15 ||
               !triggerMatchedMuon(ilep)) continue;
-          TLorentzVector selected;
-          selected.SetPtEtaPhiM(Muon_pt[ilep],Muon_eta[ilep],Muon_phi[ilep],
-                                Muon_mass[ilep]);
-          synchronizedMuons.push_back(selected);
+          synchronizedMuons.push_back(correctedMuonP4[ilep]);
         }
         if (synchronizedMuons.size()<2 || synchronizedMuons.size()>3)
           return false;
@@ -997,17 +1089,13 @@ void zjet::Loop()
               !Muon_tightId[iplus] ||
               Muon_pfRelIso04_all[iplus]>=0.15 ||
               !triggerMatchedMuon(iplus)) continue;
-          TLorentzVector plusCandidate;
-          plusCandidate.SetPtEtaPhiM(Muon_pt[iplus],Muon_eta[iplus],
-                                     Muon_phi[iplus],Muon_mass[iplus]);
+          const TLorentzVector &plusCandidate = correctedMuonP4[iplus];
           for (int iminus=0; iminus<nMuon; ++iminus) {
             if (Muon_charge[iminus]>=0 || Muon_pt[iminus]<=8. ||
                 !Muon_tightId[iminus] ||
                 Muon_pfRelIso04_all[iminus]>=0.15 ||
                 !triggerMatchedMuon(iminus)) continue;
-            TLorentzVector minusCandidate;
-            minusCandidate.SetPtEtaPhiM(Muon_pt[iminus],Muon_eta[iminus],
-                                        Muon_phi[iminus],Muon_mass[iminus]);
+            const TLorentzVector &minusCandidate = correctedMuonP4[iminus];
             const double massDistance =
               fabs((plusCandidate+minusCandidate).M()-90.);
             if (massDistance<bestMassDistance) {
@@ -1055,6 +1143,107 @@ void zjet::Loop()
         for (const TLorentzVector &muon : synchronizedMuons)
           if (jet.DeltaR(muon)<=0.3) return false;
         return true;
+      };
+
+      // Recompute JEC only for lepton-cleaned jets and smear the first three
+      // such jets in their original NanoAOD order. This matches ZbAnalysis;
+      // sorting by the smeared pT happens implicitly only when the leading jet
+      // is selected below.
+      int cleanedJetOrdinal = 0;
+      for (int ijet=0; ijet<nJet; ++ijet) {
+        TLorentzVector storedJet;
+        storedJet.SetPtEtaPhiM(Jet_pt[ijet],Jet_eta[ijet],Jet_phi[ijet],
+                               Jet_mass[ijet]);
+        if (!separatedFromSynchronizedMuons(storedJet)) continue;
+
+        double correctedPt = Jet_pt[ijet];
+        double correctedMass = Jet_mass[ijet];
+        if (jec) {
+          jec->setJetPt(jetRawPt[ijet]);
+          jec->setJetEta(Jet_eta[ijet]);
+          jec->setJetPhi(Jet_phi[ijet]);
+          jec->setJetA(Jet_area[ijet]);
+          jec->setRho(Rho_fixedGridRhoFastjetAll);
+          jec->setNPV(PV_npvs);
+          const std::vector<float> subCorrections = jec->getSubCorrections();
+          if (subCorrections.empty() ||
+              !std::isfinite(subCorrections.back()) ||
+              subCorrections.back()<=0.) {
+            cout << "ERROR: invalid JEC for event " << jentry << ", jet "
+                 << ijet << "." << endl;
+            readFailure = true;
+            break;
+          }
+          const double correction = subCorrections.back();
+          if (subCorrections.size()>1)
+            jetInverseResidual[ijet] =
+              subCorrections[subCorrections.size()-2]/correction;
+          correctedPt = correction*jetRawPt[ijet];
+          correctedMass = correction*jetRawMass[ijet];
+        }
+
+        if (isMC && jerResolution && jerScaleFactor &&
+            cleanedJetOrdinal<3) {
+          TLorentzVector correctedJet;
+          correctedJet.SetPtEtaPhiM(correctedPt,Jet_eta[ijet],Jet_phi[ijet],
+                                    correctedMass);
+          const double resolution = jerResolution->correction(
+            {float(Jet_eta[ijet]),float(Rho_fixedGridRhoFastjetAll)},
+            {float(correctedPt)});
+          jerScaleFactor->setJetPt(correctedPt);
+          jerScaleFactor->setJetEta(Jet_eta[ijet]);
+          jerScaleFactor->setRho(Rho_fixedGridRhoFastjetAll);
+          const double scaleFactor = jerScaleFactor->getCorrection();
+          if (!std::isfinite(resolution) || resolution<0. ||
+              !std::isfinite(scaleFactor) || scaleFactor<=0.) {
+            cout << "ERROR: invalid JER for event " << jentry << ", jet "
+                 << ijet << "." << endl;
+            readFailure = true;
+            break;
+          }
+
+          double smearFactor = 1.;
+          bool matched = false;
+          if (Jet_genJetIdx[ijet]>=0 && Jet_genJetIdx[ijet]<nGenJet) {
+            const int igen = Jet_genJetIdx[ijet];
+            TLorentzVector generatorJet;
+            generatorJet.SetPtEtaPhiM(
+              GenJet_pt[igen],GenJet_eta[igen],GenJet_phi[igen],
+              GenJet_mass[igen]);
+            matched = (generatorJet.Pt()>0.01 &&
+                       correctedJet.DeltaR(generatorJet)<0.2 &&
+                       fabs(correctedPt-generatorJet.Pt())/
+                         generatorJet.Pt()<3.*resolution);
+            if (matched)
+              smearFactor += (scaleFactor-1.)*
+                (correctedPt-generatorJet.Pt())/generatorJet.Pt();
+          }
+          if (!matched && scaleFactor>1.) {
+            const double width =
+              resolution*std::sqrt(scaleFactor*scaleFactor-1.);
+            std::normal_distribution<double> gaussian(0.,width);
+            smearFactor += gaussian(jerRandomNumberGenerator);
+          }
+          const double minimumSmear = 0.01/correctedJet.E();
+          if (smearFactor<minimumSmear) smearFactor = minimumSmear;
+          h_jer_smear_factor->Fill(smearFactor,eventWeight);
+          correctedPt *= smearFactor;
+          correctedMass *= smearFactor;
+        }
+        ++cleanedJetOrdinal;
+
+        Jet_pt[ijet] = correctedPt;
+        Jet_mass[ijet] = correctedMass;
+        Jet_rawFactor[ijet] =
+          (correctedPt>0. ? 1.-jetRawPt[ijet]/correctedPt : 0.);
+      }
+      if (readFailure) break;
+
+      auto passesJetVetoMap = [&](const TLorentzVector &jet) {
+        if (!jetVetoMap) return true;
+        const int etaBin = jetVetoMap->GetXaxis()->FindBin(jet.Eta());
+        const int phiBin = jetVetoMap->GetYaxis()->FindBin(jet.Phi());
+        return !(jetVetoMap->GetBinContent(etaBin,phiBin)>0.);
       };
 
       // Reconstruct Z boson
@@ -1120,8 +1309,9 @@ void zjet::Loop()
       // dimuon selection above, so comparisons isolate the jet-response
       // method rather than trigger or lepton-selection differences.
       TLorentzVector legacyMet, legacyHt, legacyRawJets, legacyCorrJets;
-      legacyMet.SetPtEtaPhiM(jec ? RawPuppiMET_pt : PuppiMET_pt,0.,
-                             jec ? RawPuppiMET_phi : PuppiMET_phi,0.);
+      legacyMet.SetPtEtaPhiM(
+        recalculatePuppiMet ? RawPuppiMET_pt : PuppiMET_pt,0.,
+        recalculatePuppiMet ? RawPuppiMET_phi : PuppiMET_phi,0.);
       legacyHt = p4z;
       int legacyJetIndex = -1;
       TLorentzVector legacyJet;
@@ -1138,13 +1328,16 @@ void zjet::Loop()
         }
         if (candidate.Pt()<=15.) continue;
         legacyHt += candidate;
-        if (jec) {
-          legacyRawJets += (1.-Jet_rawFactor[ijet])*candidate;
+        if (recalculatePuppiMet) {
+          TLorentzVector rawCandidate;
+          rawCandidate.SetPtEtaPhiM(
+            jetRawPt[ijet],Jet_eta[ijet],Jet_phi[ijet],jetRawMass[ijet]);
+          legacyRawJets += rawCandidate;
           legacyCorrJets += candidate;
         }
       }
       legacyHt.SetPtEtaPhiM(legacyHt.Pt(),0.,legacyHt.Phi(),0.);
-      if (jec) legacyMet += legacyRawJets-legacyCorrJets;
+      if (recalculatePuppiMet) legacyMet += legacyRawJets-legacyCorrJets;
       legacyMet.SetPtEtaPhiM(legacyMet.Pt(),0.,legacyMet.Phi(),0.);
       const TLorentzVector legacyMetu = legacyMet+legacyHt;
 
@@ -1156,6 +1349,7 @@ void zjet::Loop()
           fabs(fabs(legacyJet.DeltaPhi(p4z))-TMath::Pi());
         h_legacy_dphi->Fill(legacyDphiResidual,legacyEventWeight);
         if (legacyDphiResidual<0.44 && passTightJetId(legacyJetIndex) &&
+            passesJetVetoMap(legacyJet) &&
             !(legacyJet.Pt()<70. && fabs(legacyJet.Eta())>2.65 &&
               fabs(legacyJet.Eta())<2.964)) {
           h_legacy_cutflow->Fill(8.,legacyEventWeight);
@@ -1248,7 +1442,7 @@ void zjet::Loop()
       h_zpt_probeveto->Fill(p4z.Pt(), eventWeight*signalAcceptance);
       
       // Calculate MET and HT sum
-      if (jec)
+      if (recalculatePuppiMet)
         met.SetPtEtaPhiM(RawPuppiMET_pt,0.,RawPuppiMET_phi,0.);
       else
         met.SetPtEtaPhiM(PuppiMET_pt,0.,PuppiMET_phi,0.);
@@ -1257,18 +1451,18 @@ void zjet::Loop()
 	p4jet.SetPtEtaPhiM(Jet_pt[ijet], Jet_eta[ijet], Jet_phi[ijet],
 			   Jet_mass[ijet]);
 	//if (p4jet.DeltaR(p4lplus)>0.4 && p4jet.DeltaR(p4lminus)>0.4 &&
-	if (passTightJetId(ijet) && separatedFromSynchronizedMuons(p4jet) &&
-	    p4jet.Pt()>15.) {
+	if (separatedFromSynchronizedMuons(p4jet) && p4jet.Pt()>15.) {
 	  ht += p4jet;
-	  if (jec) {
-	    rawjet = (1.-Jet_rawFactor[ijet])*p4jet;
+	  if (recalculatePuppiMet) {
+	    rawjet.SetPtEtaPhiM(jetRawPt[ijet],Jet_eta[ijet],Jet_phi[ijet],
+	                         jetRawMass[ijet]);
 	    rawjets += rawjet;
 	    corrjets += p4jet;
 	  }
 	}
       }
       ht.SetPtEtaPhiM(ht.Pt(),0,ht.Phi(),0);
-      if (jec) met += rawjets-corrjets;
+      if (recalculatePuppiMet) met += rawjets-corrjets;
       met.SetPtEtaPhiM(met.Pt(),0,met.Phi(),0.);
       metu = met + ht;
 
@@ -1406,6 +1600,14 @@ void zjet::Loop()
 	p4jet.SetPtEtaPhiM(Jet_pt[ijet], Jet_eta[ijet], Jet_phi[ijet],
 			   Jet_mass[ijet]);
 	if (!passTightJetId(ijet)) continue;
+	if (!isMC) {
+	  h_jet_veto_map->Fill(1.,eventWeight);
+	  if (!passesJetVetoMap(p4jet)) {
+	    h_jet_veto_map->Fill(3.,eventWeight);
+	    continue;
+	  }
+	  h_jet_veto_map->Fill(2.,eventWeight);
+	}
 
 	double eta = p4jet.Eta();
 	double ptz = p4z.Pt();

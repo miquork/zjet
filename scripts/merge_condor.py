@@ -64,6 +64,11 @@ def provenance_log(provenance: Dict[str, object]) -> str:
         f"Pileup weights: {inputs.get('pileup_weights')}",
         f"L2 JEC: {inputs.get('jec_l2')}",
         f"Data residual JEC: {inputs.get('jec_residual')}",
+        f"JER resolution: {inputs.get('jer_resolution')}",
+        f"JER scale factors: {inputs.get('jer_scale_factor')}",
+        f"Muon corrections: {inputs.get('muon_corrections')}",
+        f"Generated muon lookup: {inputs.get('muon_lookup_header')}",
+        f"Data jet veto map: {inputs.get('jet_veto_map')}",
         f"Analysis settings: {analysis}",
         f"Inputs: {provenance['mc_files']} MC files in "
         f"{provenance['mc_jobs']} jobs; {provenance['data_files']} data "

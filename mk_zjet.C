@@ -45,7 +45,11 @@ void mk_zjet(
   int maximumMcFiles=-1,
   int maximumDataFiles=-1,
   const char *jecL2="CondFormats/JetMETObjects/data/RunIII2024Summer24_V2_MC_L2Relative_AK4PUPPI.txt",
-  const char *jecResidual="CondFormats/JetMETObjects/data/Prompt24_Run2024I_nib1_V11M_DATA_L2L3Residual_AK4PFPuppi.txt") {
+  const char *jecResidual="CondFormats/JetMETObjects/data/Prompt24_Run2024I_nib1_V11M_DATA_L2L3Residual_AK4PFPuppi.txt",
+  const char *jerResolution="CondFormats/JetMETObjects/data/JR_Winter22Run3_V1_MC_PtResolution_AK4PFPuppi.txt",
+  const char *jerScaleFactor="CondFormats/JetMETObjects/data/Prompt24_2024_nib_JRV11M_MC_SF_AK4PFPuppi.txt",
+  const char *muonCorrections="data/MuonCorrections/2024_Summer24.json",
+  const char *jetVetoMap="data/JetVetoMaps/jetvetoReReco2024_V9M.root") {
   
   bool isMC = false;
   TChain *cm = new TChain("Events","Events");
@@ -58,12 +62,14 @@ void mk_zjet(
 
   std::cout << "\n=== Starting MC analysis ===" << std::endl;
   zjet zm(cm, isMC = true, "rootfiles/zjet_MC.root", "", "",
-          pileupWeights,jecL2,"");
+          pileupWeights,jecL2,"",jerResolution,jerScaleFactor,
+          muonCorrections,"");
   zm.Loop();
 
   std::cout << "\n=== Starting data analysis ===" << std::endl;
   zjet zd(cd, isMC = false, "rootfiles/zjet_DATA.root", goldenJson,
-          lumiPileup,"",jecL2,jecResidual);
+          lumiPileup,"",jecL2,jecResidual,"","",muonCorrections,
+          jetVetoMap);
   zd.Loop();
 
 }

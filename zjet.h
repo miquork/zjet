@@ -702,13 +702,21 @@ public :
   std::string pileupWeightFile;
   std::string jecL2File;
   std::string jecResidualFile;
+  std::string jerResolutionFile;
+  std::string jerScaleFactorFile;
+  std::string muonCorrectionFile;
+  std::string jetVetoMapFile;
   zjet(TTree *tree=0, bool isMC=false,
        const char *outputFile="rootfiles/zjet.root",
        const char *goldenJsonFile="",
        const char *lumiPileupFile="",
        const char *pileupWeightFile="",
        const char *jecL2File="",
-       const char *jecResidualFile="");
+       const char *jecResidualFile="",
+       const char *jerResolutionFile="",
+       const char *jerScaleFactorFile="",
+       const char *muonCorrectionFile="",
+       const char *jetVetoMapFile="");
    virtual ~zjet();
    virtual Int_t    Cut(Long64_t entry);
    virtual Int_t    GetEntry(Long64_t entry);
@@ -725,11 +733,16 @@ public :
 zjet::zjet(TTree *tree, bool _isMC, const char *_outputFile,
            const char *_goldenJsonFile, const char *_lumiPileupFile,
            const char *_pileupWeightFile, const char *_jecL2File,
-           const char *_jecResidualFile)
+           const char *_jecResidualFile, const char *_jerResolutionFile,
+           const char *_jerScaleFactorFile, const char *_muonCorrectionFile,
+           const char *_jetVetoMapFile)
   : fChain(0), isMC(_isMC), outputFile(_outputFile),
     goldenJsonFile(_goldenJsonFile), lumiPileupFile(_lumiPileupFile),
     pileupWeightFile(_pileupWeightFile), jecL2File(_jecL2File),
-    jecResidualFile(_jecResidualFile)
+    jecResidualFile(_jecResidualFile), jerResolutionFile(_jerResolutionFile),
+    jerScaleFactorFile(_jerScaleFactorFile),
+    muonCorrectionFile(_muonCorrectionFile),
+    jetVetoMapFile(_jetVetoMapFile)
 {
 // if parameter tree is not specified (or zero), connect the file
 // used to generate this class and read the Tree.

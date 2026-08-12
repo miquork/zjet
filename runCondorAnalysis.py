@@ -39,6 +39,18 @@ PRESETS = {
             "Prompt24_Run2024I_nib1_V11M_DATA_"
             "L2L3Residual_AK4PFPuppi.txt"
         ),
+        "jer_resolution": (
+            "CondFormats/JetMETObjects/data/"
+            "JR_Winter22Run3_V1_MC_PtResolution_AK4PFPuppi.txt"
+        ),
+        "jer_scale_factor": (
+            "CondFormats/JetMETObjects/data/"
+            "Prompt24_2024_nib_JRV11M_MC_SF_AK4PFPuppi.txt"
+        ),
+        "muon_corrections": "data/MuonCorrections/2024_Summer24.json",
+        "jet_veto_map": (
+            "data/JetVetoMaps/jetvetoReReco2024_V9M.root"
+        ),
         # Deliberately conservative, order-of-magnitude planning estimates.
         "mc_cpu_minutes_per_file": 2.0,
         "data_cpu_minutes_per_file": 1.0,
@@ -289,10 +301,28 @@ def preflight(state: Dict[str, object], preset: Dict[str, object],
     report_space(Path(str(state["log_root"])))
     report_space(REPOSITORY)
     for key in ("mc_list", "data_list", "golden_json", "jec_l2",
-                "jec_residual"):
+                "jec_residual", "jer_resolution", "jer_scale_factor",
+                "muon_corrections", "jet_veto_map"):
         path = REPOSITORY / str(preset[key])
         if not path.is_file():
             raise FileNotFoundError(f"preset input is missing: {path}")
+    generated_header = (
+        REPOSITORY / "data/MuonCorrections/2024_Summer24_generated.h"
+    )
+    temporary_header = (
+        REPOSITORY / ".cache/condor-preflight/2024_Summer24_generated.h"
+    )
+    temporary_header.parent.mkdir(parents=True, exist_ok=True)
+    run([
+        sys.executable, "scripts/generate_muon_corrections.py",
+        str(preset["muon_corrections"]), str(temporary_header),
+    ])
+    if (not generated_header.is_file() or
+            temporary_header.read_bytes() != generated_header.read_bytes()):
+        raise RuntimeError(
+            "generated Summer24 muon tables do not match the JSON; run "
+            "scripts/generate_muon_corrections.py and commit the result"
+        )
     run(["root", "-l", "-b", "-q", "mk_compile.C"],
         environment=local_compiler_environment())
     for key in ("mc_list", "data_list"):
@@ -317,6 +347,10 @@ def prepare_command(state: Dict[str, object], preset: Dict[str, object],
         "--golden-json", str(preset["golden_json"]),
         "--jec-l2", str(preset["jec_l2"]),
         "--jec-residual", str(preset["jec_residual"]),
+        "--jer-resolution", str(preset["jer_resolution"]),
+        "--jer-scale-factor", str(preset["jer_scale_factor"]),
+        "--muon-corrections", str(preset["muon_corrections"]),
+        "--jet-veto-map", str(preset["jet_veto_map"]),
         "--log-dir", f"{state['log_root']}/{campaign}",
         "--eos-results", f"{state['eos_root']}/{campaign}",
     ]

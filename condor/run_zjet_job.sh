@@ -9,12 +9,20 @@ lumi_pileup="${5:-}"
 pileup_weights="${6:-}"
 jec_l2="${7:-}"
 jec_residual="${8:-}"
+jer_resolution="${9:-}"
+jer_scale_factor="${10:-}"
+muon_corrections="${11:-}"
+jet_veto_map="${12:-}"
 
 [[ "${golden_json}" == "-" ]] && golden_json=""
 [[ "${lumi_pileup}" == "-" ]] && lumi_pileup=""
 [[ "${pileup_weights}" == "-" ]] && pileup_weights=""
 [[ "${jec_l2}" == "-" ]] && jec_l2=""
 [[ "${jec_residual}" == "-" ]] && jec_residual=""
+[[ "${jer_resolution}" == "-" ]] && jer_resolution=""
+[[ "${jer_scale_factor}" == "-" ]] && jer_scale_factor=""
+[[ "${muon_corrections}" == "-" ]] && muon_corrections=""
+[[ "${jet_veto_map}" == "-" ]] && jet_veto_map=""
 
 preserve_failed_status() {
   status=$?
@@ -54,7 +62,9 @@ echo "Compiler cache disabled; temporary files are local to ${PWD}."
 
 if command -v sha256sum >/dev/null 2>&1; then
   echo "Transferred analysis source SHA256 values:"
-  sha256sum zjet.C zjet.h mk_compile.C run_zjet_job.C
+  sha256sum zjet.C zjet.h ZJetMuonCorrections.h \
+    data/MuonCorrections/2024_Summer24_generated.h \
+    mk_compile.C run_zjet_job.C
 fi
 
 if [[ -z "${X509_USER_PROXY:-}" || ! -r "${X509_USER_PROXY}" ]]; then
@@ -93,7 +103,7 @@ for library in \
 done
 echo "Compilation finished; starting the analysis payload."
 
-root_macro="run_zjet_job.C(\"${input_list}\",${is_mc},\"${output_file}\",\"${golden_json}\",\"${lumi_pileup}\",\"${pileup_weights}\",\"${jec_l2}\",\"${jec_residual}\")"
+root_macro="run_zjet_job.C(\"${input_list}\",${is_mc},\"${output_file}\",\"${golden_json}\",\"${lumi_pileup}\",\"${pileup_weights}\",\"${jec_l2}\",\"${jec_residual}\",\"${jer_resolution}\",\"${jer_scale_factor}\",\"${muon_corrections}\",\"${jet_veto_map}\")"
 root -l -b -q "${root_macro}"
 
 if [[ ! -s "${output_file}" ]]; then

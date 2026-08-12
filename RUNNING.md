@@ -34,15 +34,23 @@ The optional arguments of `mk_zjet` are, in order:
 7. maximum number of data files (`-1` means all)
 8. L2 JEC text file (empty disables JEC recomputation)
 9. data residual JEC text file (ignored for MC)
+10. MC jet-resolution text file
+11. MC JER scale-factor text file
+12. Summer24 muon-correction JSON
+13. data-only jet-veto-map ROOT file
 
 The pileup-weight histogram must be named `pileup_ratio` (preferred) or
 `pileup`. The lumisection pileup reader accepts a brilcalc CSV containing an
 `avgpu` column, or a whitespace-separated `run ls mu` file. By default jets
 are recomputed from raw pT with the Summer24 V2 L2Relative correction, plus
-the Run2024I nib1 V11M L2L3Residual correction for data. `RawPuppiMET` is
-rebuilt consistently with those jets. Empty optional arguments disable only
-the corresponding correction or selection and print no credential
-information.
+the Run2024I nib1 V11M L2L3Residual correction for data. The first three
+lepton-cleaned MC jets in NanoAOD order receive the configured JER smearing.
+Nominal Summer24 muon scale corrections are applied to data and MC and the
+additional resolution correction is applied to MC. The 2024 veto map is
+applied only to data probe jets. `RawPuppiMET` is rebuilt with all
+lepton-cleaned JEC/JER-corrected jets above 15 GeV, without a Jet-ID or veto-map
+requirement in that Type-I sum. Empty optional arguments disable only the
+corresponding correction or selection and print no credential information.
 
 Example:
 
@@ -50,12 +58,14 @@ Example:
 root -l -b -q 'mk_zjet.C("mc.root","data.root","Cert.json","lumi.csv","pu_weights.root",-1,-1)'
 ```
 
-The nominal dimuon selection scans all opposite-sign pairs and keeps the one
-closest to the Z mass. It requires one `pT > 27 GeV`, tight-ID, tight-PF-
-isolation tag and one `pT > 10 GeV`, medium-ID, loose-PF-isolation probe. The
-single-muon `HLT_IsoMu24` requirement constrains the tag, not the probe. The
-`control/h_muon_selection` histogram evaluates alternative ID, isolation, and
-threshold choices on the same HLT-and-filter input events.
+The nominal synchronized dimuon selection uses
+`HLT_Mu17_TrkIsoVVL_Mu8_TrkIsoVVL_DZ_Mass8`, requires both tight isolated
+muons to match trigger objects, and keeps the opposite-sign pair closest to
+90 GeV. Corrected muon kinematics are used for pair ranking, the 20/10 GeV and
+eta cuts, the Z boson, and jet cleaning; trigger matching and the initial 8 GeV
+preselection use the stored NanoAOD muons, matching the reference analysis.
+The `control/h_muon_selection` histogram evaluates alternative selections on
+the same HLT-and-filter input events.
 
 The two transverse directions are independent half-weight
 signal-sideband pairs. If a lepton overlaps only one sideband, that sideband
@@ -262,6 +272,11 @@ Then repeat with a few files, for example by replacing the final `1,1` with
 - the `l2res` eta underflow is empty;
 - the MC residual profile is one and the data residual profile contains the
   inverse V11M residual correction;
+- `control/h_jer_smear_factor` is populated only in MC;
+- `control/h_muon_scale_factor` is populated in both samples and
+  `control/h_muon_resolution_factor` only in MC;
+- `control/h_jet_veto_map` is populated only in data;
+- the output metadata names the JER, muon, veto-map and Type-I MET settings;
 - the two half-weight transverse windows have the expected normalization.
 
 Do not submit the full sample or HTCondor jobs before the one- and few-file
@@ -381,12 +396,10 @@ The source is compiled inside each worker scratch directory, so compiled files
 are never shared between concurrent jobs.
 
 The generated `campaign.json` records the Git commit and dirty state, hashes
-and basenames of the input lists, golden JSON, L2 and residual JECs and
-optional pileup files, plus the JER/veto-map state. It intentionally does not
-copy the full private file URLs into the publishable provenance. JER smearing
-and the jet veto map remain disabled until their physics implementation is
-validated; this is recorded explicitly rather than inferred from the presence
-of files.
+and basenames of the input lists, golden JSON, L2 and residual JECs, JER files,
+muon corrections, the data jet veto map, and optional pileup files. It also
+records the correction order and Type-I MET definition. It intentionally does
+not copy the full private file URLs into the publishable provenance.
 
 The `--log-dir` path keeps stdout, stderr and the HTCondor event log outside
 the limited home AFS volume. Use a new campaign-specific directory below the
@@ -431,16 +444,17 @@ available:
 ```bash
 python3 runCondorAnalysis.py \
   --preset run2024i \
-  --campaign run2024i_v11m_20260811 \
-  --flavor-placeholders
+  --campaign run2024i_v11m_20260812
 ```
 
 The driver validates Kerberos and a CMS VOMS proxy with at least 24 hours
 remaining, copies a valid `/tmp` proxy to protected AFS storage after approval,
 optionally pulls with `git pull --ff-only`, reports AFS/work space, compiles the
 analysis, tests the first MC and data URLs, and prepares a one-file-per-sample
-worker smoke test. It then prepares the full campaign only after the smoke test
-has completed and passed `status_condor.py`.
+worker smoke test. The preflight also verifies that the committed nominal muon
+lookup header was generated from the committed JSON. It then prepares the full
+campaign only after the smoke test has completed and passed
+`status_condor.py`.
 
 Submission, merging, and replacement of the compatibility ROOT file each
 require a separate `y` answer. Answering `n` stops at a recorded checkpoint;

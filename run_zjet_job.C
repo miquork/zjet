@@ -4,6 +4,7 @@
 #include <TFile.h>
 #include <TH1.h>
 #include <TH2.h>
+#include <TObjString.h>
 #include <TSystem.h>
 
 #include <algorithm>
@@ -43,7 +44,10 @@ int addInputList(TChain *chain, const char *inputList) {
 void run_zjet_job(const char *inputList, bool isMC, const char *outputFile,
                   const char *goldenJson="", const char *lumiPileup="",
                   const char *pileupWeights="", const char *jecL2="",
-                  const char *jecResidual="") {
+                  const char *jecResidual="", const char *jerResolution="",
+                  const char *jerScaleFactor="",
+                  const char *muonCorrections="",
+                  const char *jetVetoMap="") {
   TChain *chain = new TChain("Events","Events");
   const int added = addInputList(chain,inputList);
   if (added<=0) {
@@ -56,7 +60,8 @@ void run_zjet_job(const char *inputList, bool isMC, const char *outputFile,
   std::cout << "Added " << added << " file(s) for the "
             << (isMC ? "MC" : "data") << " batch job." << std::endl;
   zjet analysis(chain,isMC,outputFile,goldenJson,lumiPileup,pileupWeights,
-                jecL2,jecResidual);
+                jecL2,jecResidual,jerResolution,jerScaleFactor,
+                muonCorrections,jetVetoMap);
   analysis.Loop();
 
   TFile check(outputFile,"READ");
@@ -72,6 +77,24 @@ void run_zjet_job(const char *inputList, bool isMC, const char *outputFile,
     check.Get("legacy/profiles1d/zmmjet/statistics_rmpf"));
   TH1 *legacyMpfNu =
     dynamic_cast<TH1*>(check.Get("legacy/profiles1d/zmmjet/rmpfjetnu"));
+  TObjString *jerResolutionMetadata = dynamic_cast<TObjString*>(
+    check.Get("zjet_jer_resolution_file"));
+  TObjString *jerScaleFactorMetadata = dynamic_cast<TObjString*>(
+    check.Get("zjet_jer_scale_factor_file"));
+  TObjString *muonCorrectionMetadata = dynamic_cast<TObjString*>(
+    check.Get("zjet_muon_correction_file"));
+  TObjString *jetVetoMapMetadata = dynamic_cast<TObjString*>(
+    check.Get("zjet_jet_veto_map_file"));
+  const std::string expectedJerResolution = isMC ? jerResolution : "";
+  const std::string expectedJerScaleFactor = isMC ? jerScaleFactor : "";
+  const std::string expectedJetVetoMap = isMC ? "" : jetVetoMap;
+  const bool correctionMetadataMatches =
+    (jerResolutionMetadata && jerScaleFactorMetadata &&
+     muonCorrectionMetadata && jetVetoMapMetadata &&
+     jerResolutionMetadata->GetString()==expectedJerResolution.c_str() &&
+     jerScaleFactorMetadata->GetString()==expectedJerScaleFactor.c_str() &&
+     muonCorrectionMetadata->GetString()==muonCorrections &&
+     jetVetoMapMetadata->GetString()==expectedJetVetoMap.c_str());
   bool flavorCountsClose = false;
   if (inclusiveCounts && flavorCounts) {
     const int firstEtaBin =
@@ -90,6 +113,9 @@ void run_zjet_job(const char *inputList, bool isMC, const char *outputFile,
       !nativeCounts || !nativeMpfNu || !legacyCounts || !legacyMpfNu ||
       !check.Get("legacy/control/h_cutflow") ||
       !check.Get("zjet_synchronized_selection") ||
+      !correctionMetadataMatches ||
+      !check.Get("zjet_muon_correction_sha256") ||
+      !check.Get("zjet_type1_met_definition") ||
       !flavorCountsClose) {
     std::cerr << "ERROR: output validation failed for " << outputFile
               << std::endl;
