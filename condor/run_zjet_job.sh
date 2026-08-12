@@ -40,6 +40,10 @@ esac
 echo "Job started at $(date -u '+%Y-%m-%dT%H:%M:%SZ') on $(hostname)."
 echo "Working directory: $(pwd)"
 echo "Sample: ${sample}; input list: ${input_list}; output: ${output_file}"
+if command -v sha256sum >/dev/null 2>&1; then
+  echo "Transferred analysis source SHA256 values:"
+  sha256sum zjet.C zjet.h mk_compile.C run_zjet_job.C
+fi
 
 if [[ -z "${X509_USER_PROXY:-}" || ! -r "${X509_USER_PROXY}" ]]; then
   echo "ERROR: HTCondor did not provide a readable X509_USER_PROXY." >&2
@@ -62,7 +66,9 @@ if ! command -v root >/dev/null 2>&1; then
 fi
 
 root-config --version
+echo "Compiling the transferred zjet.C and JetMETObjects sources."
 root -l -b -q mk_compile.C
+echo "Compilation finished; starting the analysis payload."
 
 root_macro="run_zjet_job.C(\"${input_list}\",${is_mc},\"${output_file}\",\"${golden_json}\",\"${lumi_pileup}\",\"${pileup_weights}\",\"${jec_l2}\",\"${jec_residual}\")"
 root -l -b -q "${root_macro}"

@@ -234,6 +234,11 @@ def main() -> None:
             "log_directory": str(log_dir.resolve()),
         },
         "source": git_description(),
+        "source_files": {
+            name: file_description(REPOSITORY/name)
+            for name in ("zjet.C", "zjet.h", "mk_compile.C",
+                         "run_zjet_job.C", "condor/run_zjet_job.sh")
+        },
         "inputs": {
             "mc_list": {"basename": mc_list.name,
                         "selected_sha256": sha256_bytes(selected_mc)},
@@ -248,6 +253,17 @@ def main() -> None:
         "analysis": {
             "method": ("all accepted Z-jet pairs; +90 and -90 degree "
                        "sidebands, each with weight 0.5"),
+            "legacy_control": (
+                "synchronized leading-jet response stored under legacy/"
+            ),
+            "dimuon_selection": (
+                "HLT_Mu17_TrkIsoVVL_Mu8_TrkIsoVVL_DZ_Mass8; both muons "
+                "trigger matched; tight ID; pfRelIso04<0.15; pT>20/10 GeV; "
+                "abs(eta)<2.3; pT(Z)>12 GeV; abs(m-90 GeV)<20 GeV"
+            ),
+            "native_response_binning": (
+                "1D profiles under profiles1d/ and legacy/profiles1d/"
+            ),
             "jet_pt": "recomputed from raw pT with the configured JEC chain",
             "jec_recomputed_from_raw_pt": True,
             "stored_residual_profile": "inverse data residual correction",

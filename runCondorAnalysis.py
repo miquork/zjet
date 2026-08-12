@@ -255,9 +255,16 @@ def preflight(state: Dict[str, object], preset: Dict[str, object],
         ["git", "status", "--porcelain", "--untracked-files=no"])
     if tracked:
         raise RuntimeError("tracked files are modified; commit or stash before running")
+    head_before_pull = command_output(["git", "rev-parse", "HEAD"])
     if not skip_pull and confirm("Run git pull --ff-only before preparing jobs?",
                                  default=True):
         run(["git", "pull", "--ff-only"])
+        head_after_pull = command_output(["git", "rev-parse", "HEAD"])
+        if head_after_pull != head_before_pull:
+            print("The pull updated the workflow code. Restarting is required "
+                  "so this Python process also uses the new version.")
+            print(f"Resume with: {resume_command(state)}")
+            raise SystemExit(0)
     report_space(Path(str(state["log_root"])))
     report_space(REPOSITORY)
     for key in ("mc_list", "data_list", "golden_json", "jec_l2",

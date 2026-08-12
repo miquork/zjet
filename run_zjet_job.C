@@ -64,6 +64,14 @@ void run_zjet_job(const char *inputList, bool isMC, const char *outputFile,
     dynamic_cast<TH2*>(check.Get("l2res/h2ptetatc"));
   TH1 *flavorCounts =
     dynamic_cast<TH1*>(check.Get("flavor/counts_gii"));
+  TH1 *nativeCounts =
+    dynamic_cast<TH1*>(check.Get("profiles1d/zmmjet/statistics_rmpf"));
+  TH1 *nativeMpfNu =
+    dynamic_cast<TH1*>(check.Get("profiles1d/zmmjet/rmpfjetnu"));
+  TH1 *legacyCounts = dynamic_cast<TH1*>(
+    check.Get("legacy/profiles1d/zmmjet/statistics_rmpf"));
+  TH1 *legacyMpfNu =
+    dynamic_cast<TH1*>(check.Get("legacy/profiles1d/zmmjet/rmpfjetnu"));
   bool flavorCountsClose = false;
   if (inclusiveCounts && flavorCounts) {
     const int firstEtaBin =
@@ -79,11 +87,16 @@ void run_zjet_job(const char *inputList, bool isMC, const char *outputFile,
   }
   if (check.IsZombie() || !check.Get("control/h_cutflow") ||
       !flavorCounts || !check.Get("zjet_flavor_definition") ||
+      !nativeCounts || !nativeMpfNu || !legacyCounts || !legacyMpfNu ||
+      !check.Get("legacy/control/h_cutflow") ||
+      !check.Get("zjet_synchronized_selection") ||
       !flavorCountsClose) {
     std::cerr << "ERROR: output validation failed for " << outputFile
               << std::endl;
     gSystem->Exit(3);
     return;
   }
-  std::cout << "Validated output " << outputFile << std::endl;
+  std::cout << "Validated output " << outputFile
+            << ": flavor profiles, native 1D all-pairs profiles, and "
+            << "synchronized legacy profiles are present." << std::endl;
 }
