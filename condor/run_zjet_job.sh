@@ -40,6 +40,18 @@ esac
 echo "Job started at $(date -u '+%Y-%m-%dT%H:%M:%SZ') on $(hostname)."
 echo "Working directory: $(pwd)"
 echo "Sample: ${sample}; input list: ${input_list}; output: ${output_file}"
+
+# getenv=True is needed for the lxplus ROOT runtime, but it can also inherit a
+# ccache directory below the user's small AFS home quota.  Keep every compiler
+# temporary and cache access on the execution node instead.
+export CCACHE_DISABLE=1
+export CCACHE_DIR="${PWD}/.ccache"
+export CCACHE_TEMPDIR="${PWD}/.ccache/tmp"
+export XDG_CACHE_HOME="${PWD}/.cache"
+export TMPDIR="${PWD}/tmp"
+mkdir -p "${CCACHE_TEMPDIR}" "${XDG_CACHE_HOME}" "${TMPDIR}"
+echo "Compiler cache disabled; temporary files are local to ${PWD}."
+
 if command -v sha256sum >/dev/null 2>&1; then
   echo "Transferred analysis source SHA256 values:"
   sha256sum zjet.C zjet.h mk_compile.C run_zjet_job.C
@@ -68,6 +80,17 @@ fi
 root-config --version
 echo "Compiling the transferred zjet.C and JetMETObjects sources."
 root -l -b -q mk_compile.C
+for library in \
+  CondFormats/JetMETObjects/src/Utilities_cc.so \
+  CondFormats/JetMETObjects/src/JetCorrectorParameters_cc.so \
+  CondFormats/JetMETObjects/src/SimpleJetCorrector_cc.so \
+  CondFormats/JetMETObjects/src/FactorizedJetCorrector_cc.so \
+  zjet_C.so; do
+  if [[ ! -s "${library}" ]]; then
+    echo "ERROR: compilation did not produce ${library}." >&2
+    exit 14
+  fi
+done
 echo "Compilation finished; starting the analysis payload."
 
 root_macro="run_zjet_job.C(\"${input_list}\",${is_mc},\"${output_file}\",\"${golden_json}\",\"${lumi_pileup}\",\"${pileup_weights}\",\"${jec_l2}\",\"${jec_residual}\")"

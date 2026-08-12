@@ -2,9 +2,11 @@
 """Safely inspect or remove one completed Z+jet HTCondor campaign."""
 
 import argparse
+import getpass
 import json
 import shutil
 from pathlib import Path
+from typing import Optional
 
 from condor_storage import is_remote, remove_remote_files
 
@@ -36,6 +38,25 @@ def human_size(value: int) -> str:
     return f"{amount:.1f} TiB"
 
 
+def external_log_directory(metadata: dict, campaign: str,
+                           campaign_dir: Path) -> Optional[Path]:
+    value = metadata.get("storage", {}).get("log_directory", "")
+    if not value:
+        return None
+    path = Path(value).expanduser().resolve()
+    internal = (campaign_dir/"logs").resolve()
+    if path == internal:
+        return None
+    user = getpass.getuser()
+    safe_root = Path(
+        f"/afs/cern.ch/work/{user[0]}/{user}/zjet-condor").resolve()
+    if path.parent != safe_root or path.name != campaign:
+        raise ValueError(
+            f"refusing external log directory outside {safe_root}/CAMPAIGN: "
+            f"{path}")
+    return path
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("campaign", help="campaign name or directory")
@@ -60,6 +81,8 @@ def main() -> None:
         raise RuntimeError("campaign name does not match campaign.json")
 
     result_directory = metadata.get("storage", {}).get("result_directory", "")
+    external_logs = external_log_directory(
+        metadata,campaign_dir.name,campaign_dir)
     remote_results = is_remote(result_directory)
     provenance_name = f"zjet_{metadata['campaign']}_provenance.json"
     provenance = campaign_dir/provenance_name
@@ -68,6 +91,8 @@ def main() -> None:
     print(f"Campaign directory: {campaign_dir}")
     print(f"AFS space used: {human_size(directory_size(campaign_dir))}")
     print(f"Partial result storage: {result_directory}")
+    if external_logs:
+        print(f"External job logs: {external_logs}")
     print(f"Jobs: {len(metadata['jobs'])}")
     if not args.delete:
         print("Dry run only. Pass --delete after a successful merge.")
@@ -99,6 +124,9 @@ def main() -> None:
         if target.is_dir():
             shutil.rmtree(target)
             removed.append(name)
+    if external_logs and external_logs.is_dir():
+        shutil.rmtree(external_logs)
+        removed.append(str(external_logs))
     print(f"Removed campaign intermediates: {', '.join(removed) or 'none'}")
     print(f"Retained the small manifest in {campaign_dir}")
     if merged:

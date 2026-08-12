@@ -269,6 +269,11 @@ def main() -> None:
             "stored_residual_profile": "inverse data residual correction",
             "jer_smearing": {"enabled": False},
             "jet_veto_map": {"enabled": False},
+            "worker_compilation": {
+                "forced_rebuild": True,
+                "ccache_disabled": True,
+                "temporary_storage": "worker-local execution directory",
+            },
         },
         "command": " ".join(sys.argv),
     }

@@ -46,11 +46,14 @@ PRESETS = {
 }
 
 
-def run(command: List[str], *, capture: bool = False,
-        check: bool = True) -> subprocess.CompletedProcess:
+def run(command: List[str], *, capture: bool = False, check: bool = True,
+        environment: Optional[Dict[str, str]] = None
+        ) -> subprocess.CompletedProcess:
     print("+ " + shlex.join(command), flush=True)
     return subprocess.run(
-        command, cwd=REPOSITORY, env=os.environ.copy(), check=check,
+        command, cwd=REPOSITORY,
+        env=environment if environment is not None else os.environ.copy(),
+        check=check,
         text=True, stdout=subprocess.PIPE if capture else None,
         stderr=subprocess.STDOUT if capture else None,
     )
@@ -244,6 +247,24 @@ def report_space(path: Path) -> None:
     run(["df", "-h", str(existing)], check=False)
 
 
+def local_compiler_environment() -> Dict[str, str]:
+    """Keep preflight compiler temporaries away from the AFS home quota."""
+    cache_root = REPOSITORY / ".cache" / "condor-preflight"
+    ccache_temporary = cache_root / "ccache" / "tmp"
+    temporary = cache_root / "tmp"
+    ccache_temporary.mkdir(parents=True, exist_ok=True)
+    temporary.mkdir(parents=True, exist_ok=True)
+    environment = os.environ.copy()
+    environment.update({
+        "CCACHE_DISABLE": "1",
+        "CCACHE_DIR": str(cache_root / "ccache"),
+        "CCACHE_TEMPDIR": str(ccache_temporary),
+        "XDG_CACHE_HOME": str(cache_root),
+        "TMPDIR": str(temporary),
+    })
+    return environment
+
+
 def preflight(state: Dict[str, object], preset: Dict[str, object],
               skip_pull: bool) -> None:
     require_commands([
@@ -272,7 +293,8 @@ def preflight(state: Dict[str, object], preset: Dict[str, object],
         path = REPOSITORY / str(preset[key])
         if not path.is_file():
             raise FileNotFoundError(f"preset input is missing: {path}")
-    run(["root", "-l", "-b", "-q", "mk_compile.C"])
+    run(["root", "-l", "-b", "-q", "mk_compile.C"],
+        environment=local_compiler_environment())
     for key in ("mc_list", "data_list"):
         path = REPOSITORY / str(preset[key])
         first = next(line.strip() for line in path.read_text(
