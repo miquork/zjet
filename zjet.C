@@ -210,6 +210,8 @@ void zjet::Loop()
 
    fChain->SetBranchStatus("Flag_goodVertices",1);
    fChain->SetBranchStatus("Flag_globalSuperTightHalo2016Filter",1);
+   fChain->SetBranchStatus("Flag_HBHENoiseFilter",1);
+   fChain->SetBranchStatus("Flag_HBHENoiseIsoFilter",1);
    fChain->SetBranchStatus("Flag_EcalDeadCellTriggerPrimitiveFilter",1);
    fChain->SetBranchStatus("Flag_BadPFMuonFilter",1);
    fChain->SetBranchStatus("Flag_BadPFMuonDzFilter",1);
@@ -819,27 +821,33 @@ void zjet::Loop()
           eventWeight *= pileupWeights->GetBinContent(bin);
         }
       }
+      // ZbAnalysis does not apply genWeight to its nominal response profiles.
+      // Keep that convention in the synchronization control only; the new
+      // all-pairs method retains its signed generator-event weighting.
+      const double legacyEventWeight = (isMC ? 1. : eventWeight);
       const double mu = (isMC ? Pileup_nTrueInt
                               : lumiData.pileup(run, luminosityBlock));
 
       h_cutflow->Fill(1., eventWeight);
-      h_legacy_cutflow->Fill(1.,eventWeight);
+      h_legacy_cutflow->Fill(1.,legacyEventWeight);
       if (!isMC && !lumiData.accept(run, luminosityBlock)) continue;
       h_cutflow->Fill(2., eventWeight);
-      h_legacy_cutflow->Fill(2.,eventWeight);
+      h_legacy_cutflow->Fill(2.,legacyEventWeight);
 
       const bool passMetFilters =
-        (Flag_goodVertices && Flag_globalSuperTightHalo2016Filter &&
+        (isMC ||
+         (Flag_goodVertices && Flag_globalSuperTightHalo2016Filter &&
+         Flag_HBHENoiseFilter && Flag_HBHENoiseIsoFilter &&
          Flag_EcalDeadCellTriggerPrimitiveFilter && Flag_BadPFMuonFilter &&
-         Flag_BadPFMuonDzFilter && Flag_hfNoisyHitsFilter &&
-         Flag_eeBadScFilter && Flag_ecalBadCalibFilter);
+         Flag_BadPFMuonDzFilter && Flag_eeBadScFilter &&
+         Flag_ecalBadCalibFilter));
       if (!passMetFilters) continue;
       h_cutflow->Fill(3., eventWeight);
-      h_legacy_cutflow->Fill(3.,eventWeight);
+      h_legacy_cutflow->Fill(3.,legacyEventWeight);
 
       if (!HLT_Mu17_TrkIsoVVL_Mu8_TrkIsoVVL_DZ_Mass8) continue;
       h_cutflow->Fill(4., eventWeight);
-      h_legacy_cutflow->Fill(4.,eventWeight);
+      h_legacy_cutflow->Fill(4.,legacyEventWeight);
 
       if (nMuon>nMuonMax || nJet>nJetMax || nTrigObj>nMaxTrigObj) {
         cout << "ERROR: collection size exceeds fixed MakeClass buffer: nMuon="
@@ -966,14 +974,27 @@ void zjet::Loop()
 
       // Synchronized with the 2024 dimuon selection in ZbAnalysis master.
       // The closest opposite-sign pair to 90 GeV is retained.
+      std::vector<TLorentzVector> synchronizedMuons;
       auto selectSynchronizedMuonPair = [&](TLorentzVector &plus,
                                             TLorentzVector &minus) {
         plus.SetPtEtaPhiM(0,0,0,0);
         minus.SetPtEtaPhiM(0,0,0,0);
+        synchronizedMuons.clear();
         double bestMassDistance = 1.e9;
+        for (int ilep=0; ilep<nMuon; ++ilep) {
+          if (Muon_pt[ilep]<=8. || !Muon_tightId[ilep] ||
+              Muon_pfRelIso04_all[ilep]>=0.15 ||
+              !triggerMatchedMuon(ilep)) continue;
+          TLorentzVector selected;
+          selected.SetPtEtaPhiM(Muon_pt[ilep],Muon_eta[ilep],Muon_phi[ilep],
+                                Muon_mass[ilep]);
+          synchronizedMuons.push_back(selected);
+        }
+        if (synchronizedMuons.size()<2 || synchronizedMuons.size()>3)
+          return false;
         for (int iplus=0; iplus<nMuon; ++iplus) {
           if (Muon_charge[iplus]<=0 || Muon_pt[iplus]<=8. ||
-              fabs(Muon_eta[iplus])>=2.3 || !Muon_tightId[iplus] ||
+              !Muon_tightId[iplus] ||
               Muon_pfRelIso04_all[iplus]>=0.15 ||
               !triggerMatchedMuon(iplus)) continue;
           TLorentzVector plusCandidate;
@@ -981,15 +1002,12 @@ void zjet::Loop()
                                      Muon_phi[iplus],Muon_mass[iplus]);
           for (int iminus=0; iminus<nMuon; ++iminus) {
             if (Muon_charge[iminus]>=0 || Muon_pt[iminus]<=8. ||
-                fabs(Muon_eta[iminus])>=2.3 || !Muon_tightId[iminus] ||
+                !Muon_tightId[iminus] ||
                 Muon_pfRelIso04_all[iminus]>=0.15 ||
                 !triggerMatchedMuon(iminus)) continue;
             TLorentzVector minusCandidate;
             minusCandidate.SetPtEtaPhiM(Muon_pt[iminus],Muon_eta[iminus],
                                         Muon_phi[iminus],Muon_mass[iminus]);
-            if (std::max(plusCandidate.Pt(),minusCandidate.Pt())<=20. ||
-                std::min(plusCandidate.Pt(),minusCandidate.Pt())<=10.)
-              continue;
             const double massDistance =
               fabs((plusCandidate+minusCandidate).M()-90.);
             if (massDistance<bestMassDistance) {
@@ -999,7 +1017,10 @@ void zjet::Loop()
             }
           }
         }
-        return bestMassDistance<20.;
+        if (bestMassDistance>=20. || fabs(plus.Eta())>2.3 ||
+            fabs(minus.Eta())>2.3) return false;
+        return (std::max(plus.Pt(),minus.Pt())>20. &&
+                std::min(plus.Pt(),minus.Pt())>10.);
       };
 
       auto fillMuonSelection = [&](int bin, int idWorkingPoint,
@@ -1029,7 +1050,12 @@ void zjet::Loop()
       // Select the nominal synchronized dimuon pair.
       h_nlep->Fill(nMuon, eventWeight);
       if (!selectSynchronizedMuonPair(p4lplus,p4lminus)) continue;
-      h_legacy_cutflow->Fill(5.,eventWeight);
+      h_legacy_cutflow->Fill(5.,legacyEventWeight);
+      auto separatedFromSynchronizedMuons = [&](const TLorentzVector &jet) {
+        for (const TLorentzVector &muon : synchronizedMuons)
+          if (jet.DeltaR(muon)<=0.3) return false;
+        return true;
+      };
 
       // Reconstruct Z boson
       if (p4lplus.Pt()>0) ++nlep;
@@ -1087,7 +1113,7 @@ void zjet::Loop()
       else
 	continue;
       h_cutflow->Fill(6., eventWeight);
-      h_legacy_cutflow->Fill(6.,eventWeight);
+      h_legacy_cutflow->Fill(6.,legacyEventWeight);
       h_probe_veto->Fill(1., eventWeight);
 
       // Legacy leading-jet reference.  It shares the synchronized event and
@@ -1104,9 +1130,8 @@ void zjet::Loop()
         TLorentzVector candidate;
         candidate.SetPtEtaPhiM(Jet_pt[ijet],Jet_eta[ijet],Jet_phi[ijet],
                                Jet_mass[ijet]);
-        if (!passTightJetId(ijet) || fabs(candidate.Eta())>=5. ||
-            candidate.DeltaR(p4lplus)<=0.3 ||
-            candidate.DeltaR(p4lminus)<=0.3) continue;
+        if (fabs(candidate.Eta())>=5. ||
+            !separatedFromSynchronizedMuons(candidate)) continue;
         if (candidate.Pt()>12. && candidate.Pt()>legacyJet.Pt()) {
           legacyJet = candidate;
           legacyJetIndex = ijet;
@@ -1124,20 +1149,23 @@ void zjet::Loop()
       const TLorentzVector legacyMetu = legacyMet+legacyHt;
 
       if (legacyJetIndex>=0) {
-        h_legacy_cutflow->Fill(7.,eventWeight);
-        h_legacy_zpt->Fill(p4z.Pt(),eventWeight);
-        h_legacy_jetpt->Fill(legacyJet.Pt(),eventWeight);
+        h_legacy_cutflow->Fill(7.,legacyEventWeight);
+        h_legacy_zpt->Fill(p4z.Pt(),legacyEventWeight);
+        h_legacy_jetpt->Fill(legacyJet.Pt(),legacyEventWeight);
         const double legacyDphiResidual =
           fabs(fabs(legacyJet.DeltaPhi(p4z))-TMath::Pi());
-        h_legacy_dphi->Fill(legacyDphiResidual,eventWeight);
-        if (legacyDphiResidual<0.44) {
-          h_legacy_cutflow->Fill(8.,eventWeight);
+        h_legacy_dphi->Fill(legacyDphiResidual,legacyEventWeight);
+        if (legacyDphiResidual<0.44 && passTightJetId(legacyJetIndex) &&
+            !(legacyJet.Pt()<70. && fabs(legacyJet.Eta())>2.65 &&
+              fabs(legacyJet.Eta())<2.964)) {
+          h_legacy_cutflow->Fill(8.,legacyEventWeight);
           const double ptz = p4z.Pt();
           const double ptj = legacyJet.Pt();
           const double ptave = 0.5*(ptz+ptj);
-          const TLorentzVector legacyMet1 = -p4z-legacyJet;
-          const TLorentzVector legacyMetn =
-            -legacyHt+p4z+legacyJet;
+          TLorentzVector legacyMet1 = -p4z-legacyJet;
+          legacyMet1.SetPtEtaPhiM(legacyMet1.Pt(),0.,legacyMet1.Phi(),0.);
+          TLorentzVector legacyMetn = -legacyHt+p4z+legacyJet;
+          legacyMetn.SetPtEtaPhiM(legacyMetn.Pt(),0.,legacyMetn.Phi(),0.);
           const TLorentzVector legacyMetnu = legacyMetn+legacyMetu;
           const TLorentzVector legacyMeta =
             legacyMet1+legacyMetn+legacyMetu;
@@ -1172,13 +1200,13 @@ void zjet::Loop()
               Jet_chHEF[legacyJetIndex],Jet_neEmEF[legacyJetIndex],
               Jet_neHEF[legacyJetIndex],Jet_chEmEF[legacyJetIndex],
               Jet_muEF[legacyJetIndex],Rho_fixedGridRhoFastjetAll,
-              hasGenResponse,genResponse,eventWeight);
+              hasGenResponse,genResponse,legacyEventWeight);
             legacyProfiles.axes.at("zmmjet").mass->Fill(
-              ptz,p4z.M(),eventWeight);
+              ptz,p4z.M(),legacyEventWeight);
             legacyProfiles.axes.at("jetpt").mass->Fill(
-              ptj,p4z.M(),eventWeight);
+              ptj,p4z.M(),legacyEventWeight);
             legacyProfiles.axes.at("ptave").mass->Fill(
-              ptave,p4z.M(),eventWeight);
+              ptave,p4z.M(),legacyEventWeight);
           }
         }
       }
@@ -1229,8 +1257,7 @@ void zjet::Loop()
 	p4jet.SetPtEtaPhiM(Jet_pt[ijet], Jet_eta[ijet], Jet_phi[ijet],
 			   Jet_mass[ijet]);
 	//if (p4jet.DeltaR(p4lplus)>0.4 && p4jet.DeltaR(p4lminus)>0.4 &&
-	if (passTightJetId(ijet) &&
-            p4jet.DeltaR(p4lplus)>0.3 && p4jet.DeltaR(p4lminus)>0.3 &&
+	if (passTightJetId(ijet) && separatedFromSynchronizedMuons(p4jet) &&
 	    p4jet.Pt()>15.) {
 	  ht += p4jet;
 	  if (jec) {
@@ -1427,7 +1454,7 @@ void zjet::Loop()
 	double mpfnu = metnu.Vect().Dot(p4z.Vect()) / (ptz*ptz);
 	
 	//if (p4jet.DeltaR(p4lplus)>0.4 && p4jet.DeltaR(p4lminus)>0.4) {
-	if (p4jet.DeltaR(p4lplus)>0.3 && p4jet.DeltaR(p4lminus)>0.3) {
+	if (separatedFromSynchronizedMuons(p4jet)) {
 
 	  h_jetpt->Fill(p4jet.Pt());
 	  h_jeteta->Fill(p4jet.Eta());

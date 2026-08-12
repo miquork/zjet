@@ -4,6 +4,7 @@
 #include "TH1.h"
 #include "TH1D.h"
 #include "TLegend.h"
+#include "TLine.h"
 #include "TLatex.h"
 #include "TPad.h"
 #include "TStyle.h"
@@ -13,6 +14,9 @@
 #include <cmath>
 #include <fstream>
 #include <iomanip>
+#include <limits>
+#include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -27,6 +31,16 @@ struct ComparisonPoint {
   double ey = 0.;
 };
 
+struct InputSpec {
+  TFile *file = nullptr;
+  std::string label;
+  int color = 1;
+  int marker = 20;
+};
+
+const std::vector<std::string> kSamples = {"data","mc","ratio"};
+const std::vector<std::string> kChannels = {"jetz","zjav","zjet"};
+
 std::vector<ComparisonPoint> readPoints(TFile &file, const std::string &path) {
   TObject *object = file.Get(path.c_str());
   std::vector<ComparisonPoint> points;
@@ -35,6 +49,7 @@ std::vector<ComparisonPoint> readPoints(TFile &file, const std::string &path) {
       double x = 0.;
       double y = 0.;
       graph->GetPoint(i,x,y);
+      if (!std::isfinite(x) || !std::isfinite(y)) continue;
       points.push_back({x,graph->GetErrorX(i),y,graph->GetErrorY(i)});
     }
   }
@@ -50,23 +65,108 @@ std::vector<ComparisonPoint> readPoints(TFile &file, const std::string &path) {
   return points;
 }
 
+double countIntegral(TFile &file, const std::string &sample,
+                     const std::string &channel) {
+  const std::string path = sample+"/eta00-13/counts_"+channel+"_a100";
+  TH1 *histogram = dynamic_cast<TH1*>(file.Get(path.c_str()));
+  if (!histogram) return 0.;
+  return histogram->Integral(0,histogram->GetNbinsX()+1);
+}
+
+std::vector<ComparisonPoint> normalized(
+  const std::vector<ComparisonPoint> &input) {
+  double integral = 0.;
+  for (const ComparisonPoint &point : input) integral += point.y;
+  if (!std::isfinite(integral) || integral==0.) return {};
+  std::vector<ComparisonPoint> result = input;
+  for (ComparisonPoint &point : result) {
+    point.y /= integral;
+    point.ey /= fabs(integral);
+  }
+  return result;
+}
+
+bool sameCenter(double first, double second) {
+  return fabs(first-second)<1.e-5*std::max(1.,fabs(second));
+}
+
+std::vector<ComparisonPoint> pointRatios(
+  const std::vector<ComparisonPoint> &numerator,
+  const std::vector<ComparisonPoint> &denominator) {
+  std::vector<ComparisonPoint> ratios;
+  for (const ComparisonPoint &num : numerator) {
+    const auto den = std::find_if(
+      denominator.begin(),denominator.end(),[&](const ComparisonPoint &point) {
+        return sameCenter(point.x,num.x);
+      });
+    if (den==denominator.end() || den->y==0.) continue;
+    const double value = num.y/den->y;
+    double relativeVariance = 0.;
+    if (num.y!=0.) relativeVariance += pow(num.ey/num.y,2);
+    relativeVariance += pow(den->ey/den->y,2);
+    ratios.push_back({num.x,num.ex,value,
+                      fabs(value)*sqrt(relativeVariance)});
+  }
+  return ratios;
+}
+
+std::string objectPath(const std::string &sample,
+                       const std::string &observable,
+                       const std::string &channel) {
+  const std::string base = sample+"/eta00-13/";
+  if (observable=="counts") return base+"counts_"+channel+"_a100";
+  return base+"orig/"+observable+"_"+channel+"_a100";
+}
+
+std::vector<ComparisonPoint> comparisonPoints(
+  TFile &file, const std::string &sample, const std::string &observable,
+  const std::string &channel) {
+  if (observable!="counts")
+    return readPoints(file,objectPath(sample,observable,channel));
+  if (sample=="data" || sample=="mc")
+    return normalized(readPoints(file,objectPath(sample,observable,channel)));
+  const std::vector<ComparisonPoint> data = normalized(
+    readPoints(file,objectPath("data",observable,channel)));
+  const std::vector<ComparisonPoint> mc = normalized(
+    readPoints(file,objectPath("mc",observable,channel)));
+  return pointRatios(data,mc);
+}
+
 TGraphErrors *makeGraph(const std::vector<ComparisonPoint> &points, int color,
-                        int marker) {
+                        int marker, double markerSize=0.72) {
   TGraphErrors *graph = new TGraphErrors(points.size());
   for (size_t i=0; i<points.size(); ++i) {
     graph->SetPoint(i,points[i].x,points[i].y);
     graph->SetPointError(i,points[i].ex,points[i].ey);
   }
   graph->SetMarkerStyle(marker);
-  graph->SetMarkerSize(0.85);
+  graph->SetMarkerSize(markerSize);
   graph->SetMarkerColor(color);
   graph->SetLineColor(color);
+  graph->SetLineWidth(2);
   return graph;
+}
+
+bool isComponent(const std::string &observable) {
+  return observable=="mpf1" || observable=="mpfn" ||
+         observable=="mpfu" || observable=="mpfnu";
+}
+
+bool resultIsDifference(const std::string &observable) {
+  return isComponent(observable) || observable=="rho" ||
+         observable=="chf" || observable=="nef" ||
+         observable=="nhf" || observable=="cef" || observable=="muf";
 }
 
 std::pair<double,double> yRange(const std::string &observable,
                                 const std::string &sample) {
-  if (observable=="counts") return {0.5,1.e9};
+  if (observable=="counts")
+    return sample=="ratio" ? std::make_pair(0.45,1.55)
+                           : std::make_pair(1.e-7,1.);
+  if (sample=="ratio" && resultIsDifference(observable)) {
+    if (observable=="rho") return {-12.,12.};
+    return {-0.15,0.15};
+  }
   if (observable=="rho") return {0.,60.};
   if (observable=="chf" || observable=="nef" || observable=="nhf" ||
       observable=="cef" || observable=="muf") return {0.,1.};
@@ -76,23 +176,18 @@ std::pair<double,double> yRange(const std::string &observable,
   return {0.5,1.5};
 }
 
-double differenceRange(const std::string &observable) {
+double comparisonRange(const std::string &observable,
+                       const std::string &sample) {
   if (observable=="counts") return 1.;
   if (observable=="rho") return 20.;
+  if (sample=="ratio" && resultIsDifference(observable)) return 0.12;
+  if (observable=="chf" || observable=="nef" || observable=="nhf" ||
+      observable=="cef" || observable=="muf") return 0.20;
   return 0.25;
 }
 
-std::string objectPath(const std::string &sample,
-                       const std::string &observable,
-                       const std::string &channel) {
-  const std::string base = sample+"/eta00-13/";
-  if (observable=="counts")
-    return base+"counts_"+channel+"_a100";
-  return base+"orig/"+observable+"_"+channel+"_a100";
-}
-
 std::string observableLabel(const std::string &observable) {
-  if (observable=="counts") return "Statistics";
+  if (observable=="counts") return "Statistics shape";
   if (observable=="ptchs") return "Direct balance";
   if (observable=="mpfchs1") return "MPF";
   if (observable=="mpf1") return "MPF1";
@@ -110,183 +205,422 @@ std::string channelLabel(const std::string &channel) {
   return "Z pT binning";
 }
 
-std::vector<ComparisonPoint> matchedDifferences(
-                                      const std::vector<ComparisonPoint> &oldPoints,
-                                      const std::vector<ComparisonPoint> &newPoints,
-                                      bool relative, int &matched) {
+std::string sampleLabel(const std::string &sample,
+                        const std::string &observable) {
+  if (sample=="data") return "data";
+  if (sample=="mc") return "MC";
+  if (observable=="counts") return "normalized data/MC";
+  return resultIsDifference(observable) ? "data-MC" : "data/MC";
+}
+
+std::string texSampleLabel(const std::string &sample,
+                           const std::string &observable) {
+  if (sample=="data") return "data";
+  if (sample=="mc") return "MC";
+  if (observable=="counts") return "normalized data/MC";
+  return resultIsDifference(observable) ? "data--MC" : "data/MC";
+}
+
+std::string texEscape(std::string value) {
+  size_t position = 0;
+  while ((position=value.find('_',position))!=std::string::npos) {
+    value.replace(position,1,"\\_");
+    position += 2;
+  }
+  return value;
+}
+
+std::string scientific(double value) {
+  std::ostringstream stream;
+  stream << std::scientific << std::setprecision(3) << value;
+  return stream.str();
+}
+
+std::vector<ComparisonPoint> matchedComparisons(
+  const std::vector<ComparisonPoint> &reference,
+  const std::vector<ComparisonPoint> &candidate, bool relative, int &matched) {
   std::vector<ComparisonPoint> differences;
   matched = 0;
-  for (const ComparisonPoint &newPoint : newPoints) {
-    auto oldPoint = std::find_if(
-      oldPoints.begin(),oldPoints.end(),[&](const ComparisonPoint &candidate) {
-        return fabs(candidate.x-newPoint.x)<1.e-5*std::max(1.,newPoint.x);
+  for (const ComparisonPoint &point : candidate) {
+    const auto base = std::find_if(
+      reference.begin(),reference.end(),[&](const ComparisonPoint &other) {
+        return sameCenter(other.x,point.x);
       });
-    if (oldPoint==oldPoints.end()) continue;
+    if (base==reference.end()) continue;
     ++matched;
-    double value = newPoint.y-oldPoint->y;
-    double error = std::hypot(newPoint.ey,oldPoint->ey);
+    double value = point.y-base->y;
+    double error = std::hypot(point.ey,base->ey);
     if (relative) {
-      if (oldPoint->y==0.) continue;
-      value /= oldPoint->y;
-      error /= fabs(oldPoint->y);
+      if (base->y==0.) continue;
+      value /= base->y;
+      error /= fabs(base->y);
     }
-    differences.push_back({newPoint.x,newPoint.ex,value,error});
+    differences.push_back({point.x,point.ex,value,error});
   }
   return differences;
 }
 
-void drawMissing(const std::string &message) {
+void drawMissing(const std::string &message, double size=0.040) {
   TLatex latex;
   latex.SetNDC();
   latex.SetTextAlign(22);
-  latex.SetTextSize(0.045);
+  latex.SetTextSize(size);
   latex.DrawLatex(0.5,0.52,message.c_str());
+}
+
+void drawZeroLine(double xmin=12., double xmax=1500.) {
+  TLine line(xmin,0.,xmax,0.);
+  line.SetLineStyle(kDashed);
+  line.SetLineColor(kGray+2);
+  line.DrawClone();
+}
+
+std::string standardPanel(
+  const std::vector<InputSpec> &inputs, const std::string &sample,
+  const std::string &observable, const std::string &channel,
+  const std::string &outputDirectory, std::ofstream &summary) {
+  std::vector<std::vector<ComparisonPoint> > points;
+  for (const InputSpec &input : inputs)
+    points.push_back(comparisonPoints(*input.file,sample,observable,channel));
+
+  int legacyMatched = 0;
+  int newMatched = 0;
+  const bool relative = observable=="counts";
+  const std::vector<ComparisonPoint> legacyDifference = matchedComparisons(
+    points[0],points[1],relative,legacyMatched);
+  const std::vector<ComparisonPoint> newDifference = matchedComparisons(
+    points[0],points[2],relative,newMatched);
+  summary << sample << '\t' << observable << '\t' << channel;
+  for (const auto &collection : points) summary << '\t' << collection.size();
+  summary << '\t' << legacyMatched << '\t' << newMatched << '\n';
+
+  const std::string stem = "compare_"+sample+"_"+observable+"_"+channel;
+  TCanvas canvas(stem.c_str(),stem.c_str(),720,720);
+  TPad upper((stem+"_upper").c_str(),"",0.,0.30,1.,1.);
+  TPad lower((stem+"_lower").c_str(),"",0.,0.,1.,0.30);
+  upper.SetBottomMargin(0.02);
+  upper.SetLeftMargin(0.14);
+  upper.SetRightMargin(0.04);
+  lower.SetTopMargin(0.03);
+  lower.SetBottomMargin(0.31);
+  lower.SetLeftMargin(0.14);
+  lower.SetRightMargin(0.04);
+  upper.Draw();
+  lower.Draw();
+
+  upper.cd();
+  upper.SetLogx();
+  if (observable=="counts" && sample!="ratio") upper.SetLogy();
+  const auto range = yRange(observable,sample);
+  TH1D upperFrame((stem+"_upper_frame").c_str(),"",100,12.,1500.);
+  upperFrame.SetDirectory(nullptr);
+  upperFrame.SetMinimum(range.first);
+  upperFrame.SetMaximum(range.second);
+  upperFrame.GetYaxis()->SetTitle(
+    (observableLabel(observable)+" ("+sampleLabel(sample,observable)+")").c_str());
+  upperFrame.GetYaxis()->SetTitleSize(0.050);
+  upperFrame.GetYaxis()->SetTitleOffset(1.25);
+  upperFrame.GetYaxis()->SetLabelSize(0.043);
+  upperFrame.GetXaxis()->SetLabelSize(0.);
+  upperFrame.Draw("AXIS");
+
+  std::vector<std::unique_ptr<TGraphErrors> > graphs;
+  bool anyPoints = false;
+  for (size_t index=0; index<inputs.size(); ++index) {
+    graphs.emplace_back(makeGraph(points[index],inputs[index].color,
+                                  inputs[index].marker));
+    if (!points[index].empty()) {
+      graphs.back()->Draw("P SAME");
+      anyPoints = true;
+    }
+  }
+  if (!anyPoints)
+    drawMissing("Object unavailable in all three files");
+  TLegend legend(0.53,0.69,0.92,0.90);
+  legend.SetBorderSize(0);
+  legend.SetFillStyle(0);
+  legend.SetTextSize(0.036);
+  for (size_t index=0; index<inputs.size(); ++index)
+    legend.AddEntry(graphs[index].get(),inputs[index].label.c_str(),"pl");
+  legend.Draw();
+  TLatex label;
+  label.SetNDC();
+  label.SetTextSize(0.040);
+  label.DrawLatex(0.16,0.93,channelLabel(channel).c_str());
+
+  lower.cd();
+  lower.SetLogx();
+  const double deltaRange = comparisonRange(observable,sample);
+  TH1D lowerFrame((stem+"_lower_frame").c_str(),"",100,12.,1500.);
+  lowerFrame.SetDirectory(nullptr);
+  lowerFrame.SetMinimum(-deltaRange);
+  lowerFrame.SetMaximum(deltaRange);
+  lowerFrame.GetXaxis()->SetTitle("p_{T} (GeV)");
+  lowerFrame.GetYaxis()->SetTitle(
+    observable=="counts" ? "candidate/base-1" : "candidate-base");
+  lowerFrame.GetXaxis()->SetTitleSize(0.12);
+  lowerFrame.GetXaxis()->SetLabelSize(0.10);
+  lowerFrame.GetYaxis()->SetTitleSize(0.095);
+  lowerFrame.GetYaxis()->SetTitleOffset(0.68);
+  lowerFrame.GetYaxis()->SetLabelSize(0.082);
+  lowerFrame.GetYaxis()->SetNdivisions(505);
+  lowerFrame.Draw("AXIS");
+  drawZeroLine();
+  std::unique_ptr<TGraphErrors> legacyGraph(
+    makeGraph(legacyDifference,inputs[1].color,inputs[1].marker,0.68));
+  std::unique_ptr<TGraphErrors> newGraph(
+    makeGraph(newDifference,inputs[2].color,inputs[2].marker,0.68));
+  if (!legacyDifference.empty()) legacyGraph->Draw("P SAME");
+  if (!newDifference.empty()) newGraph->Draw("P SAME");
+  TLatex matchLabel;
+  matchLabel.SetNDC();
+  matchLabel.SetTextSize(0.072);
+  matchLabel.DrawLatex(0.17,0.84,
+    Form("matched bins: legacy %d, new %d",legacyMatched,newMatched));
+
+  const std::string plotPath = outputDirectory+"/"+stem+".pdf";
+  canvas.SaveAs(plotPath.c_str());
+  return stem;
+}
+
+std::string axisOverlayPanel(
+  const InputSpec &input, const std::string &sample,
+  const std::string &observable, const std::string &outputDirectory) {
+  const std::vector<int> colors = {kBlue+1,kGreen+2,kRed+1};
+  const std::vector<int> markers = {20,21,24};
+  std::vector<std::vector<ComparisonPoint> > points;
+  for (const std::string &channel : kChannels)
+    points.push_back(comparisonPoints(*input.file,sample,observable,channel));
+
+  std::string labelStem = input.label;
+  std::replace(labelStem.begin(),labelStem.end(),' ','_');
+  const std::string stem =
+    "axes_"+labelStem+"_"+sample+"_"+observable;
+  TCanvas canvas(stem.c_str(),stem.c_str(),720,610);
+  canvas.SetLeftMargin(0.14);
+  canvas.SetRightMargin(0.04);
+  canvas.SetBottomMargin(0.13);
+  canvas.SetLogx();
+  if (observable=="counts" && sample!="ratio") canvas.SetLogy();
+  const auto range = yRange(observable,sample);
+  TH1D frame((stem+"_frame").c_str(),"",100,12.,1500.);
+  frame.SetDirectory(nullptr);
+  frame.SetMinimum(range.first);
+  frame.SetMaximum(range.second);
+  frame.GetXaxis()->SetTitle("reference p_{T} (GeV)");
+  frame.GetYaxis()->SetTitle(
+    (observableLabel(observable)+" ("+sampleLabel(sample,observable)+")").c_str());
+  frame.GetXaxis()->SetTitleSize(0.050);
+  frame.GetXaxis()->SetLabelSize(0.042);
+  frame.GetYaxis()->SetTitleSize(0.050);
+  frame.GetYaxis()->SetTitleOffset(1.25);
+  frame.GetYaxis()->SetLabelSize(0.042);
+  frame.Draw("AXIS");
+
+  std::vector<std::unique_ptr<TGraphErrors> > graphs;
+  bool anyPoints = false;
+  for (size_t index=0; index<kChannels.size(); ++index) {
+    graphs.emplace_back(makeGraph(points[index],colors[index],markers[index]));
+    if (!points[index].empty()) {
+      graphs.back()->Draw("P SAME");
+      anyPoints = true;
+    }
+  }
+  if (!anyPoints) drawMissing("All reference-axis objects unavailable");
+  TLegend legend(0.53,0.70,0.92,0.90);
+  legend.SetBorderSize(0);
+  legend.SetFillStyle(0);
+  legend.SetTextSize(0.037);
+  for (size_t index=0; index<kChannels.size(); ++index)
+    legend.AddEntry(graphs[index].get(),channelLabel(kChannels[index]).c_str(),"pl");
+  legend.Draw();
+  TLatex label;
+  label.SetNDC();
+  label.SetTextSize(0.043);
+  label.DrawLatex(0.16,0.94,input.label.c_str());
+  const std::string plotPath = outputDirectory+"/"+stem+".pdf";
+  canvas.SaveAs(plotPath.c_str());
+  return stem;
+}
+
+void writeNormalizationFrame(std::ofstream &frames,
+                             const std::vector<InputSpec> &inputs,
+                             std::ofstream &normalization) {
+  frames << "\\begin{frame}{Statistics normalization diagnostics}\n"
+         << "\\centering\\scriptsize\n"
+         << "\\begin{tabular}{llrrr}\n"
+         << "Reference axis & input & data yield & MC yield & MC/data \\\\\n"
+         << "\\hline\n";
+  normalization << "channel\tinput\tdata_integral\tmc_integral\tmc_over_data\n";
+  for (const std::string &channel : kChannels) {
+    for (const InputSpec &input : inputs) {
+      const double data = countIntegral(*input.file,"data",channel);
+      const double mc = countIntegral(*input.file,"mc",channel);
+      const double ratio = data!=0. ? mc/data : 0.;
+      frames << texEscape(channelLabel(channel)) << " & "
+             << texEscape(input.label) << " & " << scientific(data) << " & "
+             << scientific(mc) << " & " << scientific(ratio) << " \\\\\n";
+      normalization << channel << '\t' << input.label << '\t' << data << '\t'
+                    << mc << '\t' << ratio << '\n';
+    }
+  }
+  frames << "\\end{tabular}\n"
+         << "\\vspace{1ex}\\parbox{0.94\\linewidth}{\\tiny Raw yields are "
+         << "reported only as a diagnostic. Statistics plots use a separate "
+         << "unit-area normalization for each data or MC distribution; their "
+         << "third column is the derived normalized data/MC shape ratio.}\n"
+         << "\\end{frame}\n";
+}
+
+double maximumAbsoluteValue(TFile &file, const std::string &observable) {
+  double maximum = 0.;
+  for (const std::string &sample : std::vector<std::string>{"data","mc"}) {
+    for (const std::string &channel : kChannels) {
+      const std::vector<ComparisonPoint> points = readPoints(
+        file,objectPath(sample,observable,channel));
+      for (const ComparisonPoint &point : points)
+        maximum = std::max(maximum,fabs(point.y));
+    }
+  }
+  return maximum;
+}
+
+void writeInputSanityFrame(std::ofstream &frames,
+                           const std::vector<InputSpec> &inputs) {
+  frames << "\\begin{frame}{Input sanity checks}\n"
+         << "\\centering\\small\n"
+         << "\\begin{tabular}{lrrl}\n"
+         << "Input & max $|\\mathrm{MPF1}|$ & max $|\\mathrm{MPFn}|$ & status \\\\\n"
+         << "\\hline\n";
+  bool failed = false;
+  for (const InputSpec &input : inputs) {
+    const double mpf1 = maximumAbsoluteValue(*input.file,"mpf1");
+    const double mpfn = maximumAbsoluteValue(*input.file,"mpfn");
+    const bool pass = mpf1<5. && mpfn<5.;
+    failed |= !pass;
+    frames << texEscape(input.label) << " & " << scientific(mpf1) << " & "
+           << scientific(mpfn) << " & " << (pass ? "PASS" : "\\textbf{FAIL}")
+           << " \\\\\n";
+  }
+  frames << "\\end{tabular}\n"
+         << "\\vspace{1.5ex}\\parbox{0.92\\linewidth}{\\small ";
+  if (failed)
+    frames << "At least one input contains unphysical longitudinal MPF "
+           << "components. Those component panels may be empty because their "
+           << "values lie outside the fixed validation range. The total MPF "
+           << "can nevertheless remain finite when MPF1 and MPFn cancel. "
+           << "Regenerate that input after the transverse-projection fix.";
+  else
+    frames << "All inputs pass the broad MPF-component magnitude check. This "
+           << "is a corruption guard, not a physics-quality criterion.";
+  frames << "}\n\\end{frame}\n";
 }
 
 } // namespace
 
 void compareJECdata(
-  const char *oldFile="../jecsys3/rootfiles/jecdata2024I_nib1.root",
-  const char *newFile="../jecsys3/rootfiles/jecdata2024I_nix.root",
+  const char *baselineFile=
+    "../jecsys3/rootfiles/jecdata2024I_nib1.root",
+  const char *legacyFile=
+    "../jecsys3/rootfiles/jecdata2024I_nix_legacy.root",
+  const char *newMethodFile=
+    "../jecsys3/rootfiles/jecdata2024I_nix_newmethod.root",
   const char *outputDirectory="output/compareJECdata",
-  const char *oldLabel="2024I_nib1",
-  const char *newLabel="2024I_nix") {
-  TFile oldInput(oldFile,"READ");
-  TFile newInput(newFile,"READ");
-  if (oldInput.IsZombie() || newInput.IsZombie())
-    throw std::runtime_error("Could not open one or both jecdata inputs");
+  const char *baselineLabel="2024I_nib1 baseline",
+  const char *legacyLabel="2024I_nix legacy",
+  const char *newMethodLabel="2024I_nix new method") {
+  std::unique_ptr<TFile> baseline(TFile::Open(baselineFile,"READ"));
+  std::unique_ptr<TFile> legacy(TFile::Open(legacyFile,"READ"));
+  std::unique_ptr<TFile> newMethod(TFile::Open(newMethodFile,"READ"));
+  if (!baseline || baseline->IsZombie() || !legacy || legacy->IsZombie() ||
+      !newMethod || newMethod->IsZombie())
+    throw std::runtime_error("Could not open one or more jecdata inputs");
   gSystem->mkdir(outputDirectory,true);
   gStyle->SetOptStat(0);
+  gStyle->SetErrorX(0.5);
 
-  const std::vector<std::string> samples = {"data","mc","ratio"};
-  const std::vector<std::string> channels = {"jetz","zjav","zjet"};
+  const std::vector<InputSpec> inputs = {
+    {baseline.get(),baselineLabel,kBlack,20},
+    {legacy.get(),legacyLabel,kBlue+1,21},
+    {newMethod.get(),newMethodLabel,kRed+1,24},
+  };
   const std::vector<std::string> observables = {
     "counts", "ptchs", "mpfchs1", "mpf1", "mpfn", "mpfu", "mpfnu",
     "rjet", "gjet", "chf", "nef", "nhf", "cef", "muf", "rho",
   };
 
   std::ofstream summary(std::string(outputDirectory)+"/summary.tsv");
-  summary << "sample\tobservable\tchannel\told_points\tnew_points\tmatched_bins"
-          << "\told_only\tnew_only\n";
-  std::ofstream frames(std::string(outputDirectory)+
-                       "/compareJECdata_frames.tex");
+  summary << "sample\tobservable\tchannel\tbaseline_points\tlegacy_points"
+          << "\tnew_points\tlegacy_matched\tnew_matched\n";
+  std::ofstream normalization(
+    std::string(outputDirectory)+"/normalization.tsv");
+  std::ofstream frames(
+    std::string(outputDirectory)+"/compareJECdata_frames.tex");
   frames << "% Generated by compareJECdata.C. Do not edit by hand.\n";
+  writeNormalizationFrame(frames,inputs,normalization);
+  writeInputSanityFrame(frames,inputs);
 
   for (const std::string &observable : observables) {
     const bool hasAllReferenceAxes =
-      (observable=="counts" || observable=="ptchs" ||
-       observable=="mpfchs1" || observable=="mpf1" ||
-       observable=="mpfn" || observable=="mpfu" ||
-       observable=="mpfnu");
-    const std::vector<std::string> observableChannels =
-      (hasAllReferenceAxes ? channels : std::vector<std::string>{"zjet"});
-    for (const std::string &channel : observableChannels) {
+      observable=="counts" || observable=="ptchs" ||
+      observable=="mpfchs1" || observable=="mpf1" ||
+      observable=="mpfn" || observable=="mpfu" || observable=="mpfnu";
+    const std::vector<std::string> channels =
+      hasAllReferenceAxes ? kChannels : std::vector<std::string>{"zjet"};
+    for (const std::string &channel : channels) {
       frames << "\\begin{frame}{" << observableLabel(observable) << " -- "
              << channelLabel(channel) << "}\n"
              << "\\begin{columns}[T,onlytextwidth]\n";
-      for (const std::string &sample : samples) {
-        const std::string path = objectPath(sample,observable,channel);
-        const std::vector<ComparisonPoint> oldPoints = readPoints(oldInput,path);
-        const std::vector<ComparisonPoint> newPoints = readPoints(newInput,path);
-        int matched = 0;
-        const std::vector<ComparisonPoint> differences = matchedDifferences(
-          oldPoints,newPoints,observable=="counts",matched);
-        summary << sample << '\t' << observable << '\t' << channel << '\t'
-                << oldPoints.size() << '\t' << newPoints.size() << '\t'
-                << matched << '\t' << int(oldPoints.size())-matched << '\t'
-                << int(newPoints.size())-matched << '\n';
-
-        const std::string stem =
-          sample+"_"+observable+"_"+channel;
-        TCanvas canvas(stem.c_str(),stem.c_str(),720,720);
-        TPad upper("upper","upper",0.,0.30,1.,1.);
-        TPad lower("lower","lower",0.,0.,1.,0.30);
-        upper.SetBottomMargin(0.02);
-        upper.SetLeftMargin(0.14);
-        upper.SetRightMargin(0.04);
-        lower.SetTopMargin(0.03);
-        lower.SetBottomMargin(0.31);
-        lower.SetLeftMargin(0.14);
-        lower.SetRightMargin(0.04);
-        upper.Draw();
-        lower.Draw();
-
-        upper.cd();
-        upper.SetLogx();
-        if (observable=="counts") upper.SetLogy();
-        const auto range = yRange(observable,sample);
-        TH1D upperFrame("upperFrame","",100,12.,1500.);
-        upperFrame.SetMinimum(range.first);
-        upperFrame.SetMaximum(range.second);
-        upperFrame.GetYaxis()->SetTitle(observableLabel(observable).c_str());
-        upperFrame.GetYaxis()->SetTitleSize(0.055);
-        upperFrame.GetYaxis()->SetLabelSize(0.045);
-        upperFrame.GetXaxis()->SetLabelSize(0.);
-        upperFrame.Draw("AXIS");
-        TGraphErrors *oldGraph = makeGraph(oldPoints,kBlack,20);
-        TGraphErrors *newGraph = makeGraph(newPoints,kRed+1,24);
-        if (!oldPoints.empty()) oldGraph->Draw("P SAME");
-        if (!newPoints.empty()) newGraph->Draw("P SAME");
-        if (oldPoints.empty() && newPoints.empty())
-          drawMissing(("Missing in both files: "+path).c_str());
-        TLegend legend(0.55,0.73,0.92,0.90);
-        legend.SetBorderSize(0);
-        legend.SetFillStyle(0);
-        legend.SetTextSize(0.040);
-        legend.AddEntry(oldGraph,oldLabel,"pl");
-        legend.AddEntry(newGraph,newLabel,"pl");
-        legend.Draw();
-        TLatex label;
-        label.SetNDC();
-        label.SetTextSize(0.045);
-        label.DrawLatex(0.16,0.93,(sample+"; "+channelLabel(channel)).c_str());
-
-        lower.cd();
-        lower.SetLogx();
-        const double deltaRange = differenceRange(observable);
-        TH1D lowerFrame("lowerFrame","",100,12.,1500.);
-        lowerFrame.SetMinimum(-deltaRange);
-        lowerFrame.SetMaximum(deltaRange);
-        lowerFrame.GetXaxis()->SetTitle("p_{T} (GeV)");
-        lowerFrame.GetYaxis()->SetTitle(
-          observable=="counts" ? "(new-old)/old" : "new-old");
-        lowerFrame.GetXaxis()->SetTitleSize(0.12);
-        lowerFrame.GetXaxis()->SetLabelSize(0.10);
-        lowerFrame.GetYaxis()->SetTitleSize(0.10);
-        lowerFrame.GetYaxis()->SetTitleOffset(0.64);
-        lowerFrame.GetYaxis()->SetLabelSize(0.085);
-        lowerFrame.GetYaxis()->SetNdivisions(505);
-        lowerFrame.Draw("AXIS");
-        TGraphErrors *differenceGraph = makeGraph(differences,kBlue+1,20);
-        if (!differences.empty()) differenceGraph->Draw("P SAME");
-        TLatex matchLabel;
-        matchLabel.SetNDC();
-        matchLabel.SetTextSize(0.085);
-        matchLabel.DrawLatex(0.17,0.84,
-          Form("exactly matched bins: %d",matched));
-
-        const std::string plotPath =
-          std::string(outputDirectory)+"/"+stem+".pdf";
-        canvas.SaveAs(plotPath.c_str());
-        delete oldGraph;
-        delete newGraph;
-        delete differenceGraph;
-
+      for (const std::string &sample : kSamples) {
+        const std::string stem = standardPanel(
+          inputs,sample,observable,channel,outputDirectory,summary);
         frames << "\\begin{column}{0.327\\textwidth}\n"
-               << "\\centering\\textbf{" << sample << "}\\par\n"
+               << "\\centering\\textbf{" << texSampleLabel(sample,observable)
+               << "}\\par\n"
                << "\\includegraphics[width=\\linewidth]{"
                << outputDirectory << "/" << stem << ".pdf}\n"
                << "\\end{column}\n";
       }
       frames << "\\end{columns}\n"
-             << "\\vspace{0.3ex}{\\tiny Top: old and new inputs. Bottom: "
-             << (observable=="counts" ? "relative" : "absolute")
-             << " bin-by-bin difference at exactly common bin centers.}\n"
+             << "\\vspace{0.3ex}{\\tiny Top: baseline, synchronized legacy, "
+             << "and new method on fixed axes. Bottom: legacy--baseline and "
+             << "new--baseline at exactly common bin centers. Statistics "
+             << "differences are relative; response differences are absolute.}\n"
              << "\\end{frame}\n";
     }
   }
+
+  const std::vector<std::string> axisObservables = {
+    "counts","ptchs","mpfchs1","mpf1","mpfn","mpfu"
+  };
+  for (const std::string &observable : axisObservables) {
+    for (const InputSpec &input : inputs) {
+      frames << "\\begin{frame}{Reference-axis overlay -- "
+             << observableLabel(observable) << " -- "
+             << texEscape(input.label) << "}\n"
+             << "\\begin{columns}[T,onlytextwidth]\n";
+      for (const std::string &sample : kSamples) {
+        const std::string stem = axisOverlayPanel(
+          input,sample,observable,outputDirectory);
+        frames << "\\begin{column}{0.327\\textwidth}\n"
+               << "\\centering\\textbf{" << texSampleLabel(sample,observable)
+               << "}\\par\n"
+               << "\\includegraphics[width=\\linewidth]{"
+               << outputDirectory << "/" << stem << ".pdf}\n"
+               << "\\end{column}\n";
+      }
+      frames << "\\end{columns}\n"
+             << "\\vspace{0.3ex}{\\tiny Jet-pT, average-pT (HDM), and Z-pT "
+             << "binnings are overlaid with identical plot geometry. This "
+             << "exposes low-pT pileup and high-pT resolution trade-offs "
+             << "without moving axes between methods.}\n"
+             << "\\end{frame}\n";
+    }
+  }
+
   frames.close();
+  normalization.close();
   summary.close();
-  std::cout << "Wrote comparison plots, Beamer frames and summary to "
-            << outputDirectory << std::endl;
+  std::cout << "Wrote three-input comparison plots, Beamer frames and TSV "
+            << "diagnostics to " << outputDirectory << std::endl;
 }
