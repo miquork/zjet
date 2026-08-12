@@ -436,13 +436,25 @@ def write_compatibility(state_path_value: Path,
     if not confirm(f"Write or replace {output}{warning}?", default=False):
         print(f"Stopped before compatibility output. Resume with: {resume_command(state)}")
         raise SystemExit(0)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary_output = output.with_name(output.name + ".part")
+    if temporary_output.exists():
+        temporary_output.unlink()
     merged = str(state["merged_directory"]).rstrip("/")
     macro = (
         f'writeJecsys3.C("{merged}/zjet_DATA.root",'
-        f'"{merged}/zjet_MC.root","{output}",'
+        f'"{merged}/zjet_MC.root","{temporary_output}",'
         f'{str(placeholders).lower()})'
     )
-    run(["root", "-l", "-b", "-q", macro])
+    try:
+        run(["root", "-l", "-b", "-q", macro])
+        if not temporary_output.is_file() or temporary_output.stat().st_size == 0:
+            raise RuntimeError(
+                f"compatibility writer did not create {temporary_output}")
+        temporary_output.replace(output)
+    finally:
+        if temporary_output.exists():
+            temporary_output.unlink()
     advance(state_path_value, state, "compatibility_written")
 
 
@@ -544,6 +556,14 @@ def main() -> None:
         print(f"\nInterrupted safely at checkpoint {state['stage']}.")
         print(f"Resume with: {resume_command(state)}")
         raise SystemExit(130)
+    except (subprocess.CalledProcessError, RuntimeError, FileNotFoundError,
+            ValueError) as error:
+        print(f"\nERROR at checkpoint {state['stage']}: {error}",
+              file=sys.stderr)
+        print("No checkpoint was advanced; existing successful outputs were "
+              "left in place.",file=sys.stderr)
+        print(f"Resume with: {resume_command(state)}",file=sys.stderr)
+        raise SystemExit(1)
 
     print("Workflow complete.")
     print(f"Compatibility file: {state['compatibility_output']}")

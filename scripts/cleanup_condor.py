@@ -4,7 +4,9 @@
 import argparse
 import getpass
 import json
+import os
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -57,6 +59,47 @@ def external_log_directory(metadata: dict, campaign: str,
     return path
 
 
+def require_cms_proxy(minimum_seconds: int = 600) -> Path:
+    """Fail before any EOS deletion unless a usable CMS proxy is available."""
+    if shutil.which("voms-proxy-info") is None:
+        raise RuntimeError("voms-proxy-info is unavailable; run cleanup on lxplus")
+    candidates = []
+    configured = os.environ.get("X509_USER_PROXY")
+    if configured:
+        candidates.append(Path(configured).expanduser())
+    candidates.append(
+        Path.home()/"private"/f"x509up_u{os.getuid()}")
+    default = subprocess.run(
+        ["voms-proxy-info","-path"],check=False,text=True,
+        stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
+    if default.returncode == 0 and default.stdout.strip():
+        candidates.append(Path(default.stdout.strip()))
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        lifetime = subprocess.run(
+            ["voms-proxy-info","-file",str(candidate),"-timeleft"],
+            check=False,text=True,stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL)
+        fqan = subprocess.run(
+            ["voms-proxy-info","-file",str(candidate),"-fqan"],
+            check=False,text=True,stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL)
+        try:
+            seconds = int(lifetime.stdout.strip())
+        except ValueError:
+            seconds = 0
+        if (lifetime.returncode == 0 and fqan.returncode == 0 and
+                seconds >= minimum_seconds and "/cms/" in fqan.stdout):
+            os.environ["X509_USER_PROXY"] = str(candidate.resolve())
+            print(f"Using CMS proxy {candidate.resolve()}; "
+                  f"lifetime {seconds/3600:.1f} h")
+            return candidate.resolve()
+    raise RuntimeError(
+        "remote deletion requires a CMS proxy with at least 10 minutes "
+        "remaining; run: voms-proxy-init --rfc --voms cms --valid 192:00")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("campaign", help="campaign name or directory")
@@ -105,6 +148,12 @@ def main() -> None:
         raise RuntimeError(
             "merge provenance is missing; merge first or explicitly pass "
             "--discard-unmerged for an abandoned test campaign")
+    if args.delete_remote_results:
+        if not remote_results:
+            raise ValueError("campaign does not use remote result storage")
+        # Authenticate before creating archives or removing any local/remote
+        # object. This prevents a half-started cleanup due to a missing proxy.
+        require_cms_proxy()
     archive_dir = args.archive_dir.expanduser().resolve()
     archive_dir.mkdir(parents=True,exist_ok=True)
     if merged:
@@ -112,11 +161,11 @@ def main() -> None:
         shutil.copy2(merge_log,archive_dir/merge_log.name)
 
     if args.delete_remote_results:
-        if not remote_results:
-            raise ValueError("campaign does not use remote result storage")
         urls = [job["result_path"] for job in metadata["jobs"]]
         print(f"Removing {len(urls)} manifest-listed EOS partial outputs...")
-        remove_remote_files(urls)
+        removed_count, missing_count = remove_remote_files(urls)
+        print(f"EOS cleanup: removed {removed_count}; already absent "
+              f"{missing_count}")
 
     removed = []
     for name in ("chunks","logs","results"):
@@ -136,4 +185,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (RuntimeError,FileNotFoundError,ValueError) as error:
+        print(f"ERROR: {error}")
+        raise SystemExit(1)

@@ -174,6 +174,13 @@ mfile["ZMM_2024I_nib1_MC"] =
   "/absolute/path/to/zjet/rootfiles/zjet_JMENANO_compat.root";
 ```
 
+Both local paths and `root://` EOS inputs are supported through `TFile::Open`.
+The EOS `/eos/user/...` namespace is independent of the AFS `/afs/cern.ch/work`
+checkout location. The checkpointed driver writes to a `.part` file and only
+atomically replaces the requested local compatibility file after ROOT exits
+successfully; a failure preserves the previous output and the `merged`
+checkpoint.
+
 The normal jecsys3 chain can then run for `2024I_nib1`; its gamma+jet,
 multijet, inclusive-jet and W inputs remain configured as before. Keeping the
 old ZMM paths as commented alternatives makes the old/new comparison
@@ -516,6 +523,12 @@ merge provenance and keeps the small manifest directory so that the settings
 remain inspectable and remote partials can still be removed later. An
 intentionally abandoned smoke test can be cleaned without merging only by
 adding the explicit `--discard-unmerged` flag.
+
+Before remote deletion, cleanup verifies that a CMS VOMS proxy has at least ten
+minutes remaining. It treats already absent manifest files as successfully
+cleaned, so the same command can safely resume after a partially completed
+deletion. Other per-file failures are collected and reported after independent
+files have been attempted.
 
 Optional data certification, data pileup, and MC pileup-weight inputs can be
 transferred to every job with `--golden-json`, `--lumi-pileup`, and

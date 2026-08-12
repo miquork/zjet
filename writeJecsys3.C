@@ -12,6 +12,7 @@
 
 #include <stdexcept>
 #include <map>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -405,16 +406,17 @@ void writeJecsys3(
   bool addFlavorPlaceholders=false,
   bool useLegacyMethod=false,
   bool preferOneDimensional=true) {
-  TFile data(dataFile,"READ");
-  TFile mc(mcFile,"READ");
-  if (data.IsZombie())
+  std::unique_ptr<TFile> data(TFile::Open(dataFile,"READ"));
+  std::unique_ptr<TFile> mc(TFile::Open(mcFile,"READ"));
+  if (!data || data->IsZombie())
     throw std::runtime_error("Failed to open data input " +
                              std::string(dataFile));
-  if (mc.IsZombie())
+  if (!mc || mc->IsZombie())
     throw std::runtime_error("Failed to open MC input " + std::string(mcFile));
 
   for (const auto &sample :
-       std::vector<std::pair<TFile*,bool> >{{&data,false},{&mc,true}}) {
+       std::vector<std::pair<TFile*,bool> >{{data.get(),false},
+                                            {mc.get(),true}}) {
     TFile *source = sample.first;
     requireDirectory(source,"l2res");
     requireDirectory(source,"l2res1");
@@ -448,10 +450,10 @@ void writeJecsys3(
   bool dataNativeProfiles = false;
   bool mcNativeProfiles = false;
   const bool dataFlavorInputs = copySample(
-    &data,&output,"data",false,addFlavorPlaceholders,useLegacyMethod,
+    data.get(),&output,"data",false,addFlavorPlaceholders,useLegacyMethod,
     preferOneDimensional,dataNativeProfiles);
   const bool mcFlavorInputs = copySample(
-    &mc,&output,"mc",true,addFlavorPlaceholders,useLegacyMethod,
+    mc.get(),&output,"mc",true,addFlavorPlaceholders,useLegacyMethod,
     preferOneDimensional,mcNativeProfiles);
   if (dataNativeProfiles!=mcNativeProfiles)
     throw std::runtime_error(
@@ -492,7 +494,7 @@ void writeJecsys3(
       "measured DeepJet reco-tag and matched generator-flavor inputs");
     flavorStatus.Write();
     if (TObjString *definition =
-          dynamic_cast<TObjString*>(data.Get("zjet_flavor_definition")))
+          dynamic_cast<TObjString*>(data->Get("zjet_flavor_definition")))
       definition->Write("zjet_flavor_definition",TObject::kOverwrite);
   }
   else if (addFlavorPlaceholders) {
@@ -504,7 +506,7 @@ void writeJecsys3(
             "Writing empty Z+flavor placeholders; they are not physics inputs");
   }
   if (TObjString *metadata =
-        dynamic_cast<TObjString*>(data.Get("zjet_campaign_metadata"))) {
+        dynamic_cast<TObjString*>(data->Get("zjet_campaign_metadata"))) {
     metadata->Write("zjet_campaign_metadata",TObject::kOverwrite);
   }
   output.Close();

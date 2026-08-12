@@ -106,10 +106,49 @@ def ensure_remote_directory(directory: str) -> None:
         subprocess.run(["gfal-mkdir","-p",normalized],check=True)
 
 
-def remove_remote_files(urls: List[str]) -> None:
+def _missing_remote_file(detail: str) -> bool:
+    lowered = detail.lower()
+    return any(message in lowered for message in (
+        "no such file or directory", "no such file", "does not exist",
+        "unable to stat",
+    ))
+
+
+def remove_remote_files(urls: List[str]) -> Tuple[int, int]:
+    """Remove manifest-listed files, treating already absent files as success.
+
+    Returns `(removed, already_missing)`. Other failures are collected so one
+    transient error does not prevent independent files from being attempted.
+    """
+    removed = 0
+    already_missing = 0
+    failures = []
     for url in urls:
         if shutil.which("xrdfs"):
             endpoint, path = split_remote(url)
-            subprocess.run(["xrdfs", endpoint, "rm", path], check=True)
+            command = ["xrdfs", endpoint, "rm", path]
+        elif shutil.which("gfal-rm"):
+            command = ["gfal-rm", url]
         else:
-            subprocess.run(["gfal-rm", url], check=True)
+            raise RuntimeError(
+                "neither xrdfs nor gfal-rm is available; run this on lxplus")
+        result = subprocess.run(command,check=False,text=True,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE)
+        if result.returncode == 0:
+            removed += 1
+            continue
+        detail = result.stderr.strip() or result.stdout.strip()
+        if _missing_remote_file(detail):
+            already_missing += 1
+            continue
+        failures.append(f"{url}: {detail or 'unknown removal error'}")
+    if failures:
+        examples = "\n  ".join(failures[:5])
+        remainder = (f"\n  ... and {len(failures)-5} more failure(s)"
+                     if len(failures)>5 else "")
+        raise RuntimeError(
+            f"failed to remove {len(failures)} remote file(s) after removing "
+            f"{removed} and skipping {already_missing} already absent file(s):"
+            f"\n  {examples}{remainder}")
+    return removed, already_missing
