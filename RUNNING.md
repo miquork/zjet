@@ -45,6 +45,9 @@ The pileup-weight histogram must be named `pileup_ratio` (preferred) or
 are recomputed from raw pT with the Summer24 V2 L2Relative correction, plus
 the Run2024I nib1 V11M L2L3Residual correction for data. The first three
 lepton-cleaned MC jets in NanoAOD order receive the configured JER smearing.
+The JER resolution and scale-factor payloads are evaluated by a small dedicated
+reader rather than additional ROOT `TFormula` objects, avoiding worker-specific
+formula initialization failures alongside the JEC correctors.
 Nominal Summer24 muon scale corrections are applied to data and MC and the
 additional resolution correction is applied to MC. The 2024 veto map is
 applied only to data probe jets. `RawPuppiMET` is rebuilt with all

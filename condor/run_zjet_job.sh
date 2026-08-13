@@ -62,7 +62,7 @@ echo "Compiler cache disabled; temporary files are local to ${PWD}."
 
 if command -v sha256sum >/dev/null 2>&1; then
   echo "Transferred analysis source SHA256 values:"
-  sha256sum zjet.C zjet.h ZJetMuonCorrections.h \
+  sha256sum zjet.C zjet.h ZJetJerResolution.h ZJetMuonCorrections.h \
     data/MuonCorrections/2024_Summer24_generated.h \
     mk_compile.C run_zjet_job.C
 fi

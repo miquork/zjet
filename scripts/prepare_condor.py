@@ -293,6 +293,7 @@ def main() -> None:
             name: file_description(REPOSITORY/name)
             for name in ("zjet.C", "zjet.h", "mk_compile.C",
                          "run_zjet_job.C", "condor/run_zjet_job.sh",
+                         "ZJetJerResolution.h",
                          "ZJetMuonCorrections.h",
                          "data/MuonCorrections/2024_Summer24_generated.h",
                          "scripts/generate_muon_corrections.py")
@@ -365,7 +366,8 @@ def main() -> None:
         json.dumps(metadata,indent=2) + "\n",encoding="utf-8")
 
     common_inputs = [
-        "zjet.C", "zjet.h", "ZJetLumi.h", "ZJetMuonCorrections.h",
+        "zjet.C", "zjet.h", "ZJetLumi.h", "ZJetJerResolution.h",
+        "ZJetMuonCorrections.h",
         "data/MuonCorrections/2024_Summer24_generated.h", "mk_compile.C",
         "run_zjet_job.C",
         "CondFormats/JetMETObjects/interface/FactorizedJetCorrector.h",

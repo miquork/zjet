@@ -12,10 +12,10 @@
 #include "TSystem.h"
 
 #include "ZJetLumi.h"
+#include "ZJetJerResolution.h"
 #include "ZJetMuonCorrections.h"
 #include "CondFormats/JetMETObjects/interface/FactorizedJetCorrector.h"
 #include "CondFormats/JetMETObjects/interface/JetCorrectorParameters.h"
-#include "CondFormats/JetMETObjects/interface/SimpleJetCorrector.h"
 
 #include <algorithm>
 #include <chrono>
@@ -333,8 +333,8 @@ void zjet::Loop()
      cout << "." << endl;
    }
 
-   SimpleJetCorrector *jerResolution = 0;
-   FactorizedJetCorrector *jerScaleFactor = 0;
+   std::unique_ptr<zjetcorrections::JetPtResolution> jerResolution;
+   std::unique_ptr<zjetcorrections::JetResolutionScaleFactor> jerScaleFactor;
    if (isMC && (jerResolutionFile.empty()!=jerScaleFactorFile.empty())) {
      cout << "JER smearing requires both a resolution and a scale-factor file."
           << endl;
@@ -342,17 +342,23 @@ void zjet::Loop()
    }
    if (isMC && !jerResolutionFile.empty()) {
      try {
-       jerResolution = new SimpleJetCorrector(jerResolutionFile);
-       std::vector<JetCorrectorParameters> scaleFactors;
-       scaleFactors.push_back(JetCorrectorParameters(jerScaleFactorFile));
-       jerScaleFactor = new FactorizedJetCorrector(scaleFactors);
+       cout << "Initializing MC JER resolution from " << jerResolutionFile
+            << "." << endl << flush;
+       jerResolution.reset(
+         new zjetcorrections::JetPtResolution(jerResolutionFile));
+       cout << "Initializing MC JER scale factors from "
+            << jerScaleFactorFile << "." << endl << flush;
+       jerScaleFactor.reset(
+         new zjetcorrections::JetResolutionScaleFactor(jerScaleFactorFile));
      }
      catch (const std::exception &error) {
        cout << "Failed to initialize JER: " << error.what() << endl;
        return;
      }
      cout << "Applying MC JER smearing with resolution " << jerResolutionFile
-          << " and scale factors " << jerScaleFactorFile << "." << endl;
+          << " (" << jerResolution->size() << " bins) and scale factors "
+          << jerScaleFactorFile << " (" << jerScaleFactor->size()
+          << " bins)." << endl;
    }
    else if (isMC) {
      cout << "MC JER smearing disabled." << endl;
@@ -1190,13 +1196,10 @@ void zjet::Loop()
           TLorentzVector correctedJet;
           correctedJet.SetPtEtaPhiM(correctedPt,Jet_eta[ijet],Jet_phi[ijet],
                                     correctedMass);
-          const double resolution = jerResolution->correction(
-            {float(Jet_eta[ijet]),float(Rho_fixedGridRhoFastjetAll)},
-            {float(correctedPt)});
-          jerScaleFactor->setJetPt(correctedPt);
-          jerScaleFactor->setJetEta(Jet_eta[ijet]);
-          jerScaleFactor->setRho(Rho_fixedGridRhoFastjetAll);
-          const double scaleFactor = jerScaleFactor->getCorrection();
+          const double resolution = jerResolution->resolution(
+            Jet_eta[ijet],Rho_fixedGridRhoFastjetAll,correctedPt);
+          const double scaleFactor = jerScaleFactor->scaleFactor(
+            Jet_eta[ijet],correctedPt);
           if (!std::isfinite(resolution) || resolution<0. ||
               !std::isfinite(scaleFactor) || scaleFactor<=0.) {
             cout << "ERROR: invalid JER for event " << jentry << ", jet "
