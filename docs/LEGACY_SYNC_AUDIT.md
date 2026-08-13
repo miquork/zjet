@@ -65,7 +65,12 @@ commit.
   reproduced literally for synchronization. It should be revisited together
   with Jet ID after the legacy result has been matched.
 - `legacy/control` stores alpha, second-jet pT, alpha versus leading-jet pT,
-  and DB/MPF1 profiles before the alpha cut for direct validation.
+  DB/MPF1 profiles before the alpha cut, and rho versus Z pT before the alpha
+  cut for direct validation.
+- Generator balance is projected using only transverse x and y components.
+  Earlier files accidentally included the generator jet and Z longitudinal
+  components in the dot product; those files require a new event-processing
+  pass before their generator-response profile can be used.
 
 These changes require a new event-processing pass before they can appear in a
 compatibility file.

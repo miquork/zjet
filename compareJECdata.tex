@@ -28,8 +28,10 @@
     \item Statistics distributions are normalized to unit area. Their third
           column is a normalized data/MC shape ratio; raw yields are tabulated
           separately because the historical MC has a different normalization.
-    \item Missing MPFnu or generator-response objects remain visible as explicit
-          placeholders instead of silently disappearing.
+    \item MPFnu is reconstructed from MPFn and MPFu with the soft-recoil
+          responses documented in the generated deck. Generator and
+          reconstructed balance closures are MC-only diagnostics; direct
+          balance in data and data/MC is labelled separately.
     \item Machine-readable diagnostics are in \texttt{summary.tsv} and
           \texttt{normalization.tsv} under \texttt{output/compareJECdata}.
   \end{itemize}

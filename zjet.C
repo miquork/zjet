@@ -840,10 +840,15 @@ void zjet::Loop()
    TProfile *p_legacy_mpf1_before_alpha = dynamic_cast<TProfile*>(
      legacyProfiles.axes.at("jetpt").rmpfjet1->Clone(
        "p_mpf1_vs_jetpt_before_alpha"));
+   TProfile *p_legacy_rho_before_alpha = dynamic_cast<TProfile*>(
+     legacyProfiles.axes.at("zmmjet").rho->Clone(
+       "p_rho_vs_zpt_before_alpha"));
    p_legacy_db_before_alpha->Reset();
    p_legacy_mpf1_before_alpha->Reset();
+   p_legacy_rho_before_alpha->Reset();
    p_legacy_db_before_alpha->SetDirectory(legacyControlDirectory);
    p_legacy_mpf1_before_alpha->SetDirectory(legacyControlDirectory);
+   p_legacy_rho_before_alpha->SetDirectory(legacyControlDirectory);
    fout->cd();
    TObjString synchronizedSelection(
      "ZbAnalysis master 46dbf340 with production JetID setting: HLT_Mu17_TrkIsoVVL_Mu8_TrkIsoVVL_DZ_Mass8; both muons trigger matched within DeltaR<0.3; tight ID; pfRelIso04<0.15; pT>20/10 GeV; |eta|<2.3; pT(Z)>12 GeV; |m-90 GeV|<20 GeV; MC pileup<=100; leading lepton-cleaned jet pT>=12 GeV and |eta|<=5; alpha=pT(jet2)/pT(Z), set to zero below pT(jet2)=15 GeV, alpha<1; central profiles use 0<|eta(jet1)|<1.3");
@@ -1442,6 +1447,8 @@ void zjet::Loop()
             h_legacy_alpha_vs_jetpt->Fill(ptj,alpha,legacyEventWeight);
             p_legacy_db_before_alpha->Fill(ptj,db,legacyEventWeight);
             p_legacy_mpf1_before_alpha->Fill(ptj,mpf1,legacyEventWeight);
+            p_legacy_rho_before_alpha->Fill(
+              ptz,Rho_fixedGridRhoFastjetAll,legacyEventWeight);
 
             if (alpha<1.) {
               h_legacy_cutflow->Fill(9.,legacyEventWeight);
@@ -1455,7 +1462,8 @@ void zjet::Loop()
                   GenJet_pt[igen],GenJet_eta[igen],GenJet_phi[igen],
                   GenJet_mass[igen]);
                 genResponse =
-                  -generatorJet.Vect().Dot(p4z.Vect())/denominator;
+                  -(generatorJet.Px()*p4z.Px()+
+                    generatorJet.Py()*p4z.Py())/denominator;
                 hasGenResponse = std::isfinite(genResponse);
               }
               const double absLegacyEta = fabs(legacyJet.Eta());
@@ -1707,7 +1715,8 @@ void zjet::Loop()
 	  p4gen.SetPtEtaPhiM(GenJet_pt[igen],GenJet_eta[igen],GenJet_phi[igen],
 			     GenJet_mass[igen]);
 	  truthMatched = true;
-	  genBalance = -p4gen.Vect().Dot(p4z.Vect())/(ptz*ptz);
+	  genBalance = -(p4gen.Px()*p4z.Px()+p4gen.Py()*p4z.Py())/
+	               (ptz*ptz);
 	  hasGenResponse = std::isfinite(genBalance);
 	  if (p4gen.Pt()<=8.) truthMatchCategory = 1;
 	  else if (p4jet.DeltaR(p4gen)>=0.4) truthMatchCategory = 2;

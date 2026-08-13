@@ -9,7 +9,10 @@
 #include "TSystem.h"
 
 #include <cassert>
+#include <algorithm>
+#include <cmath>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -50,6 +53,26 @@ void fillGraph(TGraphErrors &graph, TProfile *profile, Color_t color,
   }
 }
 
+std::pair<double,double> visibleRange(
+  const std::vector<TProfile*> &profiles, double fallbackMin,
+  double fallbackMax, bool includeUnity=false) {
+  double minimum = includeUnity ? 1. : 1.e30;
+  double maximum = includeUnity ? 1. : -1.e30;
+  for (TProfile *profile : profiles) {
+    for (int bin = 1; bin <= profile->GetNbinsX(); ++bin) {
+      if (profile->GetBinEntries(bin)<=0.) continue;
+      const double value = profile->GetBinContent(bin);
+      const double error = profile->GetBinError(bin);
+      if (!std::isfinite(value) || !std::isfinite(error)) continue;
+      minimum = std::min(minimum,value-error);
+      maximum = std::max(maximum,value+error);
+    }
+  }
+  if (!(maximum>minimum) || minimum==1.e30) return {fallbackMin,fallbackMax};
+  const double margin = std::max(0.05,0.12*(maximum-minimum));
+  return {minimum-margin,maximum+margin};
+}
+
 void drawResponse(TFile *mc, TFile *data, const char *response,
                   const char *observable, const char *xTitle,
                   const char *outputDirectory) {
@@ -76,6 +99,8 @@ void drawResponse(TFile *mc, TFile *data, const char *response,
   mcParallel->GetXaxis()->CenterTitle();
   mcParallel->GetXaxis()->SetTitleOffset(1.15);
   mcParallel->GetYaxis()->CenterTitle();
+  // Keep the response scale fixed so sparse high-rho bins cannot flatten the
+  // well-populated stability region. Their large error bars may be clipped.
   mcParallel->GetYaxis()->SetRangeUser(0.5,1.5);
   mcParallel->Draw("E1");
   mcTransverse->Draw("E1 SAME");
@@ -95,6 +120,11 @@ void drawResponse(TFile *mc, TFile *data, const char *response,
   if (dataSubtracted->GetEntries()>0)
     legend.AddEntry(dataSubtracted,"Data subtracted","lp");
   legend.Draw();
+
+  TLatex note;
+  note.SetNDC();
+  note.SetTextSize(0.032);
+  note.DrawLatex(0.16,0.92,"|#Delta#phi|<#pi/16; two #pm#pi/2 sidebands");
 
   canvas.SaveAs(Form("%s/%s_vs_%s.pdf",outputDirectory,response,observable));
 }
@@ -151,15 +181,25 @@ void drawTruthResponse(TFile *mc, const char *response, const char *region,
   matched->GetXaxis()->CenterTitle();
   matched->GetXaxis()->SetTitleOffset(1.15);
   matched->GetYaxis()->CenterTitle();
-  matched->GetYaxis()->SetRangeUser(0.,3.);
+  const auto range = visibleRange({matched,pileup},0.,3.,true);
+  matched->GetYaxis()->SetRangeUser(range.first,range.second);
   matched->Draw("E1");
   pileup->Draw("E1 SAME");
+
+  TLine unity(matched->GetXaxis()->GetXmin(),1.,
+              matched->GetXaxis()->GetXmax(),1.);
+  unity.SetLineStyle(3);
+  unity.Draw();
 
   TLegend legend(0.58,0.75,0.88,0.88);
   legend.SetBorderSize(0);
   legend.AddEntry(matched,"Truth matched","lp");
   legend.AddEntry(pileup,"Pileup / unmatched","lp");
   legend.Draw();
+  TLatex note;
+  note.SetNDC();
+  note.SetTextSize(0.032);
+  note.DrawLatex(0.16,0.92,Form("MC truth split, %s region",region));
   canvas.SaveAs(Form("%s/%s_truth_%s.pdf",outputDirectory,response,region));
 }
 

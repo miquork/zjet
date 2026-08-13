@@ -46,6 +46,8 @@ void drawComparison(const char *canvasName, const char *parallelName,
                     const char *transverseName, const char *subtractedName,
                     const char *xTitle, double xMin, double xMax,
                     bool logarithmic, double dataScale,
+                    double ratioMin, double ratioMax,
+                    double normalizationPtMin, double normalizationPtMax,
                     const char *mcFile, const char *dataFile) {
   TFile mc(mcFile,"READ");
   TFile data(dataFile,"READ");
@@ -69,7 +71,7 @@ void drawComparison(const char *canvasName, const char *parallelName,
   TH1D *upperFrame = tdrHist(Form("upper_%s",canvasName),"Events / bin",
                              yMin,yMax,xTitle,xMin,xMax);
   TH1D *lowerFrame = tdrHist(Form("lower_%s",canvasName),"Data / MC",
-                             0.5,1.5,xTitle,xMin,xMax);
+                             ratioMin,ratioMax,xTitle,xMin,xMax);
   lumi_136TeV = "Run2024I data and Summer24 DY";
   TCanvas *canvas = tdrDiCanvas(canvasName,upperFrame,lowerFrame,8,11);
 
@@ -95,6 +97,8 @@ void drawComparison(const char *canvasName, const char *parallelName,
   text.SetNDC();
   text.SetTextSize(0.032);
   text.DrawLatex(0.46,0.52,Form("Common data scale: %.4g",dataScale));
+  text.DrawLatex(0.46,0.48,Form("Normalized for %.0f < p_{T} < %.0f GeV",
+                                normalizationPtMin,normalizationPtMax));
   gPad->RedrawAxis();
 
   TH1D *ratioParallel = makeRatio(dataParallel,mcParallel,
@@ -139,11 +143,15 @@ void drawControlData(const char *mcFile="rootfiles/zjet_MC.root",
   const double dataScale = mcYield/dataYield;
 
   drawComparison("drawControlData_c1_1_pt","h_parpt","h_tranpt","h_mixpt",
-                 "p_{T,jet} (GeV)",0,200,true,dataScale,mcFile,dataFile);
+                 "p_{T,jet} (GeV)",0,200,true,dataScale,0.5,1.5,
+                 normalizationPtMin,normalizationPtMax,mcFile,dataFile);
   drawComparison("drawControlData_c1_2_eta","h_pareta","h_traneta","h_mixeta",
-                 "#eta_{jet}",-5,5,false,dataScale,mcFile,dataFile);
+                 "#eta_{jet}",-5,5,false,dataScale,0.5,1.5,
+                 normalizationPtMin,normalizationPtMax,mcFile,dataFile);
   drawComparison("drawControlData_c1_3_db","h_dbp","h_dbt","h_db",
-                 "DB",0,2,false,dataScale,mcFile,dataFile);
+                 "DB",0,2,false,dataScale,0.75,1.25,
+                 normalizationPtMin,normalizationPtMax,mcFile,dataFile);
   drawComparison("drawControlData_c1_4_mpf","h_mpfp","h_mpft","h_mpf",
-                 "MPF",-3,4,false,dataScale,mcFile,dataFile);
+                 "MPF",-3,4,false,dataScale,0.75,1.25,
+                 normalizationPtMin,normalizationPtMax,mcFile,dataFile);
 }

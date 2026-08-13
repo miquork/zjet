@@ -40,6 +40,12 @@ struct InputSpec {
 
 const std::vector<std::string> kSamples = {"data","mc","ratio"};
 const std::vector<std::string> kChannels = {"jetz","zjav","zjet"};
+double kSoftRecoilRn = 1.00;
+double kSoftRecoilRu = 0.92;
+
+std::string objectPath(const std::string &sample,
+                       const std::string &observable,
+                       const std::string &channel);
 
 std::vector<ComparisonPoint> readPoints(TFile &file, const std::string &path) {
   TObject *object = file.Get(path.c_str());
@@ -110,6 +116,43 @@ std::vector<ComparisonPoint> pointRatios(
   return ratios;
 }
 
+std::vector<ComparisonPoint> pointDifferences(
+  const std::vector<ComparisonPoint> &first,
+  const std::vector<ComparisonPoint> &second) {
+  std::vector<ComparisonPoint> differences;
+  for (const ComparisonPoint &left : first) {
+    const auto right = std::find_if(
+      second.begin(),second.end(),[&](const ComparisonPoint &point) {
+        return sameCenter(point.x,left.x);
+      });
+    if (right==second.end()) continue;
+    differences.push_back({left.x,left.ex,left.y-right->y,
+                           std::hypot(left.ey,right->ey)});
+  }
+  return differences;
+}
+
+std::vector<ComparisonPoint> correctedSoftRecoil(
+  TFile &file, const std::string &sample, const std::string &channel) {
+  const std::vector<ComparisonPoint> neutral = readPoints(
+    file,objectPath(sample,"mpfn",channel));
+  const std::vector<ComparisonPoint> unclustered = readPoints(
+    file,objectPath(sample,"mpfu",channel));
+  std::vector<ComparisonPoint> result;
+  for (const ComparisonPoint &n : neutral) {
+    const auto u = std::find_if(
+      unclustered.begin(),unclustered.end(),[&](const ComparisonPoint &point) {
+        return sameCenter(point.x,n.x);
+      });
+    if (u==unclustered.end()) continue;
+    result.push_back({
+      n.x,n.ex,n.y/kSoftRecoilRn+u->y/kSoftRecoilRu,
+      std::hypot(n.ey/kSoftRecoilRn,u->ey/kSoftRecoilRu)
+    });
+  }
+  return result;
+}
+
 std::string objectPath(const std::string &sample,
                        const std::string &observable,
                        const std::string &channel) {
@@ -121,6 +164,12 @@ std::string objectPath(const std::string &sample,
 std::vector<ComparisonPoint> comparisonPoints(
   TFile &file, const std::string &sample, const std::string &observable,
   const std::string &channel) {
+  if (observable=="mpfnu") {
+    if (sample=="data" || sample=="mc")
+      return correctedSoftRecoil(file,sample,channel);
+    return pointDifferences(correctedSoftRecoil(file,"data",channel),
+                            correctedSoftRecoil(file,"mc",channel));
+  }
   if (observable!="counts")
     return readPoints(file,objectPath(sample,observable,channel));
   if (sample=="data" || sample=="mc")
@@ -172,6 +221,8 @@ std::pair<double,double> yRange(const std::string &observable,
       observable=="cef" || observable=="muf") return {0.,1.};
   if (observable=="mpfn") return {-0.6,0.3};
   if (observable=="mpfu" || observable=="mpfnu") return {-0.2,0.8};
+  if (observable=="rjet") return {0.75,1.45};
+  if (observable=="gjet") return {-0.15,1.15};
   if (sample=="ratio") return {0.75,1.25};
   return {0.5,1.5};
 }
@@ -180,6 +231,8 @@ double comparisonRange(const std::string &observable,
                        const std::string &sample) {
   if (observable=="counts") return 1.;
   if (observable=="rho") return 20.;
+  if (observable=="gjet") return 1.0;
+  if (observable=="rjet") return 0.5;
   if (sample=="ratio" && resultIsDifference(observable)) return 0.12;
   if (observable=="chf" || observable=="nef" || observable=="nhf" ||
       observable=="cef" || observable=="muf") return 0.20;
@@ -193,9 +246,9 @@ std::string observableLabel(const std::string &observable) {
   if (observable=="mpf1") return "MPF1";
   if (observable=="mpfn") return "MPFn";
   if (observable=="mpfu") return "MPFu";
-  if (observable=="mpfnu") return "MPFnu";
-  if (observable=="rjet") return "DB response";
-  if (observable=="gjet") return "Generator response";
+  if (observable=="mpfnu") return "Response-corrected MPFnu";
+  if (observable=="rjet") return "Reconstructed balance closure";
+  if (observable=="gjet") return "Generator balance closure";
   return observable;
 }
 
@@ -516,6 +569,89 @@ void writeInputSanityFrame(std::ofstream &frames,
   frames << "}\n\\end{frame}\n";
 }
 
+void writeDerivedObservableFrame(std::ofstream &frames) {
+  frames << "\\begin{frame}{Derived observables and MC-only closure}\n"
+         << "\\small\n"
+         << "\\begin{itemize}\n"
+         << "\\item Response-corrected soft recoil is derived bin by bin as "
+         << "$\\mathrm{MPF}_{nu}=\\mathrm{MPF}_{n}/R_n+"
+         << "\\mathrm{MPF}_{u}/R_u$, with $R_n=" << kSoftRecoilRn
+         << "$ and $R_u=" << kSoftRecoilRu
+         << "$ from the current \\texttt{softrad3.C} defaults. "
+         << "Input errors are propagated without an unavailable covariance.\n"
+         << "\\item \\texttt{rjet} and \\texttt{gjet} are written by "
+         << "\\texttt{reprocess.C} only for MC. They are therefore shown as "
+         << "MC closure comparisons, without meaningless empty data or "
+         << "data/MC panels.\n"
+         << "\\item Direct balance in data, MC, and data/MC remains the "
+         << "\\textbf{Direct balance} (\\texttt{ptchs}) page.\n"
+         << "\\item Generator-balance curves from event outputs made before "
+         << "the transverse-projection correction are invalid and require a "
+         << "new event-processing pass.\n"
+         << "\\end{itemize}\n"
+         << "\\end{frame}\n";
+}
+
+bool available(const std::string &path) {
+  return !gSystem->AccessPathName(path.c_str());
+}
+
+void writeImageFrame(
+  std::ofstream &frames, const std::string &title,
+  const std::vector<std::pair<std::string,std::string> > &images) {
+  std::vector<std::pair<std::string,std::string> > present;
+  for (const auto &image : images)
+    if (available(image.first)) present.push_back(image);
+  if (present.empty()) return;
+  frames << "\\begin{frame}{" << title << "}\n"
+         << "\\begin{columns}[T,onlytextwidth]\n";
+  const double width = 0.98/present.size();
+  for (const auto &image : present) {
+    frames << "\\begin{column}{" << std::fixed << std::setprecision(3)
+           << width << "\\textwidth}\n"
+           << "\\centering\\textbf{" << image.second << "}\\par\n"
+           << "\\includegraphics[width=\\linewidth,height=0.77\\textheight,"
+           << "keepaspectratio]{" << image.first << "}\n"
+           << "\\end{column}\n";
+  }
+  frames << "\\end{columns}\n\\end{frame}\n";
+}
+
+void writeControlAppendix(std::ofstream &frames) {
+  frames << "\\section{Analysis controls}\n";
+  writeImageFrame(frames,"Pileup stability of the subtracted response",{
+    {"pdf/drawPileupControl/db_vs_rho.pdf","Direct balance vs. rho"},
+    {"pdf/drawPileupControl/mpf_vs_rho.pdf","Hybrid MPF vs. rho"},
+  });
+  writeImageFrame(frames,"Pileup-jet subtraction controls",{
+    {"pdf/drawPileupControl/pujet_fraction_vs_ptz.pdf",
+     "Unmatched fraction vs. Z pT"},
+    {"pdf/drawPileupControl/pujet_fraction_eta_vs_ptz.pdf",
+     "Eta dependence after subtraction"},
+  });
+  writeImageFrame(frames,"Truth-separated response controls",{
+    {"pdf/drawPileupControl/db_truth_parallel.pdf",
+     "Parallel direct balance"},
+    {"pdf/drawPileupControl/match_definition_vs_ptz.pdf",
+     "Reco-to-gen matching definition"},
+  });
+  writeImageFrame(frames,"Data and MC control distributions",{
+    {"pdf/drawControl/drawControlData_c1_1_pt.pdf","Probe-jet pT"},
+    {"pdf/drawControl/drawControlData_c1_3_db.pdf","Direct balance"},
+  });
+  writeImageFrame(frames,"Response maps in the signal and sidebands",{
+    {"pdf/drawControl/drawControl_c2_2_db.pdf","Direct balance map"},
+    {"pdf/drawControl/drawControl_c2_3_mpf.pdf","MPF map"},
+  });
+  writeImageFrame(frames,"All-pairs method geometry",{
+    {"pdf/drawZjetSummary/regions_db.pdf","Parallel, transverse, subtracted"},
+  });
+  writeImageFrame(frames,"All-pairs balance slices",{
+    {"pdf/drawZjetSummary/balance_slices.pdf",
+     "Data and MC at approximately 30 GeV"},
+  });
+}
+
 } // namespace
 
 void compareJECdata(
@@ -528,7 +664,13 @@ void compareJECdata(
   const char *outputDirectory="output/compareJECdata",
   const char *baselineLabel="2024I_nib1 baseline",
   const char *legacyLabel="2024I_nix legacy",
-  const char *newMethodLabel="2024I_nix new method") {
+  const char *newMethodLabel="2024I_nix new method",
+  double softRecoilRn=1.00,
+  double softRecoilRu=0.92) {
+  if (softRecoilRn<=0. || softRecoilRu<=0.)
+    throw std::runtime_error("Soft-recoil responses Rn and Ru must be positive");
+  kSoftRecoilRn = softRecoilRn;
+  kSoftRecoilRu = softRecoilRu;
   std::unique_ptr<TFile> baseline(TFile::Open(baselineFile,"READ"));
   std::unique_ptr<TFile> legacy(TFile::Open(legacyFile,"READ"));
   std::unique_ptr<TFile> newMethod(TFile::Open(newMethodFile,"READ"));
@@ -559,6 +701,7 @@ void compareJECdata(
   frames << "% Generated by compareJECdata.C. Do not edit by hand.\n";
   writeNormalizationFrame(frames,inputs,normalization);
   writeInputSanityFrame(frames,inputs);
+  writeDerivedObservableFrame(frames);
 
   for (const std::string &observable : observables) {
     const bool hasAllReferenceAxes =
@@ -568,6 +711,27 @@ void compareJECdata(
     const std::vector<std::string> channels =
       hasAllReferenceAxes ? kChannels : std::vector<std::string>{"zjet"};
     for (const std::string &channel : channels) {
+      if (observable=="rjet" || observable=="gjet") {
+        const std::string stem = standardPanel(
+          inputs,"mc",observable,channel,outputDirectory,summary);
+        frames << "\\begin{frame}{" << observableLabel(observable) << " -- "
+               << channelLabel(channel) << "}\n"
+               << "\\centering\\textbf{MC-only closure}\\par\n"
+               << "\\includegraphics[width=0.66\\linewidth,height=0.70\\textheight,"
+               << "keepaspectratio]{" << outputDirectory << "/" << stem
+               << ".pdf}\n"
+               << "\\vspace{0.5ex}\\par{\\tiny ";
+        if (observable=="rjet")
+          frames << "The corresponding direct-balance response in data, MC, "
+                 << "and data/MC is shown on the Direct balance "
+                 << "(\\texttt{ptchs}) pages.";
+        else
+          frames << "Generator balance is an MC closure diagnostic. Curves "
+                 << "from event outputs made before the transverse-projection "
+                 << "fix are intentionally retained here only to expose the bug.";
+        frames << "}\n\\end{frame}\n";
+        continue;
+      }
       frames << "\\begin{frame}{" << observableLabel(observable) << " -- "
              << channelLabel(channel) << "}\n"
              << "\\begin{columns}[T,onlytextwidth]\n";
@@ -591,7 +755,7 @@ void compareJECdata(
   }
 
   const std::vector<std::string> axisObservables = {
-    "counts","ptchs","mpfchs1","mpf1","mpfn","mpfu"
+    "counts","ptchs","mpfchs1","mpf1","mpfn","mpfu","mpfnu"
   };
   for (const std::string &observable : axisObservables) {
     for (const InputSpec &input : inputs) {
@@ -618,9 +782,12 @@ void compareJECdata(
     }
   }
 
+  writeControlAppendix(frames);
   frames.close();
   normalization.close();
   summary.close();
   std::cout << "Wrote three-input comparison plots, Beamer frames and TSV "
-            << "diagnostics to " << outputDirectory << std::endl;
+            << "diagnostics to " << outputDirectory
+            << "; derived MPFnu used Rn=" << kSoftRecoilRn
+            << " and Ru=" << kSoftRecoilRu << std::endl;
 }
