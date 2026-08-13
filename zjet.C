@@ -825,6 +825,9 @@ void zjet::Loop()
    TObjString synchronizedSelection(
      "ZbAnalysis master 46dbf340: HLT_Mu17_TrkIsoVVL_Mu8_TrkIsoVVL_DZ_Mass8; both muons trigger matched within DeltaR<0.3; tight ID; pfRelIso04<0.15; pT>20/10 GeV; |eta|<2.3; pT(Z)>12 GeV; |m-90 GeV|<20 GeV");
    synchronizedSelection.Write("zjet_synchronized_selection");
+   TObjString legacyJetId(
+     "disabled to match the current ZbAnalysis synchronization reference");
+   legacyJetId.Write("zjet_legacy_jet_id");
    
    curdir->cd();
 
@@ -1348,8 +1351,7 @@ void zjet::Loop()
         const double legacyDphiResidual =
           fabs(fabs(legacyJet.DeltaPhi(p4z))-TMath::Pi());
         h_legacy_dphi->Fill(legacyDphiResidual,legacyEventWeight);
-        if (legacyDphiResidual<0.44 && passTightJetId(legacyJetIndex) &&
-            passesJetVetoMap(legacyJet) &&
+        if (legacyDphiResidual<0.44 && passesJetVetoMap(legacyJet) &&
             !(legacyJet.Pt()<70. && fabs(legacyJet.Eta())>2.65 &&
               fabs(legacyJet.Eta())<2.964)) {
           h_legacy_cutflow->Fill(8.,legacyEventWeight);

@@ -26,10 +26,10 @@ commit.
   transverse plane before projection. Without this step their longitudinal
   components produced unphysical values as large as O(100), although the
   components cancelled in total MPF.
-- The legacy leading jet is now chosen before applying tight Jet ID, as in
-  `ZbAnalysis`; an event is rejected if that leading jet fails the ID. Jets
-  entering the type-1 MET and non-leading recoil sums are no longer required
-  to pass the leading-jet ID.
+- Jet ID is disabled only in the `legacy/` synchronization control, matching
+  the current `ZbAnalysis` reference as confirmed by its maintainer. The normal
+  all-pairs analysis continues to require reconstructed Run-3 Tight Jet ID for
+  probe jets. Type-I MET and non-leading recoil sums do not use Jet ID.
 - The 2024 forward spike veto used by `ZbAnalysis` is reproduced.
 - The selected-muon multiplicity is restricted to two or three.
 - The closest-mass pair is chosen from all tight, isolated, trigger-matched
@@ -52,13 +52,12 @@ commit.
 These changes require a new event-processing pass before they can appear in a
 compatibility file.
 
-## Remaining difference requiring investigation
+## Intentional analysis difference
 
-1. **Jet ID source.** `ZbAnalysis` reads `Jet_jetId >= 4`; JMENANOv15 inputs
-   used locally do not expose that branch, so the local code reconstructs the
-   Run-3 tight PF Jet ID from jet fractions and multiplicities. This should be
-   validated event by event against the stored bit in a file that contains
-   both representations.
+The normal all-pairs analysis reconstructs and requires Run-3 Tight Jet ID for
+probe jets because JMENANOv15 does not store `Jet_jetId`. The synchronized
+legacy control deliberately omits this requirement. This difference should be
+kept explicit when legacy and nominal outputs are compared.
 
 ## Statistics normalization
 

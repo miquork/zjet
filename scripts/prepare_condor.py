@@ -317,7 +317,8 @@ def main() -> None:
             "method": ("all accepted Z-jet pairs; +90 and -90 degree "
                        "sidebands, each with weight 0.5"),
             "legacy_control": (
-                "synchronized leading-jet response stored under legacy/"
+                "synchronized leading-jet response stored under legacy/; "
+                "Jet ID disabled to match the current reference"
             ),
             "dimuon_selection": (
                 "HLT_Mu17_TrkIsoVVL_Mu8_TrkIsoVVL_DZ_Mass8; both muons "

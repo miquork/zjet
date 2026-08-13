@@ -113,6 +113,7 @@ void run_zjet_job(const char *inputList, bool isMC, const char *outputFile,
       !nativeCounts || !nativeMpfNu || !legacyCounts || !legacyMpfNu ||
       !check.Get("legacy/control/h_cutflow") ||
       !check.Get("zjet_synchronized_selection") ||
+      !check.Get("zjet_legacy_jet_id") ||
       !correctionMetadataMatches ||
       !check.Get("zjet_muon_correction_sha256") ||
       !check.Get("zjet_type1_met_definition") ||
