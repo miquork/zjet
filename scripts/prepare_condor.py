@@ -319,7 +319,9 @@ def main() -> None:
                        "sidebands, each with weight 0.5"),
             "legacy_control": (
                 "synchronized leading-jet response stored under legacy/; "
-                "Jet ID disabled to match the current reference"
+                "Jet ID disabled to match the current production reference; "
+                "MC pileup<=100; alpha=pT(jet2)/pT(Z), set to zero for "
+                "pT(jet2)<15 GeV, with alpha<1; central abs(eta)<1.3"
             ),
             "dimuon_selection": (
                 "HLT_Mu17_TrkIsoVVL_Mu8_TrkIsoVVL_DZ_Mass8; both muons "

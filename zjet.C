@@ -813,13 +813,13 @@ void zjet::Loop()
      bookResponseProfiles1D(legacyDirectory,"profiles1d");
    TDirectory *legacyControlDirectory = legacyDirectory->mkdir("control");
    legacyControlDirectory->cd();
-   TH1D *h_legacy_cutflow = new TH1D("h_cutflow","",8,0.5,8.5);
+   TH1D *h_legacy_cutflow = new TH1D("h_cutflow","",9,0.5,9.5);
    const char *legacyCutLabels[] = {
      "all", "golden JSON", "MET filters", "dimuon trigger",
      "trigger-matched tight muons", "Z pT and mass", "leading jet",
-     "back-to-back"
+     "back-to-back", "alpha < 1"
    };
-   for (int ibin=1; ibin<=8; ++ibin)
+   for (int ibin=1; ibin<=9; ++ibin)
      h_legacy_cutflow->GetXaxis()->SetBinLabel(ibin,legacyCutLabels[ibin-1]);
    TH1D *h_legacy_zpt = new TH1D("h_zpt",";p_{T,Z} (GeV);Events",
                                  200,0.,200.);
@@ -827,9 +827,26 @@ void zjet::Loop()
                                    200,0.,200.);
    TH1D *h_legacy_dphi = new TH1D("h_dphi",";|#Delta#phi|-#pi;Events",
                                   120,-TMath::Pi(),TMath::Pi());
+   TH1D *h_legacy_alpha = new TH1D(
+     "h_alpha",";p_{T,jet2}/p_{T,Z};Events",150,0.,3.);
+   TH1D *h_legacy_subleading_jetpt = new TH1D(
+     "h_subleading_jetpt",";p_{T,jet2} (GeV);Events",200,0.,1000.);
+   TH2D *h_legacy_alpha_vs_jetpt = new TH2D(
+     "h_alpha_vs_jetpt",";p_{T,jet1} (GeV);p_{T,jet2}/p_{T,Z}",
+     200,0.,1000.,150,0.,3.);
+   TProfile *p_legacy_db_before_alpha = dynamic_cast<TProfile*>(
+     legacyProfiles.axes.at("jetpt").rbal->Clone(
+       "p_db_vs_jetpt_before_alpha"));
+   TProfile *p_legacy_mpf1_before_alpha = dynamic_cast<TProfile*>(
+     legacyProfiles.axes.at("jetpt").rmpfjet1->Clone(
+       "p_mpf1_vs_jetpt_before_alpha"));
+   p_legacy_db_before_alpha->Reset();
+   p_legacy_mpf1_before_alpha->Reset();
+   p_legacy_db_before_alpha->SetDirectory(legacyControlDirectory);
+   p_legacy_mpf1_before_alpha->SetDirectory(legacyControlDirectory);
    fout->cd();
    TObjString synchronizedSelection(
-     "ZbAnalysis master 46dbf340: HLT_Mu17_TrkIsoVVL_Mu8_TrkIsoVVL_DZ_Mass8; both muons trigger matched within DeltaR<0.3; tight ID; pfRelIso04<0.15; pT>20/10 GeV; |eta|<2.3; pT(Z)>12 GeV; |m-90 GeV|<20 GeV");
+     "ZbAnalysis master 46dbf340 with production JetID setting: HLT_Mu17_TrkIsoVVL_Mu8_TrkIsoVVL_DZ_Mass8; both muons trigger matched within DeltaR<0.3; tight ID; pfRelIso04<0.15; pT>20/10 GeV; |eta|<2.3; pT(Z)>12 GeV; |m-90 GeV|<20 GeV; MC pileup<=100; leading lepton-cleaned jet pT>=12 GeV and |eta|<=5; alpha=pT(jet2)/pT(Z), set to zero below pT(jet2)=15 GeV, alpha<1; central profiles use 0<|eta(jet1)|<1.3");
    synchronizedSelection.Write("zjet_synchronized_selection");
    TObjString legacyJetId(
      "disabled to match the current ZbAnalysis synchronization reference");
@@ -931,6 +948,10 @@ void zjet::Loop()
       const double legacyEventWeight = (isMC ? 1. : eventWeight);
       const double mu = (isMC ? Pileup_nTrueInt
                               : lumiData.pileup(run, luminosityBlock));
+      // Apply this before JER smearing, as in ZbAnalysis. Besides selecting
+      // the same events, this preserves the random-number sequence used for
+      // stochastic smearing of later accepted events.
+      if (isMC && mu>100.) continue;
 
       h_cutflow->Fill(1., eventWeight);
       h_legacy_cutflow->Fill(1.,legacyEventWeight);
@@ -1150,7 +1171,7 @@ void zjet::Loop()
       h_legacy_cutflow->Fill(5.,legacyEventWeight);
       auto separatedFromSynchronizedMuons = [&](const TLorentzVector &jet) {
         for (const TLorentzVector &muon : synchronizedMuons)
-          if (jet.DeltaR(muon)<=0.3) return false;
+          if (jet.DeltaR(muon)<0.3) return false;
         return true;
       };
 
@@ -1311,101 +1332,149 @@ void zjet::Loop()
       h_legacy_cutflow->Fill(6.,legacyEventWeight);
       h_probe_veto->Fill(1., eventWeight);
 
-      // Legacy leading-jet reference.  It shares the synchronized event and
-      // dimuon selection above, so comparisons isolate the jet-response
-      // method rather than trigger or lepton-selection differences.
-      TLorentzVector legacyMet, legacyHt, legacyRawJets, legacyCorrJets;
-      legacyMet.SetPtEtaPhiM(
-        recalculatePuppiMet ? RawPuppiMET_pt : PuppiMET_pt,0.,
-        recalculatePuppiMet ? RawPuppiMET_phi : PuppiMET_phi,0.);
-      legacyHt = p4z;
-      int legacyJetIndex = -1;
-      TLorentzVector legacyJet;
-      legacyJet.SetPtEtaPhiM(0.,0.,0.,0.);
-      for (int ijet=0; ijet<nJet; ++ijet) {
-        TLorentzVector candidate;
-        candidate.SetPtEtaPhiM(Jet_pt[ijet],Jet_eta[ijet],Jet_phi[ijet],
-                               Jet_mass[ijet]);
-        if (fabs(candidate.Eta())>=5. ||
-            !separatedFromSynchronizedMuons(candidate)) continue;
-        if (candidate.Pt()>12. && candidate.Pt()>legacyJet.Pt()) {
-          legacyJet = candidate;
-          legacyJetIndex = ijet;
-        }
-        if (candidate.Pt()<=15.) continue;
-        legacyHt += candidate;
-        if (recalculatePuppiMet) {
-          TLorentzVector rawCandidate;
-          rawCandidate.SetPtEtaPhiM(
-            jetRawPt[ijet],Jet_eta[ijet],Jet_phi[ijet],jetRawMass[ijet]);
-          legacyRawJets += rawCandidate;
-          legacyCorrJets += candidate;
-        }
-      }
-      legacyHt.SetPtEtaPhiM(legacyHt.Pt(),0.,legacyHt.Phi(),0.);
-      if (recalculatePuppiMet) legacyMet += legacyRawJets-legacyCorrJets;
-      legacyMet.SetPtEtaPhiM(legacyMet.Pt(),0.,legacyMet.Phi(),0.);
-      const TLorentzVector legacyMetu = legacyMet+legacyHt;
-
-      if (legacyJetIndex>=0) {
-        h_legacy_cutflow->Fill(7.,legacyEventWeight);
-        h_legacy_zpt->Fill(p4z.Pt(),legacyEventWeight);
-        h_legacy_jetpt->Fill(legacyJet.Pt(),legacyEventWeight);
-        const double legacyDphiResidual =
-          fabs(fabs(legacyJet.DeltaPhi(p4z))-TMath::Pi());
-        h_legacy_dphi->Fill(legacyDphiResidual,legacyEventWeight);
-        if (legacyDphiResidual<0.44 && passesJetVetoMap(legacyJet) &&
-            !(legacyJet.Pt()<70. && fabs(legacyJet.Eta())>2.65 &&
-              fabs(legacyJet.Eta())<2.964)) {
-          h_legacy_cutflow->Fill(8.,legacyEventWeight);
-          const double ptz = p4z.Pt();
-          const double ptj = legacyJet.Pt();
-          const double ptave = 0.5*(ptz+ptj);
-          TLorentzVector legacyMet1 = -p4z-legacyJet;
-          legacyMet1.SetPtEtaPhiM(legacyMet1.Pt(),0.,legacyMet1.Phi(),0.);
-          TLorentzVector legacyMetn = -legacyHt+p4z+legacyJet;
-          legacyMetn.SetPtEtaPhiM(legacyMetn.Pt(),0.,legacyMetn.Phi(),0.);
-          const TLorentzVector legacyMetnu = legacyMetn+legacyMetu;
-          const TLorentzVector legacyMeta =
-            legacyMet1+legacyMetn+legacyMetu;
-          const double denominator = ptz*ptz;
-          const double db = ptj/ptz;
-          const double mpf =
-            1.+legacyMeta.Vect().Dot(p4z.Vect())/denominator;
-          const double mpf1 =
-            1.+legacyMet1.Vect().Dot(p4z.Vect())/denominator;
-          const double mpfn =
-            legacyMetn.Vect().Dot(p4z.Vect())/denominator;
-          const double mpfu =
-            legacyMetu.Vect().Dot(p4z.Vect())/denominator;
-          const double mpfnu =
-            legacyMetnu.Vect().Dot(p4z.Vect())/denominator;
-          bool hasGenResponse = false;
-          double genResponse = 0.;
-          if (isMC && Jet_genJetIdx[legacyJetIndex]>=0 &&
-              Jet_genJetIdx[legacyJetIndex]<nGenJet) {
-            const int igen = Jet_genJetIdx[legacyJetIndex];
-            TLorentzVector generatorJet;
-            generatorJet.SetPtEtaPhiM(GenJet_pt[igen],GenJet_eta[igen],
-                                      GenJet_phi[igen],GenJet_mass[igen]);
-            genResponse =
-              -generatorJet.Vect().Dot(p4z.Vect())/denominator;
-            hasGenResponse = std::isfinite(genResponse);
+      // Legacy leading-jet reference. It shares the synchronized event and
+      // dimuon selection above but retains the reference analysis choices,
+      // including its alpha definition and JetID setting.
+      {
+        TLorentzVector legacyMet, legacyHt, legacyRawJets, legacyCorrJets;
+        legacyMet.SetPtEtaPhiM(
+          recalculatePuppiMet ? RawPuppiMET_pt : PuppiMET_pt,0.,
+          recalculatePuppiMet ? RawPuppiMET_phi : PuppiMET_phi,0.);
+        legacyHt = p4z;
+        std::vector<int> legacyJetIndices;
+        for (int ijet=0; ijet<nJet; ++ijet) {
+          TLorentzVector candidate;
+          candidate.SetPtEtaPhiM(Jet_pt[ijet],Jet_eta[ijet],Jet_phi[ijet],
+                                 Jet_mass[ijet]);
+          if (!separatedFromSynchronizedMuons(candidate)) continue;
+          if (candidate.Pt()>=10.) legacyJetIndices.push_back(ijet);
+          if (candidate.Pt()>15.) legacyHt += candidate;
+          if (recalculatePuppiMet && candidate.Pt()>=15.) {
+            TLorentzVector rawCandidate;
+            rawCandidate.SetPtEtaPhiM(
+              jetRawPt[ijet],Jet_eta[ijet],Jet_phi[ijet],jetRawMass[ijet]);
+            legacyRawJets += rawCandidate;
+            legacyCorrJets += candidate;
           }
-          if (fabs(legacyJet.Eta())<1.305) {
-            fillResponseProfiles1D(
-              legacyProfiles,ptz,ptj,ptave,db,mpf,mpf1,mpfn,mpfu,mpfnu,
-              jetInverseResidual[legacyJetIndex],
-              Jet_chHEF[legacyJetIndex],Jet_neEmEF[legacyJetIndex],
-              Jet_neHEF[legacyJetIndex],Jet_chEmEF[legacyJetIndex],
-              Jet_muEF[legacyJetIndex],Rho_fixedGridRhoFastjetAll,
-              hasGenResponse,genResponse,legacyEventWeight);
-            legacyProfiles.axes.at("zmmjet").mass->Fill(
-              ptz,p4z.M(),legacyEventWeight);
-            legacyProfiles.axes.at("jetpt").mass->Fill(
-              ptj,p4z.M(),legacyEventWeight);
-            legacyProfiles.axes.at("ptave").mass->Fill(
-              ptave,p4z.M(),legacyEventWeight);
+        }
+        std::sort(legacyJetIndices.begin(),legacyJetIndices.end(),
+                  [&](int first, int second) {
+                    return Jet_pt[first]>Jet_pt[second];
+                  });
+        legacyHt.SetPtEtaPhiM(legacyHt.Pt(),0.,legacyHt.Phi(),0.);
+        if (recalculatePuppiMet) legacyMet += legacyRawJets-legacyCorrJets;
+        legacyMet.SetPtEtaPhiM(legacyMet.Pt(),0.,legacyMet.Phi(),0.);
+        const TLorentzVector legacyMetu = legacyMet+legacyHt;
+
+        int legacyJetIndex = -1;
+        for (int candidateIndex : legacyJetIndices) {
+          if (Jet_pt[candidateIndex]>=12. &&
+              fabs(Jet_eta[candidateIndex])<=5.) {
+            legacyJetIndex = candidateIndex;
+            break;
+          }
+        }
+        if (legacyJetIndex>=0) {
+          TLorentzVector legacyJet;
+          legacyJet.SetPtEtaPhiM(
+            Jet_pt[legacyJetIndex],Jet_eta[legacyJetIndex],
+            Jet_phi[legacyJetIndex],Jet_mass[legacyJetIndex]);
+          TLorentzVector legacySubleadingJet;
+          legacySubleadingJet.SetPtEtaPhiM(0.,0.,0.,0.);
+          const auto subleading = std::find_if(
+            legacyJetIndices.begin(),legacyJetIndices.end(),
+            [&](int candidateIndex) {
+              return candidateIndex!=legacyJetIndex;
+            });
+          if (subleading!=legacyJetIndices.end()) {
+            const int subleadingIndex = *subleading;
+            legacySubleadingJet.SetPtEtaPhiM(
+              Jet_pt[subleadingIndex],Jet_eta[subleadingIndex],
+              Jet_phi[subleadingIndex],Jet_mass[subleadingIndex]);
+          }
+
+          h_legacy_cutflow->Fill(7.,legacyEventWeight);
+          h_legacy_zpt->Fill(p4z.Pt(),legacyEventWeight);
+          h_legacy_jetpt->Fill(legacyJet.Pt(),legacyEventWeight);
+          // Reproduce the reference phiBB convention, including the
+          // orientation-dependent forward spike veto used in that code.
+          const double legacyPhiBB =
+            fabs(legacyJet.DeltaPhi(p4z)-TMath::Pi());
+          const double legacyDphiResidual =
+            std::min(legacyPhiBB,2.*TMath::Pi()-legacyPhiBB);
+          h_legacy_dphi->Fill(legacyDphiResidual,legacyEventWeight);
+          const bool passesBackToBack =
+            !(legacyPhiBB>0.44 &&
+              legacyPhiBB<2.*TMath::Pi()-0.44);
+          const bool rejectedAsSpike =
+            (legacyJet.Pt()<70. && fabs(legacyJet.Eta())>2.65 &&
+             fabs(legacyJet.Eta())<2.964 && legacyPhiBB<2.7);
+          if (passesBackToBack && passesJetVetoMap(legacyJet) &&
+              !rejectedAsSpike) {
+            h_legacy_cutflow->Fill(8.,legacyEventWeight);
+            const double ptz = p4z.Pt();
+            const double ptj = legacyJet.Pt();
+            const double ptave = 0.5*(ptz+ptj);
+            const double alpha = (legacySubleadingJet.Pt()>=15.)
+              ? legacySubleadingJet.Pt()/ptz : 0.;
+            TLorentzVector legacyMet1 = -p4z-legacyJet;
+            legacyMet1.SetPtEtaPhiM(legacyMet1.Pt(),0.,legacyMet1.Phi(),0.);
+            TLorentzVector legacyMetn = -legacyHt+p4z+legacyJet;
+            legacyMetn.SetPtEtaPhiM(legacyMetn.Pt(),0.,legacyMetn.Phi(),0.);
+            const TLorentzVector legacyMetnu = legacyMetn+legacyMetu;
+            const TLorentzVector legacyMeta =
+              legacyMet1+legacyMetn+legacyMetu;
+            const double denominator = ptz*ptz;
+            const double db = ptj/ptz;
+            const double mpf =
+              1.+legacyMeta.Vect().Dot(p4z.Vect())/denominator;
+            const double mpf1 =
+              1.+legacyMet1.Vect().Dot(p4z.Vect())/denominator;
+            const double mpfn =
+              legacyMetn.Vect().Dot(p4z.Vect())/denominator;
+            const double mpfu =
+              legacyMetu.Vect().Dot(p4z.Vect())/denominator;
+            const double mpfnu =
+              legacyMetnu.Vect().Dot(p4z.Vect())/denominator;
+            h_legacy_alpha->Fill(alpha,legacyEventWeight);
+            h_legacy_subleading_jetpt->Fill(
+              legacySubleadingJet.Pt(),legacyEventWeight);
+            h_legacy_alpha_vs_jetpt->Fill(ptj,alpha,legacyEventWeight);
+            p_legacy_db_before_alpha->Fill(ptj,db,legacyEventWeight);
+            p_legacy_mpf1_before_alpha->Fill(ptj,mpf1,legacyEventWeight);
+
+            if (alpha<1.) {
+              h_legacy_cutflow->Fill(9.,legacyEventWeight);
+              bool hasGenResponse = false;
+              double genResponse = 0.;
+              if (isMC && Jet_genJetIdx[legacyJetIndex]>=0 &&
+                  Jet_genJetIdx[legacyJetIndex]<nGenJet) {
+                const int igen = Jet_genJetIdx[legacyJetIndex];
+                TLorentzVector generatorJet;
+                generatorJet.SetPtEtaPhiM(
+                  GenJet_pt[igen],GenJet_eta[igen],GenJet_phi[igen],
+                  GenJet_mass[igen]);
+                genResponse =
+                  -generatorJet.Vect().Dot(p4z.Vect())/denominator;
+                hasGenResponse = std::isfinite(genResponse);
+              }
+              const double absLegacyEta = fabs(legacyJet.Eta());
+              if (absLegacyEta>0. && absLegacyEta<1.3) {
+                fillResponseProfiles1D(
+                  legacyProfiles,ptz,ptj,ptave,db,mpf,mpf1,mpfn,mpfu,mpfnu,
+                  jetInverseResidual[legacyJetIndex],
+                  Jet_chHEF[legacyJetIndex],Jet_neEmEF[legacyJetIndex],
+                  Jet_neHEF[legacyJetIndex],Jet_chEmEF[legacyJetIndex],
+                  Jet_muEF[legacyJetIndex],Rho_fixedGridRhoFastjetAll,
+                  hasGenResponse,genResponse,legacyEventWeight);
+                legacyProfiles.axes.at("zmmjet").mass->Fill(
+                  ptz,p4z.M(),legacyEventWeight);
+                legacyProfiles.axes.at("jetpt").mass->Fill(
+                  ptj,p4z.M(),legacyEventWeight);
+                legacyProfiles.axes.at("ptave").mass->Fill(
+                  ptave,p4z.M(),legacyEventWeight);
+              }
+            }
           }
         }
       }

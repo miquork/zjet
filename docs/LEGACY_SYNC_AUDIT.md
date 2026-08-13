@@ -13,8 +13,16 @@ commit.
   and `|eta| < 2.3`.
 - The opposite-sign pair closest to 90 GeV is selected, followed by
   `pT(Z) > 12 GeV` and `|m(mumu)-90 GeV| < 20 GeV`.
-- The leading lepton-cleaned jet has pT above 12 GeV and `|eta| < 5`.
+- The leading lepton-cleaned jet has `pT >= 12 GeV` and `|eta| <= 5`.
 - The back-to-back residual requirement is below 0.44 radians.
+- The second jet is taken from the pT-ordered, lepton-cleaned collection after
+  the 10 GeV jet threshold. Alpha is `pT(jet2)/pT(Z)`, is set to zero when the
+  second jet is below 15 GeV, and the `a100` profiles require `alpha < 1`.
+- The central response profiles use the strict interval `0 < |eta| < 1.3`.
+- MC events with more than 100 true pileup interactions are excluded before
+  JER smearing. This also keeps the stochastic-smearing random sequence aligned
+  with the reference and gives the legacy and all-pairs methods the same event
+  sample.
 - Summer24 V2 MC L2Relative and 2024I V11M data L2L3Residual corrections are
   recomputed from raw jet pT.
 - Pileup reweighting is disabled in both nominal workflows. It is not the
@@ -48,6 +56,16 @@ commit.
   jets. It is deliberately absent from MC and from the Type-I MET sum.
 - Type-I PUPPI MET is rebuilt from `RawPuppiMET` with the same lepton-cleaned,
   JEC/JER-corrected jets above 15 GeV used in the recoil sum.
+- The missing `alpha < 1` requirement was restored. Earlier local files used
+  the `a100` name without applying the cut, which selected severely unbalanced
+  multijet events in high jet-pT bins. In those events a large positive MPF1
+  contribution was partly cancelled by a negative MPFn contribution, hiding
+  the problem in total MPF and HDM.
+- The reference analysis's orientation-dependent forward spike veto is
+  reproduced literally for synchronization. It should be revisited together
+  with Jet ID after the legacy result has been matched.
+- `legacy/control` stores alpha, second-jet pT, alpha versus leading-jet pT,
+  and DB/MPF1 profiles before the alpha cut for direct validation.
 
 These changes require a new event-processing pass before they can appear in a
 compatibility file.
@@ -61,9 +79,10 @@ kept explicit when legacy and nominal outputs are compared.
 
 ## Statistics normalization
 
-The historical `jecdata2024I_nib1.root` MC statistics integral is about 258,
-whereas the new legacy file contains about 20.5 million raw selected events.
-This normalization difference does not affect profile means, but it makes raw
-statistics overlays and the copied `ratio/counts_*` objects misleading.
-`compareJECdata.C` therefore uses unit-area count shapes, derives a normalized
-data/MC shape ratio, and reports raw integrals separately.
+The historical `jecdata2024I_nib1.root` MC statistics integral is about 258.
+The pre-alpha legacy file contained about 20.5 million raw selected events;
+the synchronized alpha requirement reduces that number. This normalization
+difference does not affect profile means, but it makes raw statistics overlays
+and the copied `ratio/counts_*` objects misleading. `compareJECdata.C`
+therefore uses unit-area count shapes, derives a normalized data/MC shape
+ratio, and reports raw integrals separately.
