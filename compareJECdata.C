@@ -7,6 +7,7 @@
 #include "TLine.h"
 #include "TLatex.h"
 #include "TPad.h"
+#include "TROOT.h"
 #include "TStyle.h"
 #include "TSystem.h"
 
@@ -14,6 +15,7 @@
 #include <cmath>
 #include <fstream>
 #include <iomanip>
+#include <iostream>
 #include <limits>
 #include <memory>
 #include <sstream>
@@ -42,6 +44,19 @@ const std::vector<std::string> kSamples = {"data","mc","ratio"};
 const std::vector<std::string> kChannels = {"jetz","zjav","zjet"};
 double kSoftRecoilRn = 1.00;
 double kSoftRecoilRu = 0.92;
+
+void applyComparisonTDRStyle() {
+  if (!gSystem->AccessPathName("tdrstyle_mod22.C")) {
+    gROOT->ProcessLine(".L tdrstyle_mod22.C");
+    gROOT->ProcessLine("setTDRStyle();");
+  } else {
+    gStyle->SetCanvasColor(kWhite);
+    gStyle->SetPadColor(kWhite);
+    gStyle->SetOptStat(0);
+    gStyle->SetTitleFont(42,"XYZ");
+    gStyle->SetLabelFont(42,"XYZ");
+  }
+}
 
 std::string objectPath(const std::string &sample,
                        const std::string &observable,
@@ -158,6 +173,7 @@ std::string objectPath(const std::string &sample,
                        const std::string &channel) {
   const std::string base = sample+"/eta00-13/";
   if (observable=="counts") return base+"counts_"+channel+"_a100";
+  if (observable=="hdm") return base+"hdm_mpfchs1_"+channel;
   return base+"orig/"+observable+"_"+channel+"_a100";
 }
 
@@ -221,6 +237,9 @@ std::pair<double,double> yRange(const std::string &observable,
       observable=="cef" || observable=="muf") return {0.,1.};
   if (observable=="mpfn") return {-0.6,0.3};
   if (observable=="mpfu" || observable=="mpfnu") return {-0.2,0.8};
+  if (observable=="hdm")
+    return sample=="ratio" ? std::make_pair(0.94,1.06)
+                           : std::make_pair(0.75,1.25);
   if (observable=="rjet") return {0.75,1.45};
   if (observable=="gjet") return {-0.15,1.15};
   if (sample=="ratio") return {0.75,1.25};
@@ -231,6 +250,7 @@ double comparisonRange(const std::string &observable,
                        const std::string &sample) {
   if (observable=="counts") return 1.;
   if (observable=="rho") return 20.;
+  if (observable=="hdm") return 0.03;
   if (observable=="gjet") return 1.0;
   if (observable=="rjet") return 0.5;
   if (sample=="ratio" && resultIsDifference(observable)) return 0.12;
@@ -247,6 +267,7 @@ std::string observableLabel(const std::string &observable) {
   if (observable=="mpfn") return "MPFn";
   if (observable=="mpfu") return "MPFu";
   if (observable=="mpfnu") return "Response-corrected MPFnu";
+  if (observable=="hdm") return "HDM-corrected MPF";
   if (observable=="rjet") return "Reconstructed balance closure";
   if (observable=="gjet") return "Generator balance closure";
   return observable;
@@ -328,6 +349,40 @@ void drawZeroLine(double xmin=12., double xmax=1500.) {
   line.DrawClone();
 }
 
+void configureLogAxis(TAxis *axis) {
+  if (!axis) return;
+  axis->SetMoreLogLabels();
+  axis->SetNoExponent();
+}
+
+void drawCustomLogXLabels(
+  TH1 *frame, const std::vector<double> &values={30.,100.,300.,1000.},
+  double offset=0.014, double textSize=-1.) {
+  if (!frame || !gPad || !gPad->GetLogx()) return;
+  gPad->Update();
+  const double xmin = frame->GetXaxis()->GetXmin();
+  const double xmax = frame->GetXaxis()->GetXmax();
+  if (xmin<=0. || xmax<=xmin) return;
+  frame->GetXaxis()->SetLabelOffset(999.);
+  gPad->Modified();
+  gPad->Update();
+  const double left = gPad->GetLeftMargin();
+  const double right = gPad->GetRightMargin();
+  const double bottom = gPad->GetBottomMargin();
+  TLatex label;
+  label.SetNDC();
+  label.SetTextAlign(23);
+  label.SetTextFont(frame->GetXaxis()->GetLabelFont());
+  label.SetTextSize(textSize>0. ? textSize : frame->GetXaxis()->GetLabelSize());
+  for (double value : values) {
+    if (value<xmin || value>xmax) continue;
+    const double fraction = (std::log10(value)-std::log10(xmin))/
+                            (std::log10(xmax)-std::log10(xmin));
+    const double x = left+fraction*(1.-left-right);
+    label.DrawLatex(x,bottom-offset,Form("%g",value));
+  }
+}
+
 std::string standardPanel(
   const std::vector<InputSpec> &inputs, const std::string &sample,
   const std::string &observable, const std::string &channel,
@@ -375,6 +430,7 @@ std::string standardPanel(
   upperFrame.GetYaxis()->SetTitleOffset(1.25);
   upperFrame.GetYaxis()->SetLabelSize(0.043);
   upperFrame.GetXaxis()->SetLabelSize(0.);
+  configureLogAxis(upperFrame.GetXaxis());
   upperFrame.Draw("AXIS");
 
   std::vector<std::unique_ptr<TGraphErrors> > graphs;
@@ -413,6 +469,7 @@ std::string standardPanel(
     observable=="counts" ? "candidate/base-1" : "candidate-base");
   lowerFrame.GetXaxis()->SetTitleSize(0.12);
   lowerFrame.GetXaxis()->SetLabelSize(0.10);
+  configureLogAxis(lowerFrame.GetXaxis());
   lowerFrame.GetYaxis()->SetTitleSize(0.095);
   lowerFrame.GetYaxis()->SetTitleOffset(0.68);
   lowerFrame.GetYaxis()->SetLabelSize(0.082);
@@ -430,6 +487,7 @@ std::string standardPanel(
   matchLabel.SetTextSize(0.072);
   matchLabel.DrawLatex(0.17,0.84,
     Form("matched bins: legacy %d, new %d",legacyMatched,newMatched));
+  drawCustomLogXLabels(&lowerFrame,{30.,100.,300.,1000.},0.045,0.10);
 
   const std::string plotPath = outputDirectory+"/"+stem+".pdf";
   canvas.SaveAs(plotPath.c_str());
@@ -465,6 +523,7 @@ std::string axisOverlayPanel(
     (observableLabel(observable)+" ("+sampleLabel(sample,observable)+")").c_str());
   frame.GetXaxis()->SetTitleSize(0.050);
   frame.GetXaxis()->SetLabelSize(0.042);
+  configureLogAxis(frame.GetXaxis());
   frame.GetYaxis()->SetTitleSize(0.050);
   frame.GetYaxis()->SetTitleOffset(1.25);
   frame.GetYaxis()->SetLabelSize(0.042);
@@ -491,6 +550,7 @@ std::string axisOverlayPanel(
   label.SetNDC();
   label.SetTextSize(0.043);
   label.DrawLatex(0.16,0.94,input.label.c_str());
+  drawCustomLogXLabels(&frame,{30.,100.,300.,1000.},0.022,0.042);
   const std::string plotPath = outputDirectory+"/"+stem+".pdf";
   canvas.SaveAs(plotPath.c_str());
   return stem;
@@ -656,11 +716,11 @@ void writeControlAppendix(std::ofstream &frames) {
 
 void compareJECdata(
   const char *baselineFile=
-    "../jecsys3/rootfiles/jecdata2024I_nib1.root",
+    "rootfiles/jecdata2024I_nib1.root",
   const char *legacyFile=
-    "../jecsys3/rootfiles/jecdata2024I_nix_legacy.root",
+    "rootfiles/jecdata2024I_nix_legacy.root",
   const char *newMethodFile=
-    "../jecsys3/rootfiles/jecdata2024I_nix_newmethod.root",
+    "rootfiles/jecdata2024I_nix_newmethod.root",
   const char *outputDirectory="output/compareJECdata",
   const char *baselineLabel="2024I_nib1 baseline",
   const char *legacyLabel="2024I_nix legacy",
@@ -671,6 +731,7 @@ void compareJECdata(
     throw std::runtime_error("Soft-recoil responses Rn and Ru must be positive");
   kSoftRecoilRn = softRecoilRn;
   kSoftRecoilRu = softRecoilRu;
+  applyComparisonTDRStyle();
   std::unique_ptr<TFile> baseline(TFile::Open(baselineFile,"READ"));
   std::unique_ptr<TFile> legacy(TFile::Open(legacyFile,"READ"));
   std::unique_ptr<TFile> newMethod(TFile::Open(newMethodFile,"READ"));
@@ -688,7 +749,7 @@ void compareJECdata(
   };
   const std::vector<std::string> observables = {
     "counts", "ptchs", "mpfchs1", "mpf1", "mpfn", "mpfu", "mpfnu",
-    "rjet", "gjet", "chf", "nef", "nhf", "cef", "muf", "rho",
+    "hdm", "rjet", "gjet", "chf", "nef", "nhf", "cef", "muf", "rho",
   };
 
   std::ofstream summary(std::string(outputDirectory)+"/summary.tsv");
@@ -707,7 +768,8 @@ void compareJECdata(
     const bool hasAllReferenceAxes =
       observable=="counts" || observable=="ptchs" ||
       observable=="mpfchs1" || observable=="mpf1" ||
-      observable=="mpfn" || observable=="mpfu" || observable=="mpfnu";
+      observable=="mpfn" || observable=="mpfu" || observable=="mpfnu" ||
+      observable=="hdm";
     const std::vector<std::string> channels =
       hasAllReferenceAxes ? kChannels : std::vector<std::string>{"zjet"};
     for (const std::string &channel : channels) {
@@ -755,7 +817,7 @@ void compareJECdata(
   }
 
   const std::vector<std::string> axisObservables = {
-    "counts","ptchs","mpfchs1","mpf1","mpfn","mpfu","mpfnu"
+    "counts","ptchs","mpfchs1","mpf1","mpfn","mpfu","mpfnu","hdm"
   };
   for (const std::string &observable : axisObservables) {
     for (const InputSpec &input : inputs) {

@@ -23,9 +23,9 @@ missing optional control PDFs do not prevent a jecdata-only comparison.
 The defaults read:
 
 ```text
-../jecsys3/rootfiles/jecdata2024I_nib1.root
-../jecsys3/rootfiles/jecdata2024I_nix_legacy.root
-../jecsys3/rootfiles/jecdata2024I_nix_newmethod.root
+rootfiles/jecdata2024I_nib1.root
+rootfiles/jecdata2024I_nix_legacy.root
+rootfiles/jecdata2024I_nix_newmethod.root
 ```
 
 Explicit inputs and labels can be supplied as the first seven macro arguments.
@@ -72,10 +72,24 @@ placeholder argument:
 ```cpp
 writeJecsys3(dataFile, mcFile, outputFile,
              addFlavorPlaceholders, useLegacyMethod,
-             preferOneDimensional);
+             preferOneDimensional, hdmResponseN, hdmResponseU);
 ```
 
 The default uses the pileup-subtracted all-pairs method and native 1D pT bins.
 Set `useLegacyMethod=true` to select the synchronized leading-jet control stored
 under `legacy/`. Set `preferOneDimensional=false` only for reproducing the old
-central-eta projection of the L2Res 2D histograms.
+central-eta projection of the L2Res 2D histograms. The HDM response defaults
+are `hdmResponseN=1.00` and `hdmResponseU=0.92`.
+
+For each reference-pT choice the writer also stores the exact `softrad3.C`
+Z+jet master-equation result
+
+```text
+R_HDM = (R_MPF - r_n - r_u) / (1 - r_n/R_n - r_u/R_u)
+```
+
+as `hdm_mpfchs1_{jetz,zjav,zjet}` below the central-eta `data`, `mc`, and
+`ratio` directories. The ratio object is formed from the separately solved
+data and MC responses. This makes the compatibility file directly comparable
+to the corresponding `jecdata` HDM graphs without running `reprocess.C` or
+`softrad3.C` again.

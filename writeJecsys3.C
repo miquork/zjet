@@ -10,6 +10,9 @@
 #include "TProfile2D.h"
 #include "TROOT.h"
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <map>
 #include <memory>
@@ -375,6 +378,105 @@ bool writeGlobalFitInputs(TFile *source, TDirectory *sampleDirectory,
   return useNativeProfiles;
 }
 
+TH1D *makeHistogramWithAxis(const TH1 *model, const std::string &name) {
+  if (!model)
+    throw std::runtime_error("Cannot create " + name + " from a null model");
+  const TAxis *axis = model->GetXaxis();
+  TH1D *histogram = nullptr;
+  if (axis->GetXbins()->GetSize()>0)
+    histogram = new TH1D(name.c_str(),"",axis->GetNbins(),
+                         axis->GetXbins()->GetArray());
+  else
+    histogram = new TH1D(name.c_str(),"",axis->GetNbins(),
+                         axis->GetXmin(),axis->GetXmax());
+  histogram->SetDirectory(nullptr);
+  histogram->Sumw2();
+  histogram->GetXaxis()->SetTitle(axis->GetTitle());
+  return histogram;
+}
+
+void requireSameAxis(const TH1 *reference, const TH1 *candidate,
+                     const std::string &description) {
+  if (!reference || !candidate ||
+      reference->GetNbinsX()!=candidate->GetNbinsX())
+    throw std::runtime_error("Incompatible HDM input binning for " +
+                             description);
+  for (int bin = 1; bin <= reference->GetNbinsX()+1; ++bin) {
+    const double first = reference->GetXaxis()->GetBinLowEdge(bin);
+    const double second = candidate->GetXaxis()->GetBinLowEdge(bin);
+    const double scale = std::max(1.,std::max(std::fabs(first),
+                                             std::fabs(second)));
+    if (std::fabs(first-second)>1.e-9*scale)
+      throw std::runtime_error("Incompatible HDM bin edges for " +
+                               description);
+  }
+}
+
+double solveZJetHDM(double r0, double rn, double ru,
+                    double responseN, double responseU) {
+  const double denominator = 1.-rn/responseN-ru/responseU;
+  if (std::fabs(denominator)<1.e-12)
+    return std::numeric_limits<double>::quiet_NaN();
+  return (r0-rn-ru)/denominator;
+}
+
+void writeHDMCombination(TFile *output, double responseN, double responseU) {
+  if (!output || responseN<=0. || responseU<=0.)
+    throw std::runtime_error("Invalid output or HDM recoil response");
+  TDirectory *dataDirectory = requireDirectory(output,"data/eta_00_13");
+  TDirectory *mcDirectory = requireDirectory(output,"mc/eta_00_13");
+  TDirectory *ratioRoot = makeDirectory(output,"ratio");
+  TDirectory *ratioDirectory = makeDirectory(ratioRoot,"eta_00_13");
+  const std::vector<std::pair<std::string,std::string> > axes = {
+    {"zmmjet","zjet"}, {"jetpt","jetz"}, {"ptave","zjav"},
+  };
+  for (const auto &axis : axes) {
+    const std::string suffix = "_"+axis.first+"_a100";
+    TH1 *dataMpf = requireObject<TH1>(dataDirectory,"rmpf"+suffix);
+    TH1 *dataNeutral = requireObject<TH1>(dataDirectory,"rmpfjetn"+suffix);
+    TH1 *dataUnclustered = requireObject<TH1>(dataDirectory,"rmpfuncl"+suffix);
+    TH1 *mcMpf = requireObject<TH1>(mcDirectory,"rmpf"+suffix);
+    TH1 *mcNeutral = requireObject<TH1>(mcDirectory,"rmpfjetn"+suffix);
+    TH1 *mcUnclustered = requireObject<TH1>(mcDirectory,"rmpfuncl"+suffix);
+    for (TH1 *input : {dataNeutral,dataUnclustered,mcMpf,mcNeutral,
+                       mcUnclustered})
+      requireSameAxis(dataMpf,input,axis.first);
+
+    const std::string name = "hdm_mpfchs1_"+axis.second;
+    std::unique_ptr<TH1D> dataHDM(makeHistogramWithAxis(dataMpf,name));
+    std::unique_ptr<TH1D> mcHDM(makeHistogramWithAxis(mcMpf,name));
+    std::unique_ptr<TH1D> ratioHDM(makeHistogramWithAxis(dataMpf,name));
+    for (int bin = 1; bin <= dataMpf->GetNbinsX(); ++bin) {
+      const double r0 = dataMpf->GetBinContent(bin);
+      const double rn = dataNeutral->GetBinContent(bin);
+      const double ru = dataUnclustered->GetBinContent(bin);
+      const double q0 = mcMpf->GetBinContent(bin);
+      const double qn = mcNeutral->GetBinContent(bin);
+      const double qu = mcUnclustered->GetBinContent(bin);
+      if (r0==0. || q0==0.) continue;
+      const double dataValue = solveZJetHDM(r0,rn,ru,responseN,responseU);
+      const double mcValue = solveZJetHDM(q0,qn,qu,responseN,responseU);
+      if (!std::isfinite(dataValue) || !std::isfinite(mcValue) || mcValue==0.)
+        continue;
+      dataHDM->SetBinContent(bin,dataValue);
+      dataHDM->SetBinError(bin,dataMpf->GetBinError(bin));
+      mcHDM->SetBinContent(bin,mcValue);
+      mcHDM->SetBinError(bin,mcMpf->GetBinError(bin));
+      ratioHDM->SetBinContent(bin,dataValue/mcValue);
+      // Preserve softrad3.C's present statistical-error convention exactly.
+      ratioHDM->SetBinError(
+        bin,std::hypot(dataMpf->GetBinError(bin),mcMpf->GetBinError(bin)));
+    }
+    for (const auto &target :
+         std::vector<std::pair<TDirectory*,TH1D*> >{
+           {dataDirectory,dataHDM.get()}, {mcDirectory,mcHDM.get()},
+           {ratioDirectory,ratioHDM.get()}}) {
+      target.first->cd();
+      target.second->Write(name.c_str(),TObject::kOverwrite);
+    }
+  }
+}
+
 bool copySample(TFile *source, TFile *target, const char *sample,
                 bool isMC, bool addFlavorPlaceholders,
                 bool useLegacyMethod, bool preferOneDimensional,
@@ -405,7 +507,11 @@ void writeJecsys3(
   const char *outputFile="rootfiles/zjet_JMENANO_compat.root",
   bool addFlavorPlaceholders=false,
   bool useLegacyMethod=false,
-  bool preferOneDimensional=true) {
+  bool preferOneDimensional=true,
+  double hdmResponseN=1.00,
+  double hdmResponseU=0.92) {
+  if (hdmResponseN<=0. || hdmResponseU<=0.)
+    throw std::runtime_error("HDM recoil responses Rn and Ru must be positive");
   std::unique_ptr<TFile> data(TFile::Open(dataFile,"READ"));
   std::unique_ptr<TFile> mc(TFile::Open(mcFile,"READ"));
   if (!data || data->IsZombie())
@@ -461,6 +567,7 @@ void writeJecsys3(
   if (dataFlavorInputs!=mcFlavorInputs)
     throw std::runtime_error(
       "Measured flavor inputs exist in only one of data and MC");
+  writeHDMCombination(&output,hdmResponseN,hdmResponseU);
   output.cd();
   TNamed method(
     "zjet_method",
@@ -488,6 +595,11 @@ void writeJecsys3(
     "jecsys3_compatibility",
     "reprocess.C, softrad3.C and globalFit.C central eta input contract");
   compatibility.Write();
+  TNamed hdmDefinition(
+    "zjet_hdm_definition",
+    Form("softrad3 Z+jet master equation: R=(r0-rn-ru)/(1-rn/Rn-ru/Ru); Rn=%.6g; Ru=%.6g; ratio errors follow current softrad3 convention",
+         hdmResponseN,hdmResponseU));
+  hdmDefinition.Write();
   if (dataFlavorInputs) {
     TNamed flavorStatus(
       "zjet_flavor_status",

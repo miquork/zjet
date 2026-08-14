@@ -510,6 +510,22 @@ void zjet::Loop()
        truthControl[name] = new TProfile(name.c_str(), "", bins, 0., xmax);
      }
    }
+   std::map<std::string, TProfile*> methodTruthControl;
+   for (const char *region : regions) {
+     for (const char *category : {"all","matched","pileup"}) {
+       for (const char *response :
+            {"db","mpf","mpf1","mpfn","mpfu","mpfnu"}) {
+         const string ptName = Form("p_%s_vs_ptz_%s_%s_central",response,
+                                    category,region);
+         methodTruthControl[ptName] =
+           new TProfile(ptName.c_str(),"",100,0.,200.);
+         const string etaName = Form(
+           "p_%s_vs_abseta_%s_%s_ptz15to30",response,category,region);
+         methodTruthControl[etaName] =
+           new TProfile(etaName.c_str(),"",50,0.,5.);
+       }
+     }
+   }
    for (const char *region : {"parallel", "transverse"}) {
      for (const char *category : {"matched", "pileup"}) {
        for (const char *response : {"db", "mpf"}) {
@@ -849,6 +865,15 @@ void zjet::Loop()
    p_legacy_db_before_alpha->SetDirectory(legacyControlDirectory);
    p_legacy_mpf1_before_alpha->SetDirectory(legacyControlDirectory);
    p_legacy_rho_before_alpha->SetDirectory(legacyControlDirectory);
+   std::map<int,TProfile*> legacyRhoAlpha;
+   for (const int alphaPercent : {10,15,20,30}) {
+     TProfile *profile = dynamic_cast<TProfile*>(
+       legacyProfiles.axes.at("zmmjet").rho->Clone(
+         Form("p_rho_vs_zpt_alpha%03d",alphaPercent)));
+     profile->Reset();
+     profile->SetDirectory(legacyControlDirectory);
+     legacyRhoAlpha[alphaPercent] = profile;
+   }
    fout->cd();
    TObjString synchronizedSelection(
      "ZbAnalysis master 46dbf340 with production JetID setting: HLT_Mu17_TrkIsoVVL_Mu8_TrkIsoVVL_DZ_Mass8; both muons trigger matched within DeltaR<0.3; tight ID; pfRelIso04<0.15; pT>20/10 GeV; |eta|<2.3; pT(Z)>12 GeV; |m-90 GeV|<20 GeV; MC pileup<=100; leading lepton-cleaned jet pT>=12 GeV and |eta|<=5; alpha=pT(jet2)/pT(Z), set to zero below pT(jet2)=15 GeV, alpha<1; central profiles use 0<|eta(jet1)|<1.3");
@@ -1449,6 +1474,10 @@ void zjet::Loop()
             p_legacy_mpf1_before_alpha->Fill(ptj,mpf1,legacyEventWeight);
             p_legacy_rho_before_alpha->Fill(
               ptz,Rho_fixedGridRhoFastjetAll,legacyEventWeight);
+            for (const auto &entry : legacyRhoAlpha)
+              if (alpha<0.01*entry.first)
+                entry.second->Fill(
+                  ptz,Rho_fixedGridRhoFastjetAll,legacyEventWeight);
 
             if (alpha<1.) {
               h_legacy_cutflow->Fill(9.,legacyEventWeight);
@@ -1610,6 +1639,38 @@ void zjet::Loop()
             ->Fill(p4z.Pt(), db, weight);
           truthControl[Form("p_mpf_vs_ptz_%s_%s",category,region)]
             ->Fill(p4z.Pt(), mpfValue, weight);
+        }
+      };
+
+      auto fillMethodTruth = [&](const char *region, bool matched,
+                                 double db, double mpfValue,
+                                 double mpfJet, double mpfNeutral,
+                                 double mpfUnclustered, double mpfNu,
+                                 double weight) {
+        if (!isMC) return;
+        const double values[] = {db,mpfValue,mpfJet,mpfNeutral,
+                                 mpfUnclustered,mpfNu};
+        const char *responses[] = {"db","mpf","mpf1","mpfn","mpfu",
+                                   "mpfnu"};
+        const char *truthCategory = matched ? "matched" : "pileup";
+        const double absEta = fabs(p4jet.Eta());
+        for (int index = 0; index != 6; ++index) {
+          if (absEta<1.305) {
+            methodTruthControl[Form("p_%s_vs_ptz_all_%s_central",
+                                    responses[index],region)]
+              ->Fill(p4z.Pt(),values[index],weight);
+            methodTruthControl[Form("p_%s_vs_ptz_%s_%s_central",
+                                    responses[index],truthCategory,region)]
+              ->Fill(p4z.Pt(),values[index],weight);
+          }
+          if (p4z.Pt()>15. && p4z.Pt()<30.) {
+            methodTruthControl[Form("p_%s_vs_abseta_all_%s_ptz15to30",
+                                    responses[index],region)]
+              ->Fill(absEta,values[index],weight);
+            methodTruthControl[Form("p_%s_vs_abseta_%s_%s_ptz15to30",
+                                    responses[index],truthCategory,region)]
+              ->Fill(absEta,values[index],weight);
+          }
         }
       };
 
@@ -1791,6 +1852,10 @@ void zjet::Loop()
 		              hasGenIndex,truthMatchCategory,db,mpf,wt);
 		    fillTruth("subtracted",truthMatched,passesExtraMatchCuts,
 		              hasGenIndex,truthMatchCategory,db,mpf,wt);
+		    fillMethodTruth("parallel",truthMatched,db,mpf,mpf1,mpfn,
+		                    mpfu,mpfnu,wt);
+		    fillMethodTruth("subtracted",truthMatched,db,mpf,mpf1,mpfn,
+		                    mpfu,mpfnu,wt);
 		    fillFlavor(ijet,
 		               (isMC && genJetIndex>=0
 		                  ? GenJet_partonFlavour[genJetIndex] : 0),
@@ -1901,6 +1966,10 @@ void zjet::Loop()
 		              hasGenIndex,truthMatchCategory,db,mpfT,wraw);
 		    fillTruth("subtracted",truthMatched,passesExtraMatchCuts,
 		              hasGenIndex,truthMatchCategory,db,mpfT,wt);
+		    fillMethodTruth("transverse",truthMatched,db,mpfT,mpf1T,
+		                    mpfnT,mpfuT,mpfnuT,wraw);
+		    fillMethodTruth("subtracted",truthMatched,db,mpfT,mpf1T,
+		                    mpfnT,mpfuT,mpfnuT,wt);
 		    fillFlavor(ijet,
 		               (isMC && genJetIndex>=0
 		                  ? GenJet_partonFlavour[genJetIndex] : 0),

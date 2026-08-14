@@ -118,6 +118,9 @@ void run_zjet_job(const char *inputList, bool isMC, const char *outputFile,
       !check.Get("legacy/control/p_db_vs_jetpt_before_alpha") ||
       !check.Get("legacy/control/p_mpf1_vs_jetpt_before_alpha") ||
       !check.Get("legacy/control/p_rho_vs_zpt_before_alpha") ||
+      !check.Get("legacy/control/p_rho_vs_zpt_alpha010") ||
+      !check.Get("control/p_mpf_vs_ptz_all_subtracted_central") ||
+      !check.Get("control/p_mpfnu_vs_abseta_matched_parallel_ptz15to30") ||
       !check.Get("zjet_synchronized_selection") ||
       !check.Get("zjet_legacy_jet_id") ||
       !correctionMetadataMatches ||
