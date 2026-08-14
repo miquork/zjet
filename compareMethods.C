@@ -12,6 +12,7 @@
 #include "TROOT.h"
 #include "TStyle.h"
 #include "TSystem.h"
+#include "tdrstyle_mod22.C"
 
 #include <algorithm>
 #include <array>
@@ -48,18 +49,12 @@ const double kRu = 0.92;
 const std::vector<std::string> kChannels = {"jetz","zjav","zjet"};
 
 void applyMethodTDRStyle() {
-  if (!gSystem->AccessPathName("tdrstyle_mod22.C")) {
-    gROOT->ProcessLine(".L tdrstyle_mod22.C");
-    gROOT->ProcessLine("setTDRStyle();");
-  } else {
-    // Keep the comparison runnable in a clean clone while using the full CMS
-    // style whenever the shared jecsys3 helper is available.
-    gStyle->SetCanvasColor(kWhite);
-    gStyle->SetPadColor(kWhite);
-    gStyle->SetOptStat(0);
-    gStyle->SetTitleFont(42,"XYZ");
-    gStyle->SetLabelFont(42,"XYZ");
-  }
+  setTDRStyle();
+  writeExtraText = true;
+  extraText = "Work in progress";
+  extraText2 = "";
+  // CMS_lumi appends the collision energy for iPeriod=8.
+  lumi_136TeV = "Run2024I";
 }
 
 bool sameCenter(double first, double second) {
@@ -160,6 +155,8 @@ std::vector<Point> ratios(const std::vector<Point> &numerator,
   return result;
 }
 
+double interpolate(const std::vector<Point> &points, double x);
+
 std::vector<Point> series(TFile &file, const std::string &sample,
                           const std::string &observable,
                           const std::string &channel) {
@@ -171,6 +168,39 @@ std::vector<Point> series(TFile &file, const std::string &sample,
                        combineSoftRecoil(file,"mc",channel));
   }
   return readPoints(file,originalPath(sample,observable,channel));
+}
+
+std::vector<Point> previousJEC(TFile &file) {
+  return readPoints(file,"ratio/eta00-13/herr_l2l3res");
+}
+
+double globalFitAxisScale(const std::string &channel) {
+  // Current globalFitSettings.h keeps scaleJZperEra disabled. The average-pT
+  // branch currently enables its Run2024I factor internally.
+  if (channel=="jetz") return 1.0000;
+  if (channel=="zjav") return 1.0025;
+  return 1.0000;
+}
+
+std::vector<Point> globalFitHDM(TFile &file, const std::string &channel) {
+  std::vector<Point> result = series(file,"ratio","hdm",channel);
+  const std::vector<Point> correction = previousJEC(file);
+  const double axisScale = globalFitAxisScale(channel);
+  for (Point &point : result) {
+    const double factor = interpolate(correction,point.x);
+    if (!std::isfinite(factor)) {
+      point.y = std::numeric_limits<double>::quiet_NaN();
+      continue;
+    }
+    point.y *= factor*axisScale;
+    // This reproduces scaleGraph in globalFit.C: the central JEC is treated as
+    // an input scale, so its uncertainty is not added to the graph error.
+    point.ey *= std::fabs(factor*axisScale);
+  }
+  result.erase(std::remove_if(result.begin(),result.end(),[](const Point &point) {
+    return !std::isfinite(point.y);
+  }),result.end());
+  return result;
 }
 
 std::unique_ptr<TGraphErrors> graph(const std::vector<Point> &points,
@@ -216,20 +246,6 @@ void drawMethodLogLabels(TH1 *frame, double offset=0.018,
       (1.-gPad->GetLeftMargin()-gPad->GetRightMargin());
     label.DrawLatex(x,gPad->GetBottomMargin()-offset,Form("%g",value));
   }
-}
-
-void cmsLabel(const char *right="Run2024I, 13.6 TeV") {
-  TLatex label;
-  label.SetNDC();
-  label.SetTextFont(62);
-  label.SetTextSize(0.045);
-  label.DrawLatex(0.14,0.93,"CMS");
-  label.SetTextFont(52);
-  label.SetTextSize(0.035);
-  label.DrawLatex(0.22,0.93,"Work in progress");
-  label.SetTextFont(42);
-  label.SetTextAlign(31);
-  label.DrawLatex(0.95,0.93,right);
 }
 
 void zeroLine(double minimum, double maximum) {
@@ -376,33 +392,97 @@ void drawHDMDifference(TFile &reference, TFile &candidate,
     series(candidate,"ratio","hdm","zjav"),
     series(reference,"ratio","hdm","zjav"));
   const double range = symmetricRange({difference},2.);
-  TCanvas canvas("c_hdm_difference","",800,650);
-  canvas.SetLogx();
-  canvas.SetLeftMargin(0.14);
-  canvas.SetBottomMargin(0.13);
-  TH1D frame("h_hdm_difference","",100,12.,1500.);
+  TH1D frame(("h_"+stem).c_str(),"",100,12.,1500.);
+  frame.SetDirectory(nullptr);
   frame.SetMinimum(-range);
   frame.SetMaximum(range);
   frame.GetXaxis()->SetTitle("p_{T,ave} (GeV)");
-  frame.GetYaxis()->SetTitle("10^{3} #times [(D/M)_{new}-(D/M)_{legacy}]");
+  frame.GetYaxis()->SetTitle("HDM candidate - reference (per mille)");
   configureLogAxis(&frame);
-  frame.Draw("AXIS");
+  std::unique_ptr<TCanvas> canvas(
+    tdrCanvas(("c_"+stem).c_str(),&frame,8,11,kSquare));
+  canvas->SetLogx();
   zeroLine(12.,1500.);
   auto result = graph(difference,kRed+1,kFullCircle);
   result->Draw("P SAME");
-  cmsLabel();
   TLegend legend(0.50,0.78,0.91,0.87);
   legend.SetBorderSize(0);
   legend.AddEntry(result.get(),(candidateLabel+" - "+referenceLabel).c_str(),"p");
   legend.Draw();
   drawMethodLogLabels(&frame);
-  canvas.SaveAs((outputDirectory+"/"+stem+".pdf").c_str());
+  canvas->SaveAs((outputDirectory+"/"+stem+".pdf").c_str());
 
   metrics << "# HDM " << candidateLabel << " minus " << referenceLabel
           << ", average-pT binning\n"
           << "pt\tdifference_per_mille\terror_per_mille\n";
   for (const Point &point : difference)
     metrics << point.x << '\t' << point.y << '\t' << point.ey << '\n';
+}
+
+void drawGlobalFitDifference(TFile &reference, TFile &candidate,
+                             const std::string &referenceLabel,
+                             const std::string &candidateLabel,
+                             const std::string &stem,
+                             const std::string &outputDirectory,
+                             std::ofstream &metrics) {
+  const std::string channel = "zjet";
+  const std::vector<Point> referenceRaw =
+    series(reference,"ratio","hdm",channel);
+  const std::vector<Point> candidateRaw =
+    series(candidate,"ratio","hdm",channel);
+  const std::vector<Point> referenceJEC = previousJEC(reference);
+  const std::vector<Point> candidateJEC = previousJEC(candidate);
+  const std::vector<Point> total = scaleDifference(
+    globalFitHDM(candidate,channel),globalFitHDM(reference,channel));
+  std::vector<Point> rawContribution;
+  std::vector<Point> jecContribution;
+  metrics << "\n# globalFit.C input difference: " << candidateLabel
+          << " minus " << referenceLabel << ", Z-pT binning\n"
+          << "pt\ttotal_per_mille\traw_hdm_contribution"
+          << "\tprevious_jec_contribution\tclosure_per_mille\n";
+  for (const Point &base : referenceRaw) {
+    const double rawNew = interpolate(candidateRaw,base.x);
+    const double jecOld = interpolate(referenceJEC,base.x);
+    const double jecNew = interpolate(candidateJEC,base.x);
+    const double exact = interpolate(total,base.x);
+    if (!std::isfinite(rawNew) || !std::isfinite(jecOld) ||
+        !std::isfinite(jecNew) || !std::isfinite(exact)) continue;
+    // Exact two-variable Shapley decomposition of raw HDM times previous JEC.
+    const double raw = 500.*(rawNew-base.y)*(jecOld+jecNew);
+    const double jec = 500.*(jecNew-jecOld)*(base.y+rawNew);
+    rawContribution.push_back({base.x,base.ex,raw,0.});
+    jecContribution.push_back({base.x,base.ex,jec,0.});
+    metrics << base.x << '\t' << exact << '\t' << raw << '\t' << jec
+            << '\t' << exact-raw-jec << '\n';
+  }
+  const double range = symmetricRange({total,rawContribution,jecContribution},5.);
+  TH1D frame(("h_"+stem).c_str(),"",100,12.,1500.);
+  frame.SetDirectory(nullptr);
+  frame.SetMinimum(-range);
+  frame.SetMaximum(range);
+  frame.GetXaxis()->SetTitle("p_{T,Z} (GeV)");
+  frame.GetYaxis()->SetTitle("Candidate - reference (per mille)");
+  configureLogAxis(&frame);
+  std::unique_ptr<TCanvas> canvas(
+    tdrCanvas(("c_"+stem).c_str(),&frame,8,11,kSquare));
+  canvas->SetLogx();
+  zeroLine(12.,1500.);
+  auto direct = graph(total,kBlack,kFullSquare,true);
+  auto raw = graph(rawContribution,kRed+1,kFullCircle,true);
+  auto jec = graph(jecContribution,kBlue+1,kFullTriangleUp,true);
+  direct->SetLineWidth(3);
+  direct->Draw("LP SAME");
+  raw->Draw("LP SAME");
+  jec->Draw("LP SAME");
+  TLegend legend(0.43,0.66,0.91,0.88);
+  legend.SetBorderSize(0);
+  legend.AddEntry(direct.get(),
+                  (candidateLabel+" - "+referenceLabel).c_str(),"lp");
+  legend.AddEntry(raw.get(),"raw HDM contribution","lp");
+  legend.AddEntry(jec.get(),"previous-JEC contribution","lp");
+  legend.Draw();
+  drawMethodLogLabels(&frame);
+  canvas->SaveAs((outputDirectory+"/"+stem+".pdf").c_str());
 }
 
 void drawHDMDecomposition(TFile &reference, TFile &candidate,
@@ -448,17 +528,16 @@ void drawHDMDecomposition(TFile &reference, TFile &candidate,
                                            componentPoints.end());
   ranges.push_back(totalPoints);
   const double range = symmetricRange(ranges,1.);
-  TCanvas canvas("c_hdm_decomposition","",850,650);
-  canvas.SetLogx();
-  canvas.SetLeftMargin(0.14);
-  canvas.SetBottomMargin(0.13);
-  TH1D frame("h_hdm_decomposition","",100,12.,1500.);
+  TH1D frame(("h_"+stem).c_str(),"",100,12.,1500.);
+  frame.SetDirectory(nullptr);
   frame.SetMinimum(-range);
   frame.SetMaximum(range);
   frame.GetXaxis()->SetTitle("p_{T,ave} (GeV)");
-  frame.GetYaxis()->SetTitle("Contribution to HDM difference (per mille)");
+  frame.GetYaxis()->SetTitle("HDM contribution (per mille)");
   configureLogAxis(&frame);
-  frame.Draw("AXIS");
+  std::unique_ptr<TCanvas> canvas(
+    tdrCanvas(("c_"+stem).c_str(),&frame,8,11,kSquare));
+  canvas->SetLogx();
   zeroLine(12.,1500.);
   const int colors[] = {kBlue+1,kAzure+7,kCyan+2,kRed+1,kOrange+7,kMagenta+1};
   const int styles[] = {1,2,3,1,2,3};
@@ -480,9 +559,8 @@ void drawHDMDecomposition(TFile &reference, TFile &candidate,
   total->Draw("LP SAME");
   legend.AddEntry(total.get(),"exact total","lp");
   legend.Draw();
-  cmsLabel();
   drawMethodLogLabels(&frame);
-  canvas.SaveAs((outputDirectory+"/"+stem+".pdf").c_str());
+  canvas->SaveAs((outputDirectory+"/"+stem+".pdf").c_str());
 }
 
 void drawWReference(TFile &baseline, TFile &legacy, TFile &modern,
@@ -505,21 +583,21 @@ void drawWReference(TFile &baseline, TFile &legacy, TFile &modern,
     residuals.push_back(residual);
   }
   const double lowerRange = symmetricRange(residuals,5.);
-  TCanvas canvas("c_w_reference","",850,760);
-  TPad upper("w_upper","",0.,0.30,1.,1.);
-  TPad lower("w_lower","",0.,0.,1.,0.30);
-  upper.SetLeftMargin(0.14); upper.SetRightMargin(0.04);
-  upper.SetBottomMargin(0.02); upper.SetLogx();
-  lower.SetLeftMargin(0.14); lower.SetRightMargin(0.04);
-  lower.SetTopMargin(0.03); lower.SetBottomMargin(0.31); lower.SetLogx();
-  upper.Draw(); lower.Draw();
-  upper.cd();
   TH1D upperFrame("h_w_upper","",100,12.,1500.);
+  TH1D lowerFrame("h_w_lower","",100,12.,1500.);
+  upperFrame.SetDirectory(nullptr);
+  lowerFrame.SetDirectory(nullptr);
   upperFrame.SetMinimum(0.93); upperFrame.SetMaximum(1.07);
   upperFrame.GetYaxis()->SetTitle("HDM data / MC");
   upperFrame.GetXaxis()->SetLabelSize(0.);
   configureLogAxis(&upperFrame);
-  upperFrame.Draw("AXIS");
+  lowerFrame.SetMinimum(-lowerRange); lowerFrame.SetMaximum(lowerRange);
+  lowerFrame.GetXaxis()->SetTitle("reference p_{T} (GeV)");
+  lowerFrame.GetYaxis()->SetTitle("Z - W (10^{-3})");
+  configureLogAxis(&lowerFrame);
+  std::unique_ptr<TCanvas> canvas(
+    tdrDiCanvas("c_w_reference",&upperFrame,&lowerFrame,8,11));
+  canvas->cd(1); gPad->SetLogx();
   TLine unity(12.,1.,1500.,1.); unity.SetLineStyle(kDashed); unity.DrawClone();
   auto gw = graph(w,kBlack,kFullSquare,true);
   auto gb = graph(zBaseline,kGray+2,kOpenCircle,true);
@@ -533,26 +611,99 @@ void drawWReference(TFile &baseline, TFile &legacy, TFile &modern,
   legend.AddEntry(gl.get(),"Z synchronized legacy","lp");
   legend.AddEntry(gn.get(),"Z all-pairs","lp");
   legend.Draw();
-  cmsLabel();
-  lower.cd();
-  TH1D lowerFrame("h_w_lower","",100,12.,1500.);
-  lowerFrame.SetMinimum(-lowerRange); lowerFrame.SetMaximum(lowerRange);
-  lowerFrame.GetXaxis()->SetTitle("reference p_{T} (GeV)");
-  lowerFrame.GetYaxis()->SetTitle("10^{3}#times(Z-W)");
-  lowerFrame.GetXaxis()->SetTitleSize(0.12);
-  lowerFrame.GetXaxis()->SetLabelSize(0.10);
-  lowerFrame.GetYaxis()->SetTitleSize(0.09);
-  lowerFrame.GetYaxis()->SetLabelSize(0.08);
-  lowerFrame.GetYaxis()->SetTitleOffset(0.75);
-  configureLogAxis(&lowerFrame);
-  lowerFrame.Draw("AXIS");
+  canvas->cd(2); gPad->SetLogx();
   zeroLine(12.,1500.);
   auto grb = graph(residuals[0],kGray+2,kOpenCircle,true);
   auto grl = graph(residuals[1],kBlue+1,kOpenSquare,true);
   auto grn = graph(residuals[2],kRed+1,kFullCircle,true);
   for (auto *g : {grb.get(),grl.get(),grn.get()}) g->Draw("LP SAME");
   drawMethodLogLabels(&lowerFrame,0.045,0.10);
-  canvas.SaveAs((outputDirectory+"/hdm_wqq_reference.pdf").c_str());
+  canvas->SaveAs((outputDirectory+"/hdm_wqq_reference.pdf").c_str());
+}
+
+void drawMCTruthClosure(const std::vector<MethodInput> &inputs,
+                        const std::string &outputDirectory,
+                        std::ofstream &metrics) {
+  std::array<std::vector<Point>,3> hdm;
+  std::array<std::vector<Point>,3> truth;
+  std::array<std::vector<Point>,3> closure;
+  metrics << "\n# MC HDM / stored generator balance, Z-pT binning\n"
+          << "method\tpt\thdm\tgen_balance\tclosure_per_mille\tstatus\n";
+  std::vector<std::vector<Point> > closureRanges;
+  for (int method=0; method!=3; ++method) {
+    hdm[method] = series(*inputs[method].file,"mc","hdm","zjet");
+    truth[method] = series(*inputs[method].file,"mc","gjet","zjet");
+    for (const Point &response : hdm[method]) {
+      const double gen = interpolate(truth[method],response.x);
+      const bool physical = std::isfinite(gen) && gen>0.5 && gen<1.5;
+      metrics << inputs[method].label << '\t' << response.x << '\t'
+              << response.y << '\t' << gen << '\t';
+      if (physical) {
+        const double value = 1000.*(response.y/gen-1.);
+        const double error = 1000.*response.ey/std::fabs(gen);
+        closure[method].push_back({response.x,response.ex,value,error});
+        metrics << value << "\tused\n";
+      } else {
+        metrics << "nan\trejected_unphysical_gen_balance\n";
+      }
+    }
+    closureRanges.push_back(closure[method]);
+  }
+  const double closureRange = 25.*std::ceil(
+    focusedSymmetricRange(closureRanges,25.)/25.);
+  TH1D upperFrame("h_mc_truth_closure_upper","",100,12.,1500.);
+  TH1D lowerFrame("h_mc_truth_closure_lower","",100,12.,1500.);
+  upperFrame.SetDirectory(nullptr);
+  lowerFrame.SetDirectory(nullptr);
+  upperFrame.SetMinimum(-0.10);
+  upperFrame.SetMaximum(1.55);
+  upperFrame.GetYaxis()->SetTitle("MC response");
+  upperFrame.GetXaxis()->SetLabelSize(0.);
+  configureLogAxis(&upperFrame);
+  lowerFrame.SetMinimum(-closureRange);
+  lowerFrame.SetMaximum(closureRange);
+  lowerFrame.GetXaxis()->SetTitle("p_{T,Z} (GeV)");
+  lowerFrame.GetYaxis()->SetTitle("Closure (10^{-3})");
+  configureLogAxis(&lowerFrame);
+  std::unique_ptr<TCanvas> canvas(
+    tdrDiCanvas("c_mc_truth_closure",&upperFrame,&lowerFrame,8,11));
+  std::array<std::unique_ptr<TGraphErrors>,3> hdmGraphs;
+  std::array<std::unique_ptr<TGraphErrors>,3> truthGraphs;
+  std::array<std::unique_ptr<TGraphErrors>,3> closureGraphs;
+  canvas->cd(1);
+  gPad->SetLogx();
+  TLegend legend(0.43,0.55,0.91,0.86);
+  legend.SetBorderSize(0);
+  legend.SetNColumns(2);
+  for (int method=0; method!=3; ++method) {
+    hdmGraphs[method] = graph(hdm[method],inputs[method].color,
+                              inputs[method].marker,true);
+    truthGraphs[method] = graph(truth[method],inputs[method].color,
+                                inputs[method].marker,true);
+    truthGraphs[method]->SetLineStyle(kDashed);
+    truthGraphs[method]->SetMarkerStyle(inputs[method].marker+4);
+    hdmGraphs[method]->Draw("LP SAME");
+    truthGraphs[method]->Draw("LP SAME");
+    legend.AddEntry(hdmGraphs[method].get(),
+                    (inputs[method].label+" HDM").c_str(),"lp");
+    legend.AddEntry(truthGraphs[method].get(),
+                    (inputs[method].label+" gen").c_str(),"lp");
+  }
+  legend.Draw();
+  canvas->cd(2);
+  gPad->SetLogx();
+  zeroLine(12.,1500.);
+  for (int method=0; method!=3; ++method) {
+    closureGraphs[method] = graph(closure[method],inputs[method].color,
+                                  inputs[method].marker,true);
+    closureGraphs[method]->Draw("LP SAME");
+  }
+  TLatex warning;
+  warning.SetNDC();
+  warning.SetTextSize(0.070);
+  warning.DrawLatex(0.26,0.82,"gen outside 0.5--1.5: no division");
+  drawMethodLogLabels(&lowerFrame,0.045,0.10);
+  canvas->SaveAs((outputDirectory+"/mc_hdm_truth_closure_zpt.pdf").c_str());
 }
 
 void drawComponentAxes(const std::vector<MethodInput> &inputs,
@@ -629,20 +780,21 @@ void drawRhoStability(const std::vector<MethodInput> &inputs,
     scaleDifference(rhoRatios[2],rhoRatios[0]),
   };
   const double lowerRange = symmetricRange(lower,5.);
-  TCanvas canvas("c_rho_stability","",850,760);
-  TPad upper("rho_upper","",0.,0.30,1.,1.);
-  TPad bottom("rho_lower","",0.,0.,1.,0.30);
-  upper.SetLeftMargin(0.14); upper.SetRightMargin(0.04);
-  upper.SetBottomMargin(0.02); upper.SetLogx();
-  bottom.SetLeftMargin(0.14); bottom.SetRightMargin(0.04);
-  bottom.SetTopMargin(0.03); bottom.SetBottomMargin(0.31); bottom.SetLogx();
-  upper.Draw(); bottom.Draw();
-  upper.cd();
   TH1D upperFrame("h_rho_upper","",100,12.,1500.);
+  TH1D lowerFrame("h_rho_lower","",100,12.,1500.);
+  upperFrame.SetDirectory(nullptr);
+  lowerFrame.SetDirectory(nullptr);
   upperFrame.SetMinimum(0.90); upperFrame.SetMaximum(1.10);
   upperFrame.GetYaxis()->SetTitle("#rho(data) / #rho(MC)");
   upperFrame.GetXaxis()->SetLabelSize(0.);
-  configureLogAxis(&upperFrame); upperFrame.Draw("AXIS");
+  configureLogAxis(&upperFrame);
+  lowerFrame.SetMinimum(-lowerRange); lowerFrame.SetMaximum(lowerRange);
+  lowerFrame.GetXaxis()->SetTitle("p_{T,Z} (GeV)");
+  lowerFrame.GetYaxis()->SetTitle("#Delta (10^{-3})");
+  configureLogAxis(&lowerFrame);
+  std::unique_ptr<TCanvas> canvas(
+    tdrDiCanvas("c_rho_stability",&upperFrame,&lowerFrame,8,11));
+  canvas->cd(1); gPad->SetLogx();
   TLine unity(12.,1.,1500.,1.); unity.SetLineStyle(kDashed); unity.DrawClone();
   std::vector<std::unique_ptr<TGraphErrors> > graphs;
   for (int method = 0; method != 3; ++method) {
@@ -654,23 +806,13 @@ void drawRhoStability(const std::vector<MethodInput> &inputs,
   legend.SetBorderSize(0);
   for (int method = 0; method != 3; ++method)
     legend.AddEntry(graphs[method].get(),inputs[method].label.c_str(),"lp");
-  legend.Draw(); cmsLabel();
-  bottom.cd();
-  TH1D lowerFrame("h_rho_lower","",100,12.,1500.);
-  lowerFrame.SetMinimum(-lowerRange); lowerFrame.SetMaximum(lowerRange);
-  lowerFrame.GetXaxis()->SetTitle("p_{T,Z} (GeV)");
-  lowerFrame.GetYaxis()->SetTitle("candidate-base (per mille)");
-  lowerFrame.GetXaxis()->SetTitleSize(0.12);
-  lowerFrame.GetXaxis()->SetLabelSize(0.10);
-  lowerFrame.GetYaxis()->SetTitleSize(0.09);
-  lowerFrame.GetYaxis()->SetLabelSize(0.08);
-  lowerFrame.GetYaxis()->SetTitleOffset(0.75);
-  configureLogAxis(&lowerFrame); lowerFrame.Draw("AXIS"); zeroLine(12.,1500.);
+  legend.Draw();
+  canvas->cd(2); gPad->SetLogx(); zeroLine(12.,1500.);
   auto legacy = graph(lower[0],inputs[1].color,inputs[1].marker,true);
   auto modern = graph(lower[1],inputs[2].color,inputs[2].marker,true);
   legacy->Draw("LP SAME"); modern->Draw("LP SAME");
   drawMethodLogLabels(&lowerFrame,0.045,0.10);
-  canvas.SaveAs((outputDirectory+"/rho_data_mc_stability.pdf").c_str());
+  canvas->SaveAs((outputDirectory+"/rho_data_mc_stability.pdf").c_str());
 }
 
 TProfile *profile(TFile &file, const std::string &name, bool required=false) {
@@ -763,16 +905,20 @@ bool drawTruthComponent(TFile &mc, const std::string &component,
   }
   if (!(maximum>minimum)) { minimum = -0.5; maximum = 1.5; }
   const double margin = 0.12*(maximum-minimum);
-  TCanvas canvas(Form("c_truth_%s_%s",component.c_str(),axis.c_str()),"",850,650);
-  canvas.SetLeftMargin(0.14); canvas.SetBottomMargin(0.13);
-  if (ptAxis) canvas.SetLogx();
   TH1D frame(Form("h_truth_%s_%s",component.c_str(),axis.c_str()),"",100,
              ptAxis ? 12. : 0.,ptAxis ? 200. : 5.);
+  frame.SetDirectory(nullptr);
   frame.SetMinimum(minimum-margin); frame.SetMaximum(maximum+margin);
   frame.GetXaxis()->SetTitle(ptAxis ? "p_{T,Z} (GeV)" : "|#eta_{jet}|");
   frame.GetYaxis()->SetTitle(component.c_str());
   if (ptAxis) configureLogAxis(&frame);
-  frame.Draw("AXIS");
+  const TString savedLumi = lumi_136TeV;
+  lumi_136TeV = ptAxis ? "Summer24 MC, |#eta|<1.305" :
+                         "Summer24 MC, 15<p_{T,Z}<30 GeV";
+  std::unique_ptr<TCanvas> canvas(tdrCanvas(
+    Form("c_truth_%s_%s",component.c_str(),axis.c_str()),&frame,8,11,kSquare));
+  lumi_136TeV = savedLumi;
+  if (ptAxis) canvas->SetLogx();
   if (minimum<1. && maximum>1.) {
     TLine unity(frame.GetXaxis()->GetXmin(),1.,frame.GetXaxis()->GetXmax(),1.);
     unity.SetLineStyle(kDotted); unity.DrawClone();
@@ -794,10 +940,8 @@ bool drawTruthComponent(TFile &mc, const std::string &component,
     legend.AddEntry(graphs[index].get(),labels[index],"lp");
   legend.AddEntry(subtractedGraph.get(),"background-subtracted","lp");
   legend.Draw();
-  cmsLabel(ptAxis ? "Summer24 MC, |#eta|<1.305" :
-                    "Summer24 MC, 15<p_{T,Z}<30 GeV");
   if (ptAxis) drawMethodLogLabels(&frame);
-  canvas.SaveAs((outputDirectory+"/truth_"+component+"_"+axis+".pdf").c_str());
+  canvas->SaveAs((outputDirectory+"/truth_"+component+"_"+axis+".pdf").c_str());
   return true;
 }
 
@@ -858,13 +1002,15 @@ bool drawLegacyRhoAlpha(TFile &data, TFile &mc,
     const double interceptError = std::sqrt(variance*sxx/denominator);
     extrapolated.push_back({anchor.x,anchor.ex,intercept,interceptError});
   }
-  TCanvas canvas("c_rho_alpha","",850,650);
-  canvas.SetLogx(); canvas.SetLeftMargin(0.14); canvas.SetBottomMargin(0.13);
   TH1D frame("h_rho_alpha","",100,12.,1500.);
+  frame.SetDirectory(nullptr);
   frame.SetMinimum(0.90); frame.SetMaximum(1.10);
   frame.GetXaxis()->SetTitle("p_{T,Z} (GeV)");
   frame.GetYaxis()->SetTitle("#rho(data) / #rho(MC)");
-  configureLogAxis(&frame); frame.Draw("AXIS");
+  configureLogAxis(&frame);
+  std::unique_ptr<TCanvas> canvas(
+    tdrCanvas("c_rho_alpha",&frame,8,11,kSquare));
+  canvas->SetLogx();
   TLine unity(12.,1.,1500.,1.); unity.SetLineStyle(kDashed); unity.DrawClone();
   const int colors[] = {kBlue+2,kBlue,kOrange+7,kRed+1};
   std::vector<std::unique_ptr<TGraphErrors> > graphs;
@@ -878,8 +1024,8 @@ bool drawLegacyRhoAlpha(TFile &data, TFile &mc,
   zeroAlpha->SetLineWidth(3);
   zeroAlpha->Draw("LP SAME");
   legend.AddEntry(zeroAlpha.get(),"linear #alpha_{max}#rightarrow0","lp");
-  legend.Draw(); cmsLabel(); drawMethodLogLabels(&frame);
-  canvas.SaveAs((outputDirectory+"/legacy_rho_alpha_scan.pdf").c_str());
+  legend.Draw(); drawMethodLogLabels(&frame);
+  canvas->SaveAs((outputDirectory+"/legacy_rho_alpha_scan.pdf").c_str());
   return true;
 }
 
@@ -914,10 +1060,17 @@ void compareMethods(
   drawHDMDecomposition(baseline,legacy,"baseline","legacy",
                        "hdm_baseline_legacy_decomposition",outputDirectory,
                        metrics);
+  drawGlobalFitDifference(baseline,legacy,"baseline","legacy",
+                          "globalfit_baseline_legacy_difference",
+                          outputDirectory,metrics);
   drawHDMDifference(legacy,modern,"legacy","new method",
                     "hdm_legacy_new_difference",outputDirectory,metrics);
   drawHDMDecomposition(legacy,modern,"legacy","new method",
                        "hdm_legacy_new_decomposition",outputDirectory,metrics);
+  drawGlobalFitDifference(legacy,modern,"legacy","new method",
+                          "globalfit_legacy_new_difference",
+                          outputDirectory,metrics);
+  drawMCTruthClosure(inputs,outputDirectory,metrics);
   drawWReference(baseline,legacy,modern,outputDirectory);
   for (const std::string &observable :
        {"mpfchs1","mpf1","mpfn","mpfu","mpfnu","hdm"})
@@ -945,6 +1098,12 @@ void compareMethods(
      "Exact component decomposition"}},
     "This is the sub-50 GeV synchronization target. Component contributions "
     "sum exactly to the direct HDM difference bin by bin.");
+  writeFrame(frames,"Legacy difference seen by globalFit.C",{
+    {std::string(outputDirectory)+"/globalfit_baseline_legacy_difference.pdf",
+     "Z-pT HDM times the stored previous JEC"}},
+    "The black curve reproduces the observable passed to globalFit.C. The raw "
+    "HDM and previous-JEC curves are an exact two-input Shapley decomposition; "
+    "their sum equals the black curve bin by bin.");
   writeFrame(frames,"All-pairs method difference",{
     {std::string(outputDirectory)+"/hdm_legacy_new_difference.pdf",
      "Direct new - legacy reference"},
@@ -952,6 +1111,19 @@ void compareMethods(
      "Exact component decomposition"}},
     "All differences are in per mille. The Shapley decomposition is exact, "
     "order independent, and sums to the direct HDM difference bin by bin.");
+  writeFrame(frames,"All-pairs difference seen by globalFit.C",{
+    {std::string(outputDirectory)+"/globalfit_legacy_new_difference.pdf",
+     "Z-pT HDM times the stored previous JEC"}},
+    "Legacy and new-method files share the same previous JEC in this sample, "
+    "so their difference is dominated by the raw HDM term. The decomposition "
+    "also guards against future input-JEC changes.");
+  writeFrame(frames,"MC truth closure and bin-migration diagnostic",{
+    {std::string(outputDirectory)+"/mc_hdm_truth_closure_zpt.pdf",
+     "HDM MC response versus stored gen balance"}},
+    "The lower pad is the requested combined resolution/flavor closure. A "
+    "division is shown only where the stored generator balance is in 0.5--1.5; "
+    "the legacy and new-method gjet inputs fail this guard over most of the "
+    "range and therefore cannot yet define a physical correction.");
   writeFrame(frames,"Independent W-mass reference",{
     {std::string(outputDirectory)+"/hdm_wqq_reference.pdf",
      "Z HDM compared with $W\\to qq'$"}},

@@ -2,6 +2,7 @@
 \usetheme{default}
 \usecolortheme{dove}
 \setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}[frame number]
 \setbeamersize{text margin left=4mm,text margin right=4mm}
 \setbeamerfont{frametitle}{size=\large}
 \usepackage{graphicx}
@@ -24,6 +25,9 @@
           $R_u=0.92$ and the exact Z+jet master equation.
     \item The direct new-minus-legacy curve is decomposed exactly into the six
           data and MC inputs with order-independent Shapley contributions.
+    \item The global-fit comparison additionally multiplies HDM by each file's
+          stored previous JEC, exactly as \texttt{globalFit.C} does. Its
+          raw-HDM and previous-JEC terms are displayed separately.
     \item W$\rightarrow qq'$ is retained as an independent response reference;
           photon+jet is not treated as independent because it currently uses
           effectively the same leading-object method as legacy Z+jet.

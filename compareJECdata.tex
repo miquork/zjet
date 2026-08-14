@@ -2,6 +2,7 @@
 \usetheme{default}
 \usecolortheme{dove}
 \setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}[frame number]
 \setbeamersize{text margin left=4mm,text margin right=4mm}
 \setbeamerfont{frametitle}{size=\large}
 \graphicspath{{./}}
@@ -32,6 +33,8 @@
           responses documented in the generated deck. Generator and
           reconstructed balance closures are MC-only diagnostics; direct
           balance in data and data/MC is labelled separately.
+    \item Dedicated global-fit pages show HDM after multiplication by each
+          input file's own previous-JEC curve and the Run2024I axis factors.
     \item Machine-readable diagnostics are in \texttt{summary.tsv} and
           \texttt{normalization.tsv} under \texttt{output/compareJECdata}.
   \end{itemize}

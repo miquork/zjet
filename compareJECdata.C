@@ -10,6 +10,7 @@
 #include "TROOT.h"
 #include "TStyle.h"
 #include "TSystem.h"
+#include "tdrstyle_mod22.C"
 
 #include <algorithm>
 #include <cmath>
@@ -44,18 +45,16 @@ const std::vector<std::string> kSamples = {"data","mc","ratio"};
 const std::vector<std::string> kChannels = {"jetz","zjav","zjet"};
 double kSoftRecoilRn = 1.00;
 double kSoftRecoilRu = 0.92;
+double kGlobalFitJetPtScale = 1.0000;
+double kGlobalFitAveragePtScale = 1.0025;
 
 void applyComparisonTDRStyle() {
-  if (!gSystem->AccessPathName("tdrstyle_mod22.C")) {
-    gROOT->ProcessLine(".L tdrstyle_mod22.C");
-    gROOT->ProcessLine("setTDRStyle();");
-  } else {
-    gStyle->SetCanvasColor(kWhite);
-    gStyle->SetPadColor(kWhite);
-    gStyle->SetOptStat(0);
-    gStyle->SetTitleFont(42,"XYZ");
-    gStyle->SetLabelFont(42,"XYZ");
-  }
+  setTDRStyle();
+  writeExtraText = true;
+  extraText = "Work in progress";
+  extraText2 = "";
+  // CMS_lumi appends the collision energy for iPeriod=8.
+  lumi_136TeV = "Run2024I";
 }
 
 std::string objectPath(const std::string &sample,
@@ -168,6 +167,49 @@ std::vector<ComparisonPoint> correctedSoftRecoil(
   return result;
 }
 
+double interpolatePoints(const std::vector<ComparisonPoint> &points,
+                         double x) {
+  for (const ComparisonPoint &point : points)
+    if (sameCenter(point.x,x)) return point.y;
+  for (size_t index=1; index<points.size(); ++index) {
+    if (points[index-1].x<x && x<points[index].x) {
+      const double fraction =
+        (std::log(x)-std::log(points[index-1].x))/
+        (std::log(points[index].x)-std::log(points[index-1].x));
+      return points[index-1].y+fraction*(points[index].y-points[index-1].y);
+    }
+  }
+  return std::numeric_limits<double>::quiet_NaN();
+}
+
+double globalFitAxisScale(const std::string &channel) {
+  if (channel=="jetz") return kGlobalFitJetPtScale;
+  if (channel=="zjav") return kGlobalFitAveragePtScale;
+  return 1.0000;
+}
+
+std::vector<ComparisonPoint> globalFitHDMPoints(
+  TFile &file, const std::string &channel) {
+  std::vector<ComparisonPoint> result = readPoints(
+    file,"ratio/eta00-13/hdm_mpfchs1_"+channel);
+  const std::vector<ComparisonPoint> correction = readPoints(
+    file,"ratio/eta00-13/herr_l2l3res");
+  const double axisScale = globalFitAxisScale(channel);
+  for (ComparisonPoint &point : result) {
+    const double factor = interpolatePoints(correction,point.x);
+    if (!std::isfinite(factor)) {
+      point.y = std::numeric_limits<double>::quiet_NaN();
+      continue;
+    }
+    point.y *= factor*axisScale;
+    point.ey *= std::fabs(factor*axisScale);
+  }
+  result.erase(std::remove_if(result.begin(),result.end(),
+    [](const ComparisonPoint &point) { return !std::isfinite(point.y); }),
+    result.end());
+  return result;
+}
+
 std::string objectPath(const std::string &sample,
                        const std::string &observable,
                        const std::string &channel) {
@@ -180,6 +222,9 @@ std::string objectPath(const std::string &sample,
 std::vector<ComparisonPoint> comparisonPoints(
   TFile &file, const std::string &sample, const std::string &observable,
   const std::string &channel) {
+  if (observable=="hdm_globalfit")
+    return sample=="ratio" ? globalFitHDMPoints(file,channel)
+                           : std::vector<ComparisonPoint>{};
   if (observable=="mpfnu") {
     if (sample=="data" || sample=="mc")
       return correctedSoftRecoil(file,sample,channel);
@@ -240,6 +285,7 @@ std::pair<double,double> yRange(const std::string &observable,
   if (observable=="hdm")
     return sample=="ratio" ? std::make_pair(0.94,1.06)
                            : std::make_pair(0.75,1.25);
+  if (observable=="hdm_globalfit") return {0.98,1.18};
   if (observable=="rjet") return {0.75,1.45};
   if (observable=="gjet") return {-0.15,1.15};
   if (sample=="ratio") return {0.75,1.25};
@@ -251,6 +297,7 @@ double comparisonRange(const std::string &observable,
   if (observable=="counts") return 1.;
   if (observable=="rho") return 20.;
   if (observable=="hdm") return 0.03;
+  if (observable=="hdm_globalfit") return 0.04;
   if (observable=="gjet") return 1.0;
   if (observable=="rjet") return 0.5;
   if (sample=="ratio" && resultIsDifference(observable)) return 0.12;
@@ -268,6 +315,7 @@ std::string observableLabel(const std::string &observable) {
   if (observable=="mpfu") return "MPFu";
   if (observable=="mpfnu") return "Response-corrected MPFnu";
   if (observable=="hdm") return "HDM-corrected MPF";
+  if (observable=="hdm_globalfit") return "globalFit input: HDM x previous JEC";
   if (observable=="rjet") return "Reconstructed balance closure";
   if (observable=="gjet") return "Generator balance closure";
   return observable;
@@ -355,7 +403,7 @@ void configureLogAxis(TAxis *axis) {
   axis->SetNoExponent();
 }
 
-void drawCustomLogXLabels(
+void drawComparisonLogXLabels(
   TH1 *frame, const std::vector<double> &values={30.,100.,300.,1000.},
   double offset=0.014, double textSize=-1.) {
   if (!frame || !gPad || !gPad->GetLogx()) return;
@@ -403,22 +451,6 @@ std::string standardPanel(
   summary << '\t' << legacyMatched << '\t' << newMatched << '\n';
 
   const std::string stem = "compare_"+sample+"_"+observable+"_"+channel;
-  TCanvas canvas(stem.c_str(),stem.c_str(),720,720);
-  TPad upper((stem+"_upper").c_str(),"",0.,0.30,1.,1.);
-  TPad lower((stem+"_lower").c_str(),"",0.,0.,1.,0.30);
-  upper.SetBottomMargin(0.02);
-  upper.SetLeftMargin(0.14);
-  upper.SetRightMargin(0.04);
-  lower.SetTopMargin(0.03);
-  lower.SetBottomMargin(0.31);
-  lower.SetLeftMargin(0.14);
-  lower.SetRightMargin(0.04);
-  upper.Draw();
-  lower.Draw();
-
-  upper.cd();
-  upper.SetLogx();
-  if (observable=="counts" && sample!="ratio") upper.SetLogy();
   const auto range = yRange(observable,sample);
   TH1D upperFrame((stem+"_upper_frame").c_str(),"",100,12.,1500.);
   upperFrame.SetDirectory(nullptr);
@@ -431,7 +463,21 @@ std::string standardPanel(
   upperFrame.GetYaxis()->SetLabelSize(0.043);
   upperFrame.GetXaxis()->SetLabelSize(0.);
   configureLogAxis(upperFrame.GetXaxis());
-  upperFrame.Draw("AXIS");
+  const double deltaRange = comparisonRange(observable,sample);
+  TH1D lowerFrame((stem+"_lower_frame").c_str(),"",100,12.,1500.);
+  lowerFrame.SetDirectory(nullptr);
+  lowerFrame.SetMinimum(-deltaRange);
+  lowerFrame.SetMaximum(deltaRange);
+  lowerFrame.GetXaxis()->SetTitle("p_{T} (GeV)");
+  lowerFrame.GetYaxis()->SetTitle(
+    observable=="counts" ? "cand./base - 1" : "cand. - base");
+  configureLogAxis(lowerFrame.GetXaxis());
+  std::unique_ptr<TCanvas> canvas(
+    tdrDiCanvas(stem.c_str(),&upperFrame,&lowerFrame,8,11));
+
+  canvas->cd(1);
+  gPad->SetLogx();
+  if (observable=="counts" && sample!="ratio") gPad->SetLogy();
 
   std::vector<std::unique_ptr<TGraphErrors> > graphs;
   bool anyPoints = false;
@@ -455,26 +501,10 @@ std::string standardPanel(
   TLatex label;
   label.SetNDC();
   label.SetTextSize(0.040);
-  label.DrawLatex(0.16,0.93,channelLabel(channel).c_str());
+  label.DrawLatex(0.61,0.64,channelLabel(channel).c_str());
 
-  lower.cd();
-  lower.SetLogx();
-  const double deltaRange = comparisonRange(observable,sample);
-  TH1D lowerFrame((stem+"_lower_frame").c_str(),"",100,12.,1500.);
-  lowerFrame.SetDirectory(nullptr);
-  lowerFrame.SetMinimum(-deltaRange);
-  lowerFrame.SetMaximum(deltaRange);
-  lowerFrame.GetXaxis()->SetTitle("p_{T} (GeV)");
-  lowerFrame.GetYaxis()->SetTitle(
-    observable=="counts" ? "candidate/base-1" : "candidate-base");
-  lowerFrame.GetXaxis()->SetTitleSize(0.12);
-  lowerFrame.GetXaxis()->SetLabelSize(0.10);
-  configureLogAxis(lowerFrame.GetXaxis());
-  lowerFrame.GetYaxis()->SetTitleSize(0.095);
-  lowerFrame.GetYaxis()->SetTitleOffset(0.68);
-  lowerFrame.GetYaxis()->SetLabelSize(0.082);
-  lowerFrame.GetYaxis()->SetNdivisions(505);
-  lowerFrame.Draw("AXIS");
+  canvas->cd(2);
+  gPad->SetLogx();
   drawZeroLine();
   std::unique_ptr<TGraphErrors> legacyGraph(
     makeGraph(legacyDifference,inputs[1].color,inputs[1].marker,0.68));
@@ -487,10 +517,10 @@ std::string standardPanel(
   matchLabel.SetTextSize(0.072);
   matchLabel.DrawLatex(0.17,0.84,
     Form("matched bins: legacy %d, new %d",legacyMatched,newMatched));
-  drawCustomLogXLabels(&lowerFrame,{30.,100.,300.,1000.},0.045,0.10);
+  drawComparisonLogXLabels(&lowerFrame,{30.,100.,300.,1000.},0.045,0.10);
 
   const std::string plotPath = outputDirectory+"/"+stem+".pdf";
-  canvas.SaveAs(plotPath.c_str());
+  canvas->SaveAs(plotPath.c_str());
   return stem;
 }
 
@@ -507,12 +537,6 @@ std::string axisOverlayPanel(
   std::replace(labelStem.begin(),labelStem.end(),' ','_');
   const std::string stem =
     "axes_"+labelStem+"_"+sample+"_"+observable;
-  TCanvas canvas(stem.c_str(),stem.c_str(),720,610);
-  canvas.SetLeftMargin(0.14);
-  canvas.SetRightMargin(0.04);
-  canvas.SetBottomMargin(0.13);
-  canvas.SetLogx();
-  if (observable=="counts" && sample!="ratio") canvas.SetLogy();
   const auto range = yRange(observable,sample);
   TH1D frame((stem+"_frame").c_str(),"",100,12.,1500.);
   frame.SetDirectory(nullptr);
@@ -527,7 +551,10 @@ std::string axisOverlayPanel(
   frame.GetYaxis()->SetTitleSize(0.050);
   frame.GetYaxis()->SetTitleOffset(1.25);
   frame.GetYaxis()->SetLabelSize(0.042);
-  frame.Draw("AXIS");
+  std::unique_ptr<TCanvas> canvas(
+    tdrCanvas(stem.c_str(),&frame,8,11,kSquare));
+  canvas->SetLogx();
+  if (observable=="counts" && sample!="ratio") canvas->SetLogy();
 
   std::vector<std::unique_ptr<TGraphErrors> > graphs;
   bool anyPoints = false;
@@ -549,10 +576,10 @@ std::string axisOverlayPanel(
   TLatex label;
   label.SetNDC();
   label.SetTextSize(0.043);
-  label.DrawLatex(0.16,0.94,input.label.c_str());
-  drawCustomLogXLabels(&frame,{30.,100.,300.,1000.},0.022,0.042);
+  label.DrawLatex(0.56,0.64,input.label.c_str());
+  drawComparisonLogXLabels(&frame,{30.,100.,300.,1000.},0.022,0.042);
   const std::string plotPath = outputDirectory+"/"+stem+".pdf";
-  canvas.SaveAs(plotPath.c_str());
+  canvas->SaveAs(plotPath.c_str());
   return stem;
 }
 
@@ -646,8 +673,10 @@ void writeDerivedObservableFrame(std::ofstream &frames) {
          << "\\item Direct balance in data, MC, and data/MC remains the "
          << "\\textbf{Direct balance} (\\texttt{ptchs}) page.\n"
          << "\\item Generator-balance curves from event outputs made before "
-         << "the transverse-projection correction are invalid and require a "
-         << "new event-processing pass.\n"
+         << "the transverse-projection correction are invalid. In the current "
+         << "legacy and new-method files the stored generator balance still "
+         << "falls far below the physical response, so it is shown as a "
+         << "diagnostic but is not used to correct HDM.\n"
          << "\\end{itemize}\n"
          << "\\end{frame}\n";
 }
@@ -726,11 +755,17 @@ void compareJECdata(
   const char *legacyLabel="2024I_nix legacy",
   const char *newMethodLabel="2024I_nix new method",
   double softRecoilRn=1.00,
-  double softRecoilRu=0.92) {
+  double softRecoilRu=0.92,
+  double globalFitJetPtScale=1.0000,
+  double globalFitAveragePtScale=1.0025) {
   if (softRecoilRn<=0. || softRecoilRu<=0.)
     throw std::runtime_error("Soft-recoil responses Rn and Ru must be positive");
+  if (globalFitJetPtScale<=0. || globalFitAveragePtScale<=0.)
+    throw std::runtime_error("globalFit axis scales must be positive");
   kSoftRecoilRn = softRecoilRn;
   kSoftRecoilRu = softRecoilRu;
+  kGlobalFitJetPtScale = globalFitJetPtScale;
+  kGlobalFitAveragePtScale = globalFitAveragePtScale;
   applyComparisonTDRStyle();
   std::unique_ptr<TFile> baseline(TFile::Open(baselineFile,"READ"));
   std::unique_ptr<TFile> legacy(TFile::Open(legacyFile,"READ"));
@@ -749,7 +784,8 @@ void compareJECdata(
   };
   const std::vector<std::string> observables = {
     "counts", "ptchs", "mpfchs1", "mpf1", "mpfn", "mpfu", "mpfnu",
-    "hdm", "rjet", "gjet", "chf", "nef", "nhf", "cef", "muf", "rho",
+    "hdm", "hdm_globalfit", "rjet", "gjet", "chf", "nef", "nhf", "cef",
+    "muf", "rho",
   };
 
   std::ofstream summary(std::string(outputDirectory)+"/summary.tsv");
@@ -769,10 +805,27 @@ void compareJECdata(
       observable=="counts" || observable=="ptchs" ||
       observable=="mpfchs1" || observable=="mpf1" ||
       observable=="mpfn" || observable=="mpfu" || observable=="mpfnu" ||
-      observable=="hdm";
+      observable=="hdm" || observable=="hdm_globalfit";
     const std::vector<std::string> channels =
       hasAllReferenceAxes ? kChannels : std::vector<std::string>{"zjet"};
     for (const std::string &channel : channels) {
+      if (observable=="hdm_globalfit") {
+        const std::string stem = standardPanel(
+          inputs,"ratio",observable,channel,outputDirectory,summary);
+        frames << "\\begin{frame}{" << observableLabel(observable) << " -- "
+               << channelLabel(channel) << "}\n"
+               << "\\centering\\includegraphics[width=0.68\\linewidth,"
+               << "height=0.73\\textheight,keepaspectratio]{"
+               << outputDirectory << "/" << stem << ".pdf}\n"
+               << "\\vspace{0.5ex}\\par{\\tiny This reproduces the quantity "
+               << "passed to globalFit.C: the raw HDM data/MC ratio is "
+               << "multiplied by the input file's own "
+               << "\\texttt{herr\\_l2l3res}. The configured jet-pT and "
+               << "average-pT axis factors (" << kGlobalFitJetPtScale
+               << " and " << kGlobalFitAveragePtScale
+               << ") are also included.}\n\\end{frame}\n";
+        continue;
+      }
       if (observable=="rjet" || observable=="gjet") {
         const std::string stem = standardPanel(
           inputs,"mc",observable,channel,outputDirectory,summary);
@@ -788,9 +841,10 @@ void compareJECdata(
                  << "and data/MC is shown on the Direct balance "
                  << "(\\texttt{ptchs}) pages.";
         else
-          frames << "Generator balance is an MC closure diagnostic. Curves "
-                 << "from event outputs made before the transverse-projection "
-                 << "fix are intentionally retained here only to expose the bug.";
+          frames << "Generator balance is an MC closure diagnostic. The "
+                 << "legacy and new-method curves fail the physical closure "
+                 << "guard in the current files and must not be used as a "
+                 << "resolution or flavor correction.";
         frames << "}\n\\end{frame}\n";
         continue;
       }
@@ -842,6 +896,19 @@ void compareJECdata(
              << "without moving axes between methods.}\n"
              << "\\end{frame}\n";
     }
+  }
+
+  for (const InputSpec &input : inputs) {
+    const std::string stem = axisOverlayPanel(
+      input,"ratio","hdm_globalfit",outputDirectory);
+    frames << "\\begin{frame}{globalFit input across reference axes -- "
+           << texEscape(input.label) << "}\n"
+           << "\\centering\\includegraphics[width=0.68\\linewidth,"
+           << "height=0.73\\textheight,keepaspectratio]{"
+           << outputDirectory << "/" << stem << ".pdf}\n"
+           << "\\vspace{0.5ex}\\par{\\tiny These curves include both the "
+           << "stored previous JEC and the per-axis Run2024I factors used by "
+           << "globalFit.C.}\n\\end{frame}\n";
   }
 
   writeControlAppendix(frames);
