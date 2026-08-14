@@ -121,6 +121,22 @@ void run_zjet_job(const char *inputList, bool isMC, const char *outputFile,
       !check.Get("legacy/control/p_rho_vs_zpt_alpha010") ||
       !check.Get("control/p_mpf_vs_ptz_all_subtracted_central") ||
       !check.Get("control/p_mpfnu_vs_abseta_matched_parallel_ptz15to30") ||
+      !check.Get("truth_hdm/parallel/zmmjet/reco_over_gen") ||
+      !check.Get("truth_hdm/parallel/zmmjet/reco_mpfn_matched") ||
+      !check.Get("truth_hdm/parallel/zmmjet/reco_mpfu_matched") ||
+      !check.Get("truth_hdm/subtracted/zmmjet/gen_mpfn_reco_axis") ||
+      !check.Get("truth_hdm/subtracted/zmmjet/gen_mpfu_reco_axis") ||
+      !check.Get("truth_hdm/subtracted/zmmjet/response_rn_reco_axis") ||
+      !check.Get("truth_hdm/subtracted/zmmjet/response_ru_reco_axis") ||
+      !check.Get("truth_hdm/subtracted/zmmjet/mpfn_reco_gen_product") ||
+      !check.Get("truth_hdm/subtracted/zmmjet/mpfu_gen_squared") ||
+      !check.Get("truth_hdm/subtracted/zmmjet/slope_rn_reco_axis") ||
+      !check.Get("truth_hdm/subtracted/zmmjet/slope_ru_reco_axis") ||
+      !check.Get("legacy/truth_hdm/parallel/zmmjet/reco_over_gen") ||
+      !check.Get("legacy/l2res/p2res") ||
+      !check.Get("legacy/l2res/p2restc") ||
+      !check.Get("zjet_truth_hdm_definition") ||
+      !check.Get("zjet_previous_residual_definition") ||
       !check.Get("zjet_synchronized_selection") ||
       !check.Get("zjet_legacy_jet_id") ||
       !correctionMetadataMatches ||
@@ -133,6 +149,7 @@ void run_zjet_job(const char *inputList, bool isMC, const char *outputFile,
     return;
   }
   std::cout << "Validated output " << outputFile
-            << ": flavor profiles, native 1D all-pairs profiles, and "
-            << "synchronized legacy profiles are present." << std::endl;
+            << ": flavor, method-specific residual, generator-recoil, "
+            << "native 1D all-pairs, and synchronized legacy profiles are "
+            << "present." << std::endl;
 }

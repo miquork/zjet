@@ -6,6 +6,7 @@
 
 #include "TLorentzVector.h"
 #include "TH2D.h"
+#include "TGraphErrors.h"
 #include "TProfile.h"
 #include "TProfile2D.h"
 #include "TObjString.h"
@@ -27,6 +28,7 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -54,6 +56,72 @@ struct ResponseProfiles1D {
   std::map<std::string,ResponseAxis1D> axes;
 };
 
+struct TruthHDMAxis1D {
+  TH1D *statistics = nullptr;
+  TH1D *matchedStatistics = nullptr;
+  TH1D *generatorStatistics = nullptr;
+  TProfile *matchFraction = nullptr;
+  TProfile *genJetPt = nullptr;
+  TProfile *recoOverGen = nullptr;
+  TProfile *deltaR = nullptr;
+  TProfile *genOverBin = nullptr;
+  TProfile *recoOverBin = nullptr;
+  TProfile *genZOverRecoZ = nullptr;
+  TProfile *recoMpf1 = nullptr;
+  TProfile *recoMpfn = nullptr;
+  TProfile *recoMpfu = nullptr;
+  TProfile *recoMpf1Matched = nullptr;
+  TProfile *recoMpfnMatched = nullptr;
+  TProfile *recoMpfuMatched = nullptr;
+  TProfile *genMpf1RecoAxis = nullptr;
+  TProfile *genMpfnRecoAxis = nullptr;
+  TProfile *genMpfuRecoAxis = nullptr;
+  TProfile *genMpf1GenAxis = nullptr;
+  TProfile *genMpfnGenAxis = nullptr;
+  TProfile *genMpfuGenAxis = nullptr;
+  TProfile *mpf1RecoGenProduct = nullptr;
+  TProfile *mpfnRecoGenProduct = nullptr;
+  TProfile *mpfuRecoGenProduct = nullptr;
+  TProfile *mpf1GenSquared = nullptr;
+  TProfile *mpfnGenSquared = nullptr;
+  TProfile *mpfuGenSquared = nullptr;
+  TProfile *previousResidual = nullptr;
+  TProfile *dbWithoutResidual = nullptr;
+  TProfile *mpf1WithoutResidual = nullptr;
+};
+
+struct TruthHDMProfiles1D {
+  std::map<std::string,std::map<std::string,TruthHDMAxis1D> > regions;
+};
+
+struct GeneratorRecoil {
+  bool hasGeneratorZ = false;
+  TLorentzVector z;
+  TLorentzVector ht;
+  TLorentzVector met;
+  TLorentzVector metu;
+};
+
+struct GeneratorPairComponents {
+  bool valid = false;
+  double genJetPt = 0.;
+  double deltaR = 0.;
+  double genMpf1RecoAxis = 0.;
+  double genMpfnRecoAxis = 0.;
+  double genMpfuRecoAxis = 0.;
+  double genMpf1GenAxis = 0.;
+  double genMpfnGenAxis = 0.;
+  double genMpfuGenAxis = 0.;
+  TLorentzVector met1;
+  TLorentzVector metn;
+};
+
+const double responseBins[] = {
+  12.,15.,20.,25.,30.,35.,40.,45.,50.,60.,70.,85.,105.,130.,175.,
+  230.,300.,400.,500.,700.,1000.,1500.
+};
+const int responseBinCount = sizeof(responseBins)/sizeof(responseBins[0])-1;
+
 ResponseProfiles1D bookResponseProfiles1D(TDirectory *parent,
                                           const char *directoryName) {
   if (!parent)
@@ -63,11 +131,6 @@ ResponseProfiles1D bookResponseProfiles1D(TDirectory *parent,
     throw std::runtime_error("Failed to create response directory " +
                              std::string(directoryName));
 
-  const double bins[] = {
-    12.,15.,20.,25.,30.,35.,40.,45.,50.,60.,70.,85.,105.,130.,175.,
-    230.,300.,400.,500.,700.,1000.,1500.
-  };
-  const int nBins = sizeof(bins)/sizeof(bins[0])-1;
   ResponseProfiles1D result;
   for (const char *axisName : {"zmmjet","jetpt","ptave"}) {
     TDirectory *axisDirectory = directory->mkdir(axisName);
@@ -77,28 +140,308 @@ ResponseProfiles1D bookResponseProfiles1D(TDirectory *parent,
     axisDirectory->cd();
     ResponseAxis1D &axis = result.axes[axisName];
     axis.statistics = new TH1D("statistics_rmpf",";p_{T} (GeV);Pairs",
-                               nBins,bins);
+                               responseBinCount,responseBins);
     axis.statistics->Sumw2();
-    axis.rmpf = new TProfile("rmpf",";p_{T} (GeV);MPF",nBins,bins);
-    axis.rmpfjet1 = new TProfile("rmpfjet1",";p_{T} (GeV);MPF1",nBins,bins);
-    axis.rmpfjetn = new TProfile("rmpfjetn",";p_{T} (GeV);MPFn",nBins,bins);
-    axis.rmpfuncl = new TProfile("rmpfuncl",";p_{T} (GeV);MPFu",nBins,bins);
-    axis.rmpfjetnu = new TProfile("rmpfjetnu",";p_{T} (GeV);MPFnu",nBins,bins);
-    axis.rbal = new TProfile("rbal",";p_{T} (GeV);DB",nBins,bins);
+    axis.rmpf = new TProfile("rmpf",";p_{T} (GeV);MPF",
+                             responseBinCount,responseBins);
+    axis.rmpfjet1 = new TProfile("rmpfjet1",";p_{T} (GeV);MPF1",
+                                 responseBinCount,responseBins);
+    axis.rmpfjetn = new TProfile("rmpfjetn",";p_{T} (GeV);MPFn",
+                                 responseBinCount,responseBins);
+    axis.rmpfuncl = new TProfile("rmpfuncl",";p_{T} (GeV);MPFu",
+                                 responseBinCount,responseBins);
+    axis.rmpfjetnu = new TProfile("rmpfjetnu",";p_{T} (GeV);MPFnu",
+                                  responseBinCount,responseBins);
+    axis.rbal = new TProfile("rbal",";p_{T} (GeV);DB",
+                             responseBinCount,responseBins);
     axis.rgenjet1 = new TProfile("rgenjet1",";p_{T} (GeV);Gen balance",
-                                 nBins,bins);
+                                 responseBinCount,responseBins);
     axis.residual = new TProfile("residual",";p_{T} (GeV);Previous residual",
-                                 nBins,bins);
-    axis.chHEF = new TProfile("chHEF",";p_{T} (GeV);chHEF",nBins,bins);
-    axis.neEmEF = new TProfile("neEmEF",";p_{T} (GeV);neEmEF",nBins,bins);
-    axis.neHEF = new TProfile("neHEF",";p_{T} (GeV);neHEF",nBins,bins);
-    axis.chEmEF = new TProfile("chEmEF",";p_{T} (GeV);chEmEF",nBins,bins);
-    axis.muEF = new TProfile("muEF",";p_{T} (GeV);muEF",nBins,bins);
-    axis.rho = new TProfile("rho",";p_{T} (GeV);#rho",nBins,bins);
+                                 responseBinCount,responseBins);
+    axis.chHEF = new TProfile("chHEF",";p_{T} (GeV);chHEF",
+                              responseBinCount,responseBins);
+    axis.neEmEF = new TProfile("neEmEF",";p_{T} (GeV);neEmEF",
+                               responseBinCount,responseBins);
+    axis.neHEF = new TProfile("neHEF",";p_{T} (GeV);neHEF",
+                              responseBinCount,responseBins);
+    axis.chEmEF = new TProfile("chEmEF",";p_{T} (GeV);chEmEF",
+                               responseBinCount,responseBins);
+    axis.muEF = new TProfile("muEF",";p_{T} (GeV);muEF",
+                             responseBinCount,responseBins);
+    axis.rho = new TProfile("rho",";p_{T} (GeV);#rho",
+                            responseBinCount,responseBins);
     axis.mass = new TH2D("mass",";p_{T} (GeV);m_{#mu#mu} (GeV)",
-                         nBins,bins,120,60.,120.);
+                         responseBinCount,responseBins,120,60.,120.);
   }
   return result;
+}
+
+TruthHDMProfiles1D bookTruthHDMProfiles1D(
+  TDirectory *parent, const char *directoryName,
+  const std::vector<std::string> &regions) {
+  if (!parent)
+    throw std::runtime_error("Cannot book generator-level HDM controls");
+  TDirectory *directory = parent->mkdir(directoryName);
+  if (!directory)
+    throw std::runtime_error("Failed to create truth directory " +
+                             std::string(directoryName));
+  TruthHDMProfiles1D result;
+  for (const std::string &regionName : regions) {
+    TDirectory *region = directory->mkdir(regionName.c_str());
+    if (!region)
+      throw std::runtime_error("Failed to create truth region " + regionName);
+    for (const char *axisName : {"zmmjet","jetpt","ptave"}) {
+      TDirectory *axisDirectory = region->mkdir(axisName);
+      if (!axisDirectory)
+        throw std::runtime_error("Failed to create truth axis " +
+                                 std::string(axisName));
+      axisDirectory->cd();
+      TruthHDMAxis1D &axis = result.regions[regionName][axisName];
+      auto profile = [&](const char *name, const char *title) {
+        return new TProfile(name,title,responseBinCount,responseBins);
+      };
+      axis.statistics = new TH1D(
+        "statistics_all",";p_{T} (GeV);Selected pairs",
+        responseBinCount,responseBins);
+      axis.matchedStatistics = new TH1D(
+        "statistics_matched",";p_{T} (GeV);Reco-gen matched pairs",
+        responseBinCount,responseBins);
+      axis.generatorStatistics = new TH1D(
+        "statistics_generator_recoil",
+        ";p_{T} (GeV);Pairs with matched jet and generator Z",
+        responseBinCount,responseBins);
+      for (TH1D *histogram : {axis.statistics,axis.matchedStatistics,
+                              axis.generatorStatistics})
+        histogram->Sumw2();
+      axis.matchFraction = profile(
+        "match_fraction",";p_{T} (GeV);Reco-gen match fraction");
+      axis.genJetPt = profile(
+        "genjet_pt",";p_{T} (GeV);p_{T,gen jet} (GeV)");
+      axis.recoOverGen = profile(
+        "reco_over_gen",";p_{T} (GeV);p_{T,reco}/p_{T,gen}");
+      axis.deltaR = profile(
+        "delta_r",";p_{T} (GeV);#DeltaR(reco jet,gen jet)");
+      axis.genOverBin = profile(
+        "gen_over_bin",";p_{T} (GeV);p_{T,gen jet}/p_{T,bin}");
+      axis.recoOverBin = profile(
+        "reco_over_bin",";p_{T} (GeV);p_{T,reco jet}/p_{T,bin}");
+      axis.genZOverRecoZ = profile(
+        "gen_z_over_reco_z",";p_{T} (GeV);p_{T,gen Z}/p_{T,reco Z}");
+      axis.recoMpf1 = profile(
+        "reco_mpf1",";p_{T} (GeV);Reco MPF1 component");
+      axis.recoMpfn = profile(
+        "reco_mpfn",";p_{T} (GeV);Reco MPFn component");
+      axis.recoMpfu = profile(
+        "reco_mpfu",";p_{T} (GeV);Reco MPFu component");
+      axis.recoMpf1Matched = profile(
+        "reco_mpf1_matched",
+        ";p_{T} (GeV);Reco MPF1 for generator-recoil pairs");
+      axis.recoMpfnMatched = profile(
+        "reco_mpfn_matched",
+        ";p_{T} (GeV);Reco MPFn for generator-recoil pairs");
+      axis.recoMpfuMatched = profile(
+        "reco_mpfu_matched",
+        ";p_{T} (GeV);Reco MPFu for generator-recoil pairs");
+      axis.genMpf1RecoAxis = profile(
+        "gen_mpf1_reco_axis",
+        ";p_{T} (GeV);Gen MPF1 on reco-Z axis");
+      axis.genMpfnRecoAxis = profile(
+        "gen_mpfn_reco_axis",
+        ";p_{T} (GeV);Gen MPFn on reco-Z axis");
+      axis.genMpfuRecoAxis = profile(
+        "gen_mpfu_reco_axis",
+        ";p_{T} (GeV);Gen MPFu on reco-Z axis");
+      axis.genMpf1GenAxis = profile(
+        "gen_mpf1_gen_axis",
+        ";p_{T} (GeV);Gen MPF1 on gen-Z axis");
+      axis.genMpfnGenAxis = profile(
+        "gen_mpfn_gen_axis",
+        ";p_{T} (GeV);Gen MPFn on gen-Z axis");
+      axis.genMpfuGenAxis = profile(
+        "gen_mpfu_gen_axis",
+        ";p_{T} (GeV);Gen MPFu on gen-Z axis");
+      axis.mpf1RecoGenProduct = profile(
+        "mpf1_reco_gen_product",
+        ";p_{T} (GeV);Reco MPF1 #times gen MPF1");
+      axis.mpfnRecoGenProduct = profile(
+        "mpfn_reco_gen_product",
+        ";p_{T} (GeV);Reco MPFn #times gen MPFn");
+      axis.mpfuRecoGenProduct = profile(
+        "mpfu_reco_gen_product",
+        ";p_{T} (GeV);Reco MPFu #times gen MPFu");
+      axis.mpf1GenSquared = profile(
+        "mpf1_gen_squared",";p_{T} (GeV);(Gen MPF1)^{2}");
+      axis.mpfnGenSquared = profile(
+        "mpfn_gen_squared",";p_{T} (GeV);(Gen MPFn)^{2}");
+      axis.mpfuGenSquared = profile(
+        "mpfu_gen_squared",";p_{T} (GeV);(Gen MPFu)^{2}");
+      axis.previousResidual = profile(
+        "previous_residual",
+        ";p_{T} (GeV);Inverse previous residual correction");
+      axis.dbWithoutResidual = profile(
+        "db_without_previous_residual",
+        ";p_{T} (GeV);DB with selected-jet residual removed");
+      axis.mpf1WithoutResidual = profile(
+        "mpf1_without_previous_residual",
+        ";p_{T} (GeV);MPF1 with selected-jet residual removed");
+    }
+  }
+  return result;
+}
+
+void fillTruthHDMProfiles1D(
+  TruthHDMProfiles1D &profiles, const std::string &region,
+  double ptz, double ptj, double ptave, bool matched,
+  const GeneratorRecoil &generatorRecoil,
+  const GeneratorPairComponents &generatorPair, double recoMpf1,
+  double recoMpfn, double recoMpfu, double inverseResidual, double weight) {
+  const std::map<std::string,double> x = {
+    {"zmmjet",ptz}, {"jetpt",ptj}, {"ptave",ptave},
+  };
+  for (const auto &entry : x) {
+    TruthHDMAxis1D &axis = profiles.regions.at(region).at(entry.first);
+    const double binValue = entry.second;
+    axis.statistics->Fill(binValue,weight);
+    axis.matchFraction->Fill(binValue,matched ? 1. : 0.,weight);
+    axis.recoOverBin->Fill(binValue,ptj/binValue,weight);
+    axis.previousResidual->Fill(binValue,inverseResidual,weight);
+    axis.dbWithoutResidual->Fill(
+      binValue,(ptj/ptz)*inverseResidual,weight);
+    axis.mpf1WithoutResidual->Fill(
+      binValue,recoMpf1*inverseResidual,weight);
+    axis.recoMpf1->Fill(binValue,recoMpf1,weight);
+    axis.recoMpfn->Fill(binValue,recoMpfn,weight);
+    axis.recoMpfu->Fill(binValue,recoMpfu,weight);
+    if (!matched || !generatorPair.valid || generatorPair.genJetPt<=0.)
+      continue;
+    axis.matchedStatistics->Fill(binValue,weight);
+    axis.genJetPt->Fill(binValue,generatorPair.genJetPt,weight);
+    axis.recoOverGen->Fill(
+      binValue,ptj/generatorPair.genJetPt,weight);
+    axis.deltaR->Fill(binValue,generatorPair.deltaR,weight);
+    axis.genOverBin->Fill(
+      binValue,generatorPair.genJetPt/binValue,weight);
+    if (!generatorRecoil.hasGeneratorZ || generatorRecoil.z.Pt()<=0.)
+      continue;
+    axis.generatorStatistics->Fill(binValue,weight);
+    axis.recoMpf1Matched->Fill(binValue,recoMpf1,weight);
+    axis.recoMpfnMatched->Fill(binValue,recoMpfn,weight);
+    axis.recoMpfuMatched->Fill(binValue,recoMpfu,weight);
+    axis.genZOverRecoZ->Fill(
+      binValue,generatorRecoil.z.Pt()/ptz,weight);
+    axis.genMpf1RecoAxis->Fill(
+      binValue,generatorPair.genMpf1RecoAxis,weight);
+    axis.genMpfnRecoAxis->Fill(
+      binValue,generatorPair.genMpfnRecoAxis,weight);
+    axis.genMpfuRecoAxis->Fill(
+      binValue,generatorPair.genMpfuRecoAxis,weight);
+    axis.genMpf1GenAxis->Fill(
+      binValue,generatorPair.genMpf1GenAxis,weight);
+    axis.genMpfnGenAxis->Fill(
+      binValue,generatorPair.genMpfnGenAxis,weight);
+    axis.genMpfuGenAxis->Fill(
+      binValue,generatorPair.genMpfuGenAxis,weight);
+    axis.mpf1RecoGenProduct->Fill(
+      binValue,recoMpf1*generatorPair.genMpf1RecoAxis,weight);
+    axis.mpfnRecoGenProduct->Fill(
+      binValue,recoMpfn*generatorPair.genMpfnRecoAxis,weight);
+    axis.mpfuRecoGenProduct->Fill(
+      binValue,recoMpfu*generatorPair.genMpfuRecoAxis,weight);
+    axis.mpf1GenSquared->Fill(
+      binValue,std::pow(generatorPair.genMpf1RecoAxis,2),weight);
+    axis.mpfnGenSquared->Fill(
+      binValue,std::pow(generatorPair.genMpfnRecoAxis,2),weight);
+    axis.mpfuGenSquared->Fill(
+      binValue,std::pow(generatorPair.genMpfuRecoAxis,2),weight);
+  }
+}
+
+void writeTruthHDMDerivedGraphs(TruthHDMProfiles1D &profiles) {
+  for (auto &regionEntry : profiles.regions) {
+    for (auto &axisEntry : regionEntry.second) {
+      TruthHDMAxis1D &axis = axisEntry.second;
+      TDirectory *directory = axis.recoMpf1->GetDirectory();
+      if (!directory) continue;
+      const std::vector<std::tuple<const char*,TProfile*,TProfile*> > ratios = {
+        {"response_r1_reco_axis",axis.recoMpf1Matched,
+         axis.genMpf1RecoAxis},
+        {"response_rn_reco_axis",axis.recoMpfnMatched,
+         axis.genMpfnRecoAxis},
+        {"response_ru_reco_axis",axis.recoMpfuMatched,
+         axis.genMpfuRecoAxis},
+        {"closure_r1_gen_axis",axis.recoMpf1Matched,
+         axis.genMpf1GenAxis},
+        {"closure_rn_gen_axis",axis.recoMpfnMatched,
+         axis.genMpfnGenAxis},
+        {"closure_ru_gen_axis",axis.recoMpfuMatched,
+         axis.genMpfuGenAxis},
+      };
+      for (const auto &ratio : ratios) {
+        const char *name = std::get<0>(ratio);
+        TProfile *numerator = std::get<1>(ratio);
+        TProfile *denominator = std::get<2>(ratio);
+        std::unique_ptr<TGraphErrors> graph(new TGraphErrors());
+        graph->SetName(name);
+        graph->SetTitle(
+          ";p_{T} (GeV);Ratio of reco and generator component means");
+        for (int bin=1; bin<=numerator->GetNbinsX(); ++bin) {
+          const double n = numerator->GetBinContent(bin);
+          const double d = denominator->GetBinContent(bin);
+          if (numerator->GetBinEntries(bin)==0. ||
+              denominator->GetBinEntries(bin)==0. ||
+              !std::isfinite(n) || !std::isfinite(d) ||
+              std::fabs(d)<1.e-9)
+            continue;
+          const double en = numerator->GetBinError(bin);
+          const double ed = denominator->GetBinError(bin);
+          const double value = n/d;
+          const double error = std::hypot(en/d,n*ed/(d*d));
+          const int point = graph->GetN();
+          graph->SetPoint(point,numerator->GetBinCenter(bin),value);
+          graph->SetPointError(
+            point,0.5*numerator->GetBinWidth(bin),std::fabs(error));
+        }
+        directory->cd();
+        graph->Write(name,TObject::kOverwrite);
+      }
+      const std::vector<std::tuple<const char*,TProfile*,TProfile*> > slopes = {
+        {"slope_r1_reco_axis",axis.mpf1RecoGenProduct,
+         axis.mpf1GenSquared},
+        {"slope_rn_reco_axis",axis.mpfnRecoGenProduct,
+         axis.mpfnGenSquared},
+        {"slope_ru_reco_axis",axis.mpfuRecoGenProduct,
+         axis.mpfuGenSquared},
+      };
+      for (const auto &slope : slopes) {
+        const char *name = std::get<0>(slope);
+        TProfile *product = std::get<1>(slope);
+        TProfile *square = std::get<2>(slope);
+        std::unique_ptr<TGraphErrors> graph(new TGraphErrors());
+        graph->SetName(name);
+        graph->SetTitle(
+          ";p_{T} (GeV);Zero-intercept reco-versus-gen slope");
+        for (int bin=1; bin<=product->GetNbinsX(); ++bin) {
+          const double numerator = product->GetBinContent(bin);
+          const double denominator = square->GetBinContent(bin);
+          if (product->GetBinEntries(bin)==0. ||
+              square->GetBinEntries(bin)==0. ||
+              !std::isfinite(numerator) || !std::isfinite(denominator) ||
+              std::fabs(denominator)<1.e-12)
+            continue;
+          const double value = numerator/denominator;
+          const double error = std::hypot(
+            product->GetBinError(bin)/denominator,
+            numerator*square->GetBinError(bin)/(denominator*denominator));
+          const int point = graph->GetN();
+          graph->SetPoint(point,product->GetBinCenter(bin),value);
+          graph->SetPointError(
+            point,0.5*product->GetBinWidth(bin),std::fabs(error));
+        }
+        directory->cd();
+        graph->Write(name,TObject::kOverwrite);
+      }
+    }
+  }
 }
 
 void fillResponseAxis1D(ResponseAxis1D &axis, double x, double db,
@@ -241,6 +584,15 @@ void zjet::Loop()
      fChain->SetBranchStatus("GenJet_mass",1);
      fChain->SetBranchStatus("GenJet_partonFlavour",1);
      fChain->SetBranchStatus("Jet_genJetIdx",1);
+     fChain->SetBranchStatus("nGenPart",1);
+     fChain->SetBranchStatus("GenPart_pdgId",1);
+     fChain->SetBranchStatus("GenPart_status",1);
+     fChain->SetBranchStatus("GenPart_pt",1);
+     fChain->SetBranchStatus("GenPart_eta",1);
+     fChain->SetBranchStatus("GenPart_phi",1);
+     fChain->SetBranchStatus("GenPart_mass",1);
+     fChain->SetBranchStatus("GenMET_pt",1);
+     fChain->SetBranchStatus("GenMET_phi",1);
    }
 
    fChain->SetBranchStatus("PuppiMET_pt",1);
@@ -824,9 +1176,41 @@ void zjet::Loop()
    // relative-eta workflow.
    ResponseProfiles1D allPairsProfiles =
      bookResponseProfiles1D(fout,"profiles1d");
+   TruthHDMProfiles1D allPairsTruthProfiles = bookTruthHDMProfiles1D(
+     fout,"truth_hdm",{"parallel","transverse","subtracted"});
    TDirectory *legacyDirectory = fout->mkdir("legacy");
    ResponseProfiles1D legacyProfiles =
      bookResponseProfiles1D(legacyDirectory,"profiles1d");
+   TruthHDMProfiles1D legacyTruthProfiles = bookTruthHDMProfiles1D(
+     legacyDirectory,"truth_hdm",{"parallel"});
+
+   // The legacy and all-pairs methods select different jet populations.
+   // Preserve method-specific previous-JEC profiles instead of silently using
+   // the sideband-subtracted all-pairs profile for the legacy compatibility
+   // output. The unsuffixed legacy p2res follows ZbAnalysis exactly: despite
+   // its historical "avp" title it is filled versus tag (Z) pT.
+   TDirectory *legacyL2ResDirectory = legacyDirectory->mkdir("l2res");
+   legacyL2ResDirectory->cd();
+   TH2D *legacyH2PtEta = new TH2D(
+     "h2pteta",";|#eta|;p_{T,Z} (GeV)",ns,vs,np,vp);
+   TH2D *legacyH2PtEtaPf = new TH2D(
+     "h2ptetapf",";|#eta|;p_{T,jet} (GeV)",ns,vs,np,vp);
+   TH2D *legacyH2PtEtaTc = new TH2D(
+     "h2ptetatc",";|#eta|;p_{T,Z} (GeV)",ns,vs,np,vp);
+   TProfile2D *legacyP2Jes = new TProfile2D(
+     "p2jes",";|#eta|;p_{T,Z} (GeV);Inverse full JEC",ns,vs,np,vp);
+   TProfile2D *legacyP2JesPf = new TProfile2D(
+     "p2jespf",";|#eta|;p_{T,jet} (GeV);Inverse full JEC",ns,vs,np,vp);
+   TProfile2D *legacyP2JesTc = new TProfile2D(
+     "p2jestc",";|#eta|;p_{T,Z} (GeV);Inverse full JEC",ns,vs,np,vp);
+   TProfile2D *legacyP2Res = new TProfile2D(
+     "p2res",";|#eta|;p_{T,Z} (GeV);Inverse L2L3Residual",ns,vs,np,vp);
+   TProfile2D *legacyP2ResPf = new TProfile2D(
+     "p2respf",";|#eta|;p_{T,jet} (GeV);Inverse L2L3Residual",
+     ns,vs,np,vp);
+   TProfile2D *legacyP2ResTc = new TProfile2D(
+     "p2restc",";|#eta|;p_{T,Z} (GeV);Inverse L2L3Residual",
+     ns,vs,np,vp);
    TDirectory *legacyControlDirectory = legacyDirectory->mkdir("control");
    legacyControlDirectory->cd();
    TH1D *h_legacy_cutflow = new TH1D("h_cutflow","",9,0.5,9.5);
@@ -881,6 +1265,12 @@ void zjet::Loop()
    TObjString legacyJetId(
      "disabled to match the current ZbAnalysis synchronization reference");
    legacyJetId.Write("zjet_legacy_jet_id");
+   TObjString truthDefinition(
+     "truth_hdm profiles use status-1 generator muons matched to the selected reco muons within DeltaR<0.1; GenJet AK4 with pT>15 GeV and DeltaR(mu)>0.3 for generator HT; GenMET for invisible momentum; matched selected jet from Jet_genJetIdx; reco-axis and gen-axis recoil projections are both stored; R1, Rn and Ru should be formed from ratios of profile means, not means of event ratios");
+   truthDefinition.Write("zjet_truth_hdm_definition");
+   TObjString residualDefinition(
+     "p2res stores the inverse final L2L3Residual factor; all-pairs l2res uses signed parallel-minus-transverse weights; legacy/l2res uses the legacy leading-jet selection without transverse subtraction and reproduces ZbAnalysis p2res binning versus Z pT");
+   residualDefinition.Write("zjet_previous_residual_definition");
    
    curdir->cd();
 
@@ -1004,18 +1394,26 @@ void zjet::Loop()
       h_cutflow->Fill(4., eventWeight);
       h_legacy_cutflow->Fill(4.,legacyEventWeight);
 
-      if (nMuon>nMuonMax || nJet>nJetMax || nTrigObj>nMaxTrigObj) {
+      if (nMuon>nMuonMax || nJet>nJetMax || nTrigObj>nMaxTrigObj ||
+          (isMC && (nGenJet>nMaxGenJet || nGenPart>nMaxGenPart))) {
         cout << "ERROR: collection size exceeds fixed MakeClass buffer: nMuon="
              << nMuon << ", nJet=" << nJet << ", nTrigObj=" << nTrigObj
+             << ", nGenJet=" << (isMC ? nGenJet : 0)
+             << ", nGenPart=" << (isMC ? nGenPart : 0)
              << endl;
         continue;
       }
 
       double jetInverseResidual[nJetMax];
+      double jetStoredInverseJec[nJetMax];
       double jetRawPt[nJetMax];
       double jetRawMass[nJetMax];
       for (int ijet=0; ijet<nJet; ++ijet) {
         jetInverseResidual[ijet] = 1.;
+        // Preserve the NanoAOD correction before Jet_rawFactor is updated to
+        // describe the correction recomputed below. ZbAnalysis stores this
+        // original inverse JEC in its legacy p2jes profiles.
+        jetStoredInverseJec[ijet] = 1.-Jet_rawFactor[ijet];
         jetRawPt[ijet] = Jet_pt[ijet]*(1.-Jet_rawFactor[ijet]);
         jetRawMass[ijet] = Jet_mass[ijet]*(1.-Jet_rawFactor[ijet]);
       }
@@ -1362,6 +1760,140 @@ void zjet::Loop()
       h_legacy_cutflow->Fill(6.,legacyEventWeight);
       h_probe_veto->Fill(1., eventWeight);
 
+      // Build an independent generator-level recoil from the two status-one
+      // muons matched to the selected reconstructed pair, particle-level jets
+      // and GenMET. Keeping this decomposition separate from reco MET makes it
+      // possible to extract R1, Rn and Ru as ratios of mean projected recoil
+      // components without unstable event-by-event divisions near zero.
+      GeneratorRecoil generatorRecoil;
+      TLorentzVector generatorMuonPlus, generatorMuonMinus;
+      if (isMC) {
+        auto matchedGeneratorMuon = [&](const TLorentzVector &recoMuon,
+                                        int pdgId,
+                                        TLorentzVector &generatorMuon) {
+          int bestIndex = -1;
+          double bestDeltaR = 0.1;
+          for (int igen=0; igen<nGenPart; ++igen) {
+            if (GenPart_pdgId[igen]!=pdgId || GenPart_status[igen]!=1)
+              continue;
+            TLorentzVector candidate;
+            candidate.SetPtEtaPhiM(
+              GenPart_pt[igen],GenPart_eta[igen],GenPart_phi[igen],
+              GenPart_mass[igen]);
+            const double deltaR = recoMuon.DeltaR(candidate);
+            if (deltaR<bestDeltaR) {
+              bestDeltaR = deltaR;
+              bestIndex = igen;
+              generatorMuon = candidate;
+            }
+          }
+          return bestIndex;
+        };
+        const int generatorPlusIndex = matchedGeneratorMuon(
+          p4lplus,-13,generatorMuonPlus);
+        const int generatorMinusIndex = matchedGeneratorMuon(
+          p4lminus,+13,generatorMuonMinus);
+        if (generatorPlusIndex>=0 && generatorMinusIndex>=0 &&
+            generatorPlusIndex!=generatorMinusIndex) {
+          generatorRecoil.hasGeneratorZ = true;
+          generatorRecoil.z = generatorMuonPlus+generatorMuonMinus;
+          generatorRecoil.ht = generatorRecoil.z;
+          for (int igen=0; igen<nGenJet; ++igen) {
+            TLorentzVector generatorJet;
+            generatorJet.SetPtEtaPhiM(
+              GenJet_pt[igen],GenJet_eta[igen],GenJet_phi[igen],
+              GenJet_mass[igen]);
+            if (generatorJet.Pt()<=15. ||
+                generatorJet.DeltaR(generatorMuonPlus)<0.3 ||
+                generatorJet.DeltaR(generatorMuonMinus)<0.3)
+              continue;
+            generatorRecoil.ht += generatorJet;
+          }
+          generatorRecoil.ht.SetPtEtaPhiM(
+            generatorRecoil.ht.Pt(),0.,generatorRecoil.ht.Phi(),0.);
+          generatorRecoil.met.SetPtEtaPhiM(
+            GenMET_pt,0.,GenMET_phi,0.);
+          generatorRecoil.metu = generatorRecoil.met+generatorRecoil.ht;
+        }
+      }
+
+      auto generatorPairComponents = [&]
+        (int generatorJetIndex, const TLorentzVector &reconstructedJet,
+         const TLorentzVector &recoProjectionAxis,
+         const TLorentzVector &genProjectionAxis, bool transverse) {
+        GeneratorPairComponents result;
+        if (!isMC || generatorJetIndex<0 || generatorJetIndex>=nGenJet)
+          return result;
+        TLorentzVector generatorJet;
+        generatorJet.SetPtEtaPhiM(
+          GenJet_pt[generatorJetIndex],GenJet_eta[generatorJetIndex],
+          GenJet_phi[generatorJetIndex],GenJet_mass[generatorJetIndex]);
+        if (generatorJet.Pt()<=0.) return result;
+        result.valid = true;
+        result.genJetPt = generatorJet.Pt();
+        result.deltaR = reconstructedJet.DeltaR(generatorJet);
+        if (!generatorRecoil.hasGeneratorZ ||
+            generatorRecoil.z.Pt()<=0. || p4z.Pt()<=0.)
+          return result;
+
+        result.met1 = -generatorRecoil.z-generatorJet;
+        result.met1.SetPtEtaPhiM(
+          result.met1.Pt(),0.,result.met1.Phi(),0.);
+        result.metn = -generatorRecoil.ht+generatorRecoil.z+generatorJet;
+        result.metn.SetPtEtaPhiM(
+          result.metn.Pt(),0.,result.metn.Phi(),0.);
+
+        auto project = [](const TLorentzVector &component,
+                          const TLorentzVector &axis, double denominator,
+                          double offset) {
+          return offset+component.Vect().Dot(axis.Vect())/denominator;
+        };
+        const double recoDenominator = p4z.Pt()*p4z.Pt();
+        const double genDenominator =
+          generatorRecoil.z.Pt()*generatorRecoil.z.Pt();
+        const double baseMpf1Reco = project(
+          result.met1,p4z,recoDenominator,1.);
+        const double baseMpfnReco = project(
+          result.metn,p4z,recoDenominator,0.);
+        const double baseMpfuReco = project(
+          generatorRecoil.metu,p4z,recoDenominator,0.);
+        const double baseMpf1Gen = project(
+          result.met1,generatorRecoil.z,genDenominator,1.);
+        const double baseMpfnGen = project(
+          result.metn,generatorRecoil.z,genDenominator,0.);
+        const double baseMpfuGen = project(
+          generatorRecoil.metu,generatorRecoil.z,genDenominator,0.);
+        if (!transverse) {
+          result.genMpf1RecoAxis = baseMpf1Reco;
+          result.genMpfnRecoAxis = baseMpfnReco;
+          result.genMpfuRecoAxis = baseMpfuReco;
+          result.genMpf1GenAxis = baseMpf1Gen;
+          result.genMpfnGenAxis = baseMpfnGen;
+          result.genMpfuGenAxis = baseMpfuGen;
+        }
+        else {
+          // Mirror the transverse estimator used below: retain the parallel
+          // component and add the projection on the rotated axis.
+          result.genMpf1RecoAxis = project(
+            result.met1,recoProjectionAxis,recoDenominator,1.)+
+            (baseMpf1Reco-1.);
+          result.genMpfnRecoAxis = project(
+            result.metn,recoProjectionAxis,recoDenominator,0.)+baseMpfnReco;
+          result.genMpfuRecoAxis = project(
+            generatorRecoil.metu,recoProjectionAxis,recoDenominator,0.)+
+            baseMpfuReco;
+          result.genMpf1GenAxis = project(
+            result.met1,genProjectionAxis,genDenominator,1.)+
+            (baseMpf1Gen-1.);
+          result.genMpfnGenAxis = project(
+            result.metn,genProjectionAxis,genDenominator,0.)+baseMpfnGen;
+          result.genMpfuGenAxis = project(
+            generatorRecoil.metu,genProjectionAxis,genDenominator,0.)+
+            baseMpfuGen;
+        }
+        return result;
+      };
+
       // Legacy leading-jet reference. It shares the synchronized event and
       // dimuon selection above but retains the reference analysis choices,
       // including its alpha definition and JetID setting.
@@ -1483,9 +2015,11 @@ void zjet::Loop()
               h_legacy_cutflow->Fill(9.,legacyEventWeight);
               bool hasGenResponse = false;
               double genResponse = 0.;
+              int legacyGeneratorJetIndex = -1;
               if (isMC && Jet_genJetIdx[legacyJetIndex]>=0 &&
                   Jet_genJetIdx[legacyJetIndex]<nGenJet) {
                 const int igen = Jet_genJetIdx[legacyJetIndex];
+                legacyGeneratorJetIndex = igen;
                 TLorentzVector generatorJet;
                 generatorJet.SetPtEtaPhiM(
                   GenJet_pt[igen],GenJet_eta[igen],GenJet_phi[igen],
@@ -1496,7 +2030,40 @@ void zjet::Loop()
                 hasGenResponse = std::isfinite(genResponse);
               }
               const double absLegacyEta = fabs(legacyJet.Eta());
+              const double inverseStoredJec =
+                jetStoredInverseJec[legacyJetIndex];
+              legacyH2PtEta->Fill(
+                absLegacyEta,ptz,legacyEventWeight);
+              legacyH2PtEtaPf->Fill(
+                absLegacyEta,ptj,legacyEventWeight);
+              legacyH2PtEtaTc->Fill(
+                absLegacyEta,ptz,legacyEventWeight);
+              legacyP2Jes->Fill(
+                absLegacyEta,ptz,inverseStoredJec,legacyEventWeight);
+              legacyP2JesPf->Fill(
+                absLegacyEta,ptj,inverseStoredJec,legacyEventWeight);
+              legacyP2JesTc->Fill(
+                absLegacyEta,ptz,inverseStoredJec,legacyEventWeight);
+              legacyP2Res->Fill(
+                absLegacyEta,ptz,jetInverseResidual[legacyJetIndex],
+                legacyEventWeight);
+              legacyP2ResPf->Fill(
+                absLegacyEta,ptj,jetInverseResidual[legacyJetIndex],
+                legacyEventWeight);
+              legacyP2ResTc->Fill(
+                absLegacyEta,ptz,jetInverseResidual[legacyJetIndex],
+                legacyEventWeight);
               if (absLegacyEta>0. && absLegacyEta<1.3) {
+                const TLorentzVector &generatorAxis =
+                  generatorRecoil.hasGeneratorZ ? generatorRecoil.z : p4z;
+                const GeneratorPairComponents generatorPair =
+                  generatorPairComponents(
+                    legacyGeneratorJetIndex,legacyJet,p4z,generatorAxis,
+                    false);
+                fillTruthHDMProfiles1D(
+                  legacyTruthProfiles,"parallel",ptz,ptj,ptave,
+                  hasGenResponse,generatorRecoil,generatorPair,mpf1,mpfn,
+                  mpfu,jetInverseResidual[legacyJetIndex],legacyEventWeight);
                 fillResponseProfiles1D(
                   legacyProfiles,ptz,ptj,ptave,db,mpf,mpf1,mpfn,mpfu,mpfnu,
                   jetInverseResidual[legacyJetIndex],
@@ -1861,6 +2428,19 @@ void zjet::Loop()
 		                  ? GenJet_partonFlavour[genJetIndex] : 0),
 		               hasGenResponse,genBalance,db,mpf,mpf1,mpfn,mpfu,wt);
 		    if (abseta<1.305) {
+		      const TLorentzVector &generatorAxis =
+		        generatorRecoil.hasGeneratorZ ? generatorRecoil.z : p4z;
+		      const GeneratorPairComponents generatorPair =
+		        generatorPairComponents(
+		          genJetIndex,p4jet,p4z,generatorAxis,false);
+		      fillTruthHDMProfiles1D(
+		        allPairsTruthProfiles,"parallel",ptz,ptj,pta,truthMatched,
+		        generatorRecoil,generatorPair,mpf1,mpfn,mpfu,
+		        jetInverseResidual[ijet],wt);
+		      fillTruthHDMProfiles1D(
+		        allPairsTruthProfiles,"subtracted",ptz,ptj,pta,truthMatched,
+		        generatorRecoil,generatorPair,mpf1,mpfn,mpfu,
+		        jetInverseResidual[ijet],wt);
 		      fillResponseProfiles1D(
 		        allPairsProfiles,ptz,ptj,pta,db,mpf,mpf1,mpfn,mpfu,mpfnu,
 		        jetInverseResidual[ijet],Jet_chHEF[ijet],Jet_neEmEF[ijet],
@@ -1975,13 +2555,32 @@ void zjet::Loop()
 		                  ? GenJet_partonFlavour[genJetIndex] : 0),
 		               hasGenResponse,genBalance,db,mpfT,mpf1T,mpfnT,
 		               mpfuT,wt);
-		    if (abseta<1.305)
+		    if (abseta<1.305) {
+		      TLorentzVector generatorTransverseAxis = axis;
+		      if (generatorRecoil.hasGeneratorZ)
+		        generatorTransverseAxis.SetPtEtaPhiM(
+		          generatorRecoil.z.Pt(),generatorRecoil.z.Eta(),
+		          generatorRecoil.z.Phi()+
+		            (idir==0 ? -0.5*TMath::Pi() : 0.5*TMath::Pi()),
+		          generatorRecoil.z.M());
+		      const GeneratorPairComponents generatorPair =
+		        generatorPairComponents(
+		          genJetIndex,p4jet,axis,generatorTransverseAxis,true);
+		      fillTruthHDMProfiles1D(
+		        allPairsTruthProfiles,"transverse",ptz,ptj,pta,truthMatched,
+		        generatorRecoil,generatorPair,mpf1T,mpfnT,mpfuT,
+		        jetInverseResidual[ijet],wraw);
+		      fillTruthHDMProfiles1D(
+		        allPairsTruthProfiles,"subtracted",ptz,ptj,pta,truthMatched,
+		        generatorRecoil,generatorPair,mpf1T,mpfnT,mpfuT,
+		        jetInverseResidual[ijet],wt);
 		      fillResponseProfiles1D(
 		        allPairsProfiles,ptz,ptj,pta,db,mpfT,mpf1T,mpfnT,mpfuT,
 		        mpfnuT,jetInverseResidual[ijet],Jet_chHEF[ijet],
 		        Jet_neEmEF[ijet],Jet_neHEF[ijet],Jet_chEmEF[ijet],
 		        Jet_muEF[ijet],Rho_fixedGridRhoFastjetAll,hasGenResponse,
 		        genBalance,wt);
+		    }
 
 		    h2ptetapf_->Fill(abseta,ptj,wt); h2pteta_->Fill(abseta,pta,wt);
 		    h2ptetatc_->Fill(abseta,ptz,wt); h2ptetapf->Fill(eta,ptj,wt);
@@ -2036,7 +2635,7 @@ void zjet::Loop()
 	h_tran1pt->Fill(p4tran1.Pt());
 	h_tran1eta->Fill(p4tran1.Eta());
       }
-   } // for jentry in nentries
+	   } // for jentry in nentries
 
    if (readFailure) {
      fout->Close();
@@ -2044,8 +2643,10 @@ void zjet::Loop()
      cout << "Removed incomplete output " << outputFile << "." << endl;
      return;
    }
-   
-   cout << endl << "Finished loop, writing file " << outputFile << "." << endl << flush;
+	   writeTruthHDMDerivedGraphs(allPairsTruthProfiles);
+	   writeTruthHDMDerivedGraphs(legacyTruthProfiles);
+
+	   cout << endl << "Finished loop, writing file " << outputFile << "." << endl << flush;
     cout << "Processed " << nentries << " events\n";
     //cout << "Skipped " << _nbadevents_json << " events due to JSON ("
     //	 << (100.*_nbadevents_json/_nevents) << "%) \n";

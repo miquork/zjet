@@ -75,6 +75,65 @@ commit.
 These changes require a new event-processing pass before they can appear in a
 compatibility file.
 
+## Previous residual correction audit
+
+Both implementations recompute the Run 2024I V11M data JEC from raw jet pT.
+`ZbAnalysis::applyJEC` stores the final residual factor as the ratio of the
+last two cumulative subcorrections and passes its inverse to
+`L2ResHistograms::fill`. The local analysis stores the same inverse quantity
+directly as `jetInverseResidual`. The basic correction convention is therefore
+the same.
+
+The previous compatibility writer nevertheless introduced a method mismatch:
+legacy response profiles were selected from `legacy/profiles1d`, but
+`data/l2res/p2res` was always copied from the signed all-pairs analysis. The
+legacy response was consequently multiplied later by a previous-JEC profile
+formed from a different jet population and with transverse sideband
+subtraction. New event output now contains `legacy/l2res/p2res`, `p2respf` and
+`p2restc` (and the corresponding full-JEC profiles and counts).
+`writeJecsys3.C(..., useLegacyMethod=true)` overlays these method-specific
+objects in the compatibility file. Old event files remain readable but carry
+an explicit warning metadata object when this directory is absent.
+
+For exact synchronization, the legacy `p2jes*` controls use the original
+inverse NanoAOD JEC, `1 - Jet_rawFactor`, saved before the local raw-pT JEC
+recomputation. The normal all-pairs controls continue to describe the locally
+recomputed correction. This follows the reference implementation and prevents
+the legacy diagnostic itself from changing when the input JEC is recomputed.
+
+The all-pairs `p2res*` profiles intentionally use the same signed
+parallel-minus-transverse weights as the response. This is the correct
+first-order average correction for the subtracted population. The new truth
+controls also store the event-correlated products DB/residual and
+MPF1/residual, which permit testing the approximation made by multiplying a
+non-linear HDM result by an independently averaged correction.
+
+Two limitations remain in the downstream JEC chain:
+
+- The historical `ZbAnalysis` unsuffixed `p2res` is filled versus Z pT even
+  though its title says average-projection pT. The local legacy profile
+  reproduces that behavior for synchronization. The all-pairs unsuffixed
+  profile is genuinely binned in average pT.
+- `reprocess.C` currently reduces `p2res` to one central `presz` and uses the
+  resulting `herr_l2l3res` for all Z+jet reference-pT variants. It therefore
+  cannot simultaneously represent the Z-pT, jet-pT and average-pT conditional
+  previous correction. In addition, multiplying the final non-linear HDM
+  response by a mean inverse residual neglects correlations with MPF1, MPFn
+  and MPFu.
+
+The compatibility output now retains `residual_zmmjet_a100`,
+`residual_jetpt_a100`, and `residual_ptave_a100` from the native profiles.
+Only the first is consumed by the current `reprocess.C`; the other two make a
+future axis-consistent iterative treatment possible without rerunning the
+event analysis.
+
+Iteration is now method-consistent for the legacy Z-pT synchronization path,
+provided the correction derived from one iteration is used as the input JEC
+of the next event pass. Per-axis convergence at the per-mille level still
+requires carrying `p2restc`, `p2respf` and `p2res` separately through
+`reprocess.C` and applying the previous correction at component level before
+the HDM equation.
+
 ## Intentional analysis difference
 
 The normal all-pairs analysis reconstructs and requires Run-3 Tight Jet ID for

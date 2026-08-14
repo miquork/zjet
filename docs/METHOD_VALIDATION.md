@@ -58,7 +58,7 @@ change and soft-recoil terms at the few-per-mille level. This demonstrates
 that the observed method difference is not created by the HDM combination,
 but it does not by itself prove that the all-pairs estimator is unbiased.
 
-## Controls requiring the next event pass
+## Generator-recoil controls for the next event pass
 
 The analysis now books, for all, truth-matched, and pileup jets:
 
@@ -73,8 +73,45 @@ from the four nested alpha selections. Because those selections are strongly
 correlated, the displayed intercept error is the fit spread and not an
 independent-sample statistical uncertainty.
 
-The current event-level ROOT files predate these booked controls. The deck
-therefore records them as queued rather than silently drawing empty plots. A
-new event pass is required only for this final physical-bias diagnosis; the
-HDM compatibility objects and the direct jecdata comparisons require no new
-processing.
+The `truth_hdm/` directory now stores the following independently for the
+parallel, transverse and signed parallel-minus-transverse samples, in Z-pT,
+jet-pT and average-pT bins:
+
+- selected, reco-gen matched and complete generator-recoil counts;
+- match fraction, match DeltaR, generator-jet pT, reco/gen pT, gen/bin pT and
+  reco/bin pT;
+- generator-Z over reconstructed-Z pT;
+- reconstructed MPF1, MPFn and MPFu for all selected pairs and separately
+  for the same complete truth-matched population used in the ratios;
+- generator MPF1, MPFn and MPFu projected both on the reconstructed-Z axis
+  and on the independently reconstructed generator-Z axis;
+- reconstructed-times-generator and generator-squared component moments;
+- the inverse previous residual correction, plus DB and MPF1 with the selected
+  jet's previous residual removed.
+
+The generator Z is built from status-one generator muons matched to the two
+selected reconstructed muons within DeltaR 0.1. Generator HT uses generator
+jets above 15 GeV cleaned from those muons, and the invisible component comes
+from GenMET. The generator decomposition otherwise mirrors the reconstructed
+`met1`, `metn` and `metu` definitions.
+
+Derived `TGraphErrors` named `response_r1_reco_axis`,
+`response_rn_reco_axis` and `response_ru_reco_axis` contain ratios of profile
+means over an identical truth-matched event population in numerator and
+denominator. This is deliberate: an event-wise `reco/gen` recoil-component
+ratio is singular and biased when the signed generator projection is close to zero.
+The corresponding `closure_*_gen_axis` graphs expose generator-Z resolution
+and final-state-radiation effects.
+
+The additional `slope_r1_reco_axis`, `slope_rn_reco_axis`, and
+`slope_ru_reco_axis` graphs evaluate
+`<reco component * gen component>/<gen component squared>`. They provide a
+zero-intercept response estimate that remains meaningful when the signed mean
+of a soft component is close to zero. Both the ratio-of-means and moment-slope
+inputs are retained so their model dependence can be tested explicitly. The
+simple graph errors do not include the numerator-denominator covariance; use
+the stored profiles or resampling for precision uncertainties.
+
+The synchronized leading-jet controls are stored in
+`legacy/truth_hdm/parallel/`. A new event pass is required before these inputs
+can be used in the comparison deck.

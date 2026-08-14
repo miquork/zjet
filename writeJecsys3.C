@@ -100,6 +100,19 @@ void copyDirectory(TDirectory *source, TDirectory *target) {
   }
 }
 
+void copyObjectOverwrite(TDirectory *source, TDirectory *target,
+                         const std::string &name) {
+  if (!source || !target)
+    throw std::runtime_error("copyObjectOverwrite received a null directory");
+  TObject *object = source->Get(name.c_str());
+  if (!object)
+    throw std::runtime_error(
+      "Missing method-specific object " + std::string(source->GetPath()) +
+      "/" + name);
+  target->cd();
+  object->Write(name.c_str(),TObject::kOverwrite);
+}
+
 void writeStoredHistogram(TDirectory *source, TDirectory *target,
                           const std::string &sourceName,
                           const std::string &targetName) {
@@ -323,6 +336,15 @@ bool writeGlobalFitInputs(TFile *source, TDirectory *sampleDirectory,
     writeNativeResponseBinning(nativeProfiles,etaDirectory,"zmmjet");
     writeNativeResponseBinning(nativeProfiles,etaDirectory,"jetpt");
     writeNativeResponseBinning(nativeProfiles,etaDirectory,"ptave");
+    // Keep the previous residual conditional on every reference-pT choice.
+    // Current reprocess.C consumes residual_zmmjet_a100, while the two extra
+    // profiles make an axis-consistent iterative treatment possible without
+    // rerunning the event analysis.
+    for (const char *axisName : {"zmmjet","jetpt","ptave"}) {
+      TDirectory *axis = requireDirectory(nativeProfiles,axisName);
+      writeStoredHistogram(axis,etaDirectory,"residual",
+                           std::string("residual_")+axisName+"_a100");
+    }
   }
   else {
     if (useLegacyMethod)
@@ -346,7 +368,6 @@ bool writeGlobalFitInputs(TFile *source, TDirectory *sampleDirectory,
       {"muEF", "h_Zpt_muEF_alpha100"},
       {"rho", "h_Zpt_rho_alpha100"},
       {"rbal", "rbal_zmmjet_a100"},
-      {"residual", "residual_zmmjet_a100"},
       {"mass", "h_Zpt_mZ_alpha100"},
     };
     for (const auto &entry : profiles)
@@ -480,7 +501,7 @@ void writeHDMCombination(TFile *output, double responseN, double responseU) {
 bool copySample(TFile *source, TFile *target, const char *sample,
                 bool isMC, bool addFlavorPlaceholders,
                 bool useLegacyMethod, bool preferOneDimensional,
-                bool &usedNativeProfiles) {
+                bool &usedNativeProfiles, bool &usedMethodL2Res) {
   TDirectory *sampleDirectory = makeDirectory(target,sample);
   usedNativeProfiles = writeGlobalFitInputs(
     source,sampleDirectory,isMC,useLegacyMethod,preferOneDimensional);
@@ -492,6 +513,20 @@ bool copySample(TFile *source, TFile *target, const char *sample,
     TDirectory *sourceDirectory = requireDirectory(source,name);
     TDirectory *targetDirectory = makeDirectory(sampleDirectory,name);
     copyDirectory(sourceDirectory,targetDirectory);
+  }
+  usedMethodL2Res = false;
+  if (useLegacyMethod) {
+    TDirectory *legacyL2Res = source->GetDirectory("legacy/l2res");
+    if (legacyL2Res) {
+      TDirectory *targetL2Res = requireDirectory(sampleDirectory,"l2res");
+      for (const char *name : {
+             "h2pteta", "h2ptetapf", "h2ptetatc",
+             "p2jes", "p2jespf", "p2jestc",
+             "p2res", "p2respf", "p2restc",
+           })
+        copyObjectOverwrite(legacyL2Res,targetL2Res,name);
+      usedMethodL2Res = true;
+    }
   }
   return storedFlavorInputs;
 }
@@ -555,18 +590,23 @@ void writeJecsys3(
                              std::string(outputFile));
   bool dataNativeProfiles = false;
   bool mcNativeProfiles = false;
+  bool dataMethodL2Res = false;
+  bool mcMethodL2Res = false;
   const bool dataFlavorInputs = copySample(
     data.get(),&output,"data",false,addFlavorPlaceholders,useLegacyMethod,
-    preferOneDimensional,dataNativeProfiles);
+    preferOneDimensional,dataNativeProfiles,dataMethodL2Res);
   const bool mcFlavorInputs = copySample(
     mc.get(),&output,"mc",true,addFlavorPlaceholders,useLegacyMethod,
-    preferOneDimensional,mcNativeProfiles);
+    preferOneDimensional,mcNativeProfiles,mcMethodL2Res);
   if (dataNativeProfiles!=mcNativeProfiles)
     throw std::runtime_error(
       "Native one-dimensional profiles exist in only one sample");
   if (dataFlavorInputs!=mcFlavorInputs)
     throw std::runtime_error(
       "Measured flavor inputs exist in only one of data and MC");
+  if (dataMethodL2Res!=mcMethodL2Res)
+    throw std::runtime_error(
+      "Method-specific legacy L2Res inputs exist in only one sample");
   writeHDMCombination(&output,hdmResponseN,hdmResponseU);
   output.cd();
   TNamed method(
@@ -586,9 +626,13 @@ void writeJecsys3(
       "zjet_legacy_flavor_note",
       "inclusive inputs use legacy leading jet; flavor-tagged inputs remain from all-pairs method during synchronization");
     flavorMethod.Write();
+  }
+  if (useLegacyMethod) {
     TNamed l2resMethod(
       "zjet_legacy_l2res_note",
-      "eta_00_13 inclusive inputs use legacy leading jet; copied l2res and l2res1 directories remain from all-pairs method");
+      dataMethodL2Res
+        ? "legacy leading-jet p2jes and p2res profiles overlay l2res; l2res1 remains the all-pairs relative-eta control"
+        : "WARNING: input predates method-specific legacy p2jes/p2res; l2res and l2res1 remain from all-pairs method");
     l2resMethod.Write();
   }
   TNamed compatibility(
