@@ -265,71 +265,76 @@ void validateFlavorMatrix(const char *fileName, bool isMC) {
     "m0", "m2", "mn", "mu", "mnu", "hdm",
   };
   const std::vector<std::string> variants = {"ab","ad","tc","pf"};
-  for (const std::string &variant : variants) {
-    std::map<std::string,TProfile3D*> profiles;
-    for (const std::string &observable : observables) {
-      const std::string name =
-        "p3"+observable+variant+"_flavormatrix";
-      TProfile3D *profile = requireExact<TProfile3D>(
-        file.get(),"FlavorMatrix/"+name,failures);
-      profiles[observable] = profile;
-      checkMatrixGeometry(profile,"FlavorMatrix/"+name,failures);
-    }
-    if (!profiles["m0"] || !profiles["mn"] || !profiles["mu"] ||
-        !profiles["mnu"] || !profiles["hdm"])
-      continue;
+  for (const std::string &suffix : {
+         std::string("_flavormatrix"),
+         std::string("_parallel_flavormatrix")}) {
+    for (const std::string &variant : variants) {
+      std::map<std::string,TProfile3D*> profiles;
+      for (const std::string &observable : observables) {
+        const std::string name = "p3"+observable+variant+suffix;
+        TProfile3D *profile = requireExact<TProfile3D>(
+          file.get(),"FlavorMatrix/"+name,failures);
+        profiles[observable] = profile;
+        checkMatrixGeometry(profile,"FlavorMatrix/"+name,failures);
+      }
+      if (!profiles["m0"] || !profiles["mn"] || !profiles["mu"] ||
+          !profiles["mnu"] || !profiles["hdm"])
+        continue;
 
-    for (int bin=0; bin<profiles["m0"]->GetNcells(); ++bin) {
-      const double sumw = profiles["m0"]->GetBinEntries(bin);
-      for (const char *component : {"mn","mu","mnu"}) {
-        const double other = profiles[component]->GetBinEntries(bin);
-        if (!closeEnough(other,sumw)) {
+      for (int bin=0; bin<profiles["m0"]->GetNcells(); ++bin) {
+        const double sumw = profiles["m0"]->GetBinEntries(bin);
+        for (const char *component : {"mn","mu","mnu"}) {
+          const double other = profiles[component]->GetBinEntries(bin);
+          if (!closeEnough(other,sumw)) {
+            std::ostringstream message;
+            message << variant << suffix << ": " << component
+                    << " entries differ from m0 at global bin " << bin;
+            fail(failures,message.str());
+          }
+        }
+        const double mnuNumerator = profileNumerator(profiles["mnu"],bin);
+        const double componentNumerator =
+          profileNumerator(profiles["mn"],bin)+
+          profileNumerator(profiles["mu"],bin);
+        if (!closeEnough(mnuNumerator,componentNumerator,1.e-8,2.e-10)) {
           std::ostringstream message;
-          message << variant << ": " << component
-                  << " entries differ from m0 at global bin " << bin;
+          message << variant << suffix
+                  << ": mnu != mn+mu at global bin " << bin
+                  << " (weighted numerators " << mnuNumerator << " vs "
+                  << componentNumerator << ")";
           fail(failures,message.str());
         }
-      }
-      const double mnuNumerator = profileNumerator(profiles["mnu"],bin);
-      const double componentNumerator =
-        profileNumerator(profiles["mn"],bin)+
-        profileNumerator(profiles["mu"],bin);
-      if (!closeEnough(mnuNumerator,componentNumerator,1.e-8,2.e-10)) {
-        std::ostringstream message;
-        message << variant << ": mnu != mn+mu at global bin " << bin
-                << " (weighted numerators " << mnuNumerator << " vs "
-                << componentNumerator << ")";
-        fail(failures,message.str());
-      }
 
-      TProfile3D *hdm = profiles["hdm"];
-      const double hdmSumw = hdm->GetBinEntries(bin);
-      const double m0 = profiles["m0"]->GetBinContent(bin);
-      const double mn = profiles["mn"]->GetBinContent(bin);
-      const double mu = profiles["mu"]->GetBinContent(bin);
-      const double denominator =
-        1.-mn/ZJetFlavorMatrix::responseN-mu/ZJetFlavorMatrix::responseU;
-      const bool expectedDefined =
-        sumw>0. && std::isfinite(m0) && std::isfinite(mn) &&
-        std::isfinite(mu) && std::isfinite(denominator) &&
-        std::fabs(denominator)>=1.e-8;
-      if (expectedDefined) {
-        const double expected = (m0-mn-mu)/denominator;
-        if (!closeEnough(hdmSumw,sumw) ||
-            !closeEnough(hdm->GetBinContent(bin),expected,1.e-8,2.e-10)) {
+        TProfile3D *hdm = profiles["hdm"];
+        const double hdmSumw = hdm->GetBinEntries(bin);
+        const double m0 = profiles["m0"]->GetBinContent(bin);
+        const double mn = profiles["mn"]->GetBinContent(bin);
+        const double mu = profiles["mu"]->GetBinContent(bin);
+        const double denominator =
+          1.-mn/ZJetFlavorMatrix::responseN-mu/ZJetFlavorMatrix::responseU;
+        const bool expectedDefined =
+          sumw>0. && std::isfinite(m0) && std::isfinite(mn) &&
+          std::isfinite(mu) && std::isfinite(denominator) &&
+          std::fabs(denominator)>=1.e-8;
+        if (expectedDefined) {
+          const double expected = (m0-mn-mu)/denominator;
+          if (!closeEnough(hdmSumw,sumw) ||
+              !closeEnough(hdm->GetBinContent(bin),expected,1.e-8,2.e-10)) {
+            std::ostringstream message;
+            message << variant << suffix
+                    << ": final HDM mismatch at global bin " << bin
+                    << " (value " << hdm->GetBinContent(bin)
+                    << ", expected " << expected << ")";
+            fail(failures,message.str());
+          }
+        }
+        else if (!closeEnough(hdmSumw,0.) ||
+                 !closeEnough(profileNumerator(hdm,bin),0.)) {
           std::ostringstream message;
-          message << variant << ": final HDM mismatch at global bin " << bin
-                  << " (value " << hdm->GetBinContent(bin)
-                  << ", expected " << expected << ")";
+          message << variant << suffix
+                  << ": HDM is populated in undefined global bin " << bin;
           fail(failures,message.str());
         }
-      }
-      else if (!closeEnough(hdmSumw,0.) ||
-               !closeEnough(profileNumerator(hdm,bin),0.)) {
-        std::ostringstream message;
-        message << variant << ": HDM is populated in undefined global bin "
-                << bin;
-        fail(failures,message.str());
       }
     }
   }

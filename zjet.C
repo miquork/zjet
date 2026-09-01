@@ -119,6 +119,7 @@ struct FlavorMatrixHistograms {
   TH3D *heavyTopologyCounts = nullptr;
   TH3D *heavyHadronMultiplicity = nullptr;
   std::map<std::string,TProfile3D*> profiles;
+  std::map<std::string,TProfile3D*> parallelProfiles;
   std::map<std::string,TH3D*> pairControls;
   std::map<std::string,TH3D*> heavyTopologyPairControls;
   std::map<int,TH3D*> cubeControls;
@@ -162,6 +163,7 @@ const int flavorMatrixPtBinCount =
 const double flavorIdBins[] = {
   -0.5,0.5,1.5,2.5,3.5,4.5,5.5,6.5,
 };
+const double pnetQvgThreshold = 0.30;
 
 int reconstructedHybridFlavor(double cvb, double cvl, double pnetQvg) {
   if (!std::isfinite(cvb) || !std::isfinite(cvl) ||
@@ -169,7 +171,7 @@ int reconstructedHybridFlavor(double cvb, double cvl, double pnetQvg) {
     return 0;
   if (cvb<0.5) return 5;
   if (cvl>=0.5) return 4;
-  return (pnetQvg>=0.5 ? 1 : 6);
+  return (pnetQvg>=pnetQvgThreshold ? 1 : 6);
 }
 
 int generatorFlavorId(int partonFlavor) {
@@ -249,6 +251,14 @@ FlavorMatrixHistograms bookFlavorMatrix(TDirectory *parent) {
         flavorMatrixPtBinCount,flavorMatrixPtBins,
         7,flavorIdBins,7,flavorIdBins);
       result.profiles[name] = profile;
+      const std::string parallelName =
+        "p3"+observable+variant+"_parallel_flavormatrix";
+      TProfile3D *parallelProfile = new TProfile3D(
+        parallelName.c_str(),
+        ";Reference p_{T} (GeV);Reco hybrid flavor;Generator parton flavor",
+        flavorMatrixPtBinCount,flavorMatrixPtBins,
+        7,flavorIdBins,7,flavorIdBins);
+      result.parallelProfiles[parallelName] = parallelProfile;
     }
   }
 
@@ -376,9 +386,16 @@ void fillFlavorMatrix(
       const std::string name =
         "p3"+observable.first+variant.first+"_flavormatrix";
       if (std::isfinite(observable.second) &&
-          std::isfinite(variant.second.x))
+          std::isfinite(variant.second.x)) {
         histograms.profiles.at(name)->Fill(
           variant.second.x,recoFlavor,trueFlavor,observable.second,weight);
+        if (!transverse) {
+          const std::string parallelName =
+            "p3"+observable.first+variant.first+"_parallel_flavormatrix";
+          histograms.parallelProfiles.at(parallelName)->Fill(
+            variant.second.x,recoFlavor,trueFlavor,observable.second,weight);
+        }
+      }
     }
   }
   // Tagger-shape controls describe the un-subtracted signal-window sample.
@@ -1072,7 +1089,7 @@ void zjet::Loop()
    TObjString flavorDefinition(
      "Bettina/Sami DeepJet: B>0.7527; C=0.5*(CvB+CvL)>0.3985 after B veto; QG split at 0.5 after B/C veto");
    TObjString flavorMatrixDefinition(
-     "FlavorMatrix uses |eta(jet)|<1.3 and the signed all-pairs signal-minus-two-half-weight-sidebands estimator; hybrid tag IDs use UParTAK4 CvB/CvL and ParticleNet QvG at thresholds 0.5: undefined=0, uds=1, c=4, b=5, g=6; true IDs: undefined=0, d+u=1, s=3, c=4, b=5, g=6; data uses true ID 0 because truth is unavailable; heavy-hadron topology controls use GenJet_nCHadrons and GenJet_nBHadrons with bottom precedence: none=0, single-c=1, c-pair=2, other=3, single-b=4, b-pair=5, no-match=6, where double-heavy categories are gluon-splitting-enriched rather than exclusive production labels; HDM is derived from component means and re-finalized after hadd with Rn=1.00 and Ru=0.92; category axes remain numerically unlabelled until plotting so ROOT merges them without extension");
+     "FlavorMatrix uses |eta(jet)|<1.3 and stores both the signed all-pairs signal-minus-two-half-weight-sidebands estimator and pure-parallel response profiles; hybrid tag IDs use UParTAK4 CvB/CvL at 0.5 and ParticleNet QvG at 0.3: undefined=0, uds=1, c=4, b=5, g=6; true IDs: undefined=0, d+u=1, s=3, c=4, b=5, g=6; data uses true ID 0 because truth is unavailable; heavy-hadron topology controls use GenJet_nCHadrons and GenJet_nBHadrons with bottom precedence: none=0, single-c=1, c-pair=2, other=3, single-b=4, b-pair=5, no-match=6, where double-heavy categories are gluon-splitting-enriched rather than exclusive production labels; HDM is derived from component means and re-finalized after hadd with Rn=1.00 and Ru=0.92; category axes remain numerically unlabelled until plotting so ROOT merges them without extension");
 
    
    // Object pT plots
@@ -2974,6 +2991,15 @@ void zjet::Loop()
 	                                "_flavormatrix"),
 	       flavorMatrix.profiles.at(std::string("p3mu")+variant+
 	                                "_flavormatrix"));
+	     ZJetFlavorMatrix::finalizeHDMProfile(
+	       flavorMatrix.parallelProfiles.at(std::string("p3hdm")+variant+
+	                                        "_parallel_flavormatrix"),
+	       flavorMatrix.parallelProfiles.at(std::string("p3m0")+variant+
+	                                        "_parallel_flavormatrix"),
+	       flavorMatrix.parallelProfiles.at(std::string("p3mn")+variant+
+	                                        "_parallel_flavormatrix"),
+	       flavorMatrix.parallelProfiles.at(std::string("p3mu")+variant+
+	                                        "_parallel_flavormatrix"));
 	   }
 
 	   cout << endl << "Finished loop, writing file " << outputFile << "." << endl << flush;

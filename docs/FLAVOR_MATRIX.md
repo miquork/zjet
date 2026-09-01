@@ -20,12 +20,12 @@ stable ParticleNet QvG output. It is encoded on the second axis:
 | ID | Category | Selection |
 |---:|---|---|
 | 0 | undefined | any of UParT CvB, UParT CvL or PNet QvG is negative or non-finite |
-| 1 | uds | `UParT CvB >= 0.5`, `UParT CvL < 0.5`, `PNet QvG >= 0.5` |
+| 1 | uds | `UParT CvB >= 0.5`, `UParT CvL < 0.5`, `PNet QvG >= 0.3` |
 | 2 | reserved d | empty in the initial combined-uds definition |
 | 3 | reserved s | empty in the initial combined-uds definition |
 | 4 | c | `UParT CvB >= 0.5`, `UParT CvL >= 0.5` |
 | 5 | b | `UParT CvB < 0.5` |
-| 6 | g | `UParT CvB >= 0.5`, `UParT CvL < 0.5`, `PNet QvG < 0.5` |
+| 6 | g | `UParT CvB >= 0.5`, `UParT CvL < 0.5`, `PNet QvG < 0.3` |
 
 ParticleNet QvG is quark (`udsbc`) versus gluon, whereas the UParTAK4 node is
 documented as `uds` versus gluon. The b and c regions are applied before QvG,
@@ -50,6 +50,10 @@ always use ID 0.
   components in four reference-pT conventions: bisector, arithmetic average,
   Z pT and probe-jet pT.  The response projection is unchanged; only the
   x-axis binning variable changes.
+- `p3{m0,m2,mn,mu,mnu,hdm}{ab,ad,tc,pf}_parallel_flavormatrix` stores the
+  corresponding pure-parallel barrel response. The local flavor-response fit
+  uses this payload while the signed profiles remain available for pileup and
+  forward-region studies.
 - `FlavorMatrix/controls/h3_cvb_cvl_trueflavor`, `h3_cvb_qvg_trueflavor` and
   `h3_cvl_qvg_trueflavor` store pairwise discriminator densities for the
   un-subtracted parallel sample with probe pT above 30 GeV. The QvG coordinate
@@ -82,6 +86,15 @@ Data reco-category fractions do not uniquely determine every truth-to-reco
 tagging efficiency.  `analyzeFlavorMatrix.C` therefore reports a constrained,
 model-dependent estimate:
 
+- the empty reconstructed-undefined tag is omitted;
+- generator d/u and s are combined into `uds`;
+- the generator-undefined population is combined with gluons because its
+  discriminator shapes are gluon-like.
+
+This leaves four truth groups for four measured reconstructed tags and removes
+the prior-only null modes of the earlier six-column smoke fit. The inference
+then proceeds as follows:
+
 1. build the MC joint distribution `W_MC(t,f) = pi_f A_MC(t|f)`;
 2. keep the MC truth fractions `pi_f` fixed;
 3. constrain the reconstructed marginal to the observed data fractions;
@@ -97,13 +110,14 @@ regularized SVD solve.  The output records the condition number so an
 underconstrained or sparse smoke test is visible rather than silently treated
 as a precision result.
 
-The initial IPF fit uses the un-subtracted parallel-window population because
-IPF requires non-negative cell probabilities.  The response fit uses the
-signed parallel-minus-transverse component profiles.  This deliberately stable
-starting point includes pileup in the tagging-composition model; a precision
-iteration should replace it with a simultaneous non-negative signal/background
-likelihood (or demonstrate that a positive integrated subtracted matrix is
-stable).  The ROOT metadata and JSON summary record this choice explicitly.
+The IPF fit and the current response fit both use the un-subtracted parallel
+barrel population. IPF requires non-negative cell probabilities, and the
+barrel pileup-jet contamination is small enough for this to be the more stable
+one-file starting point. The signed parallel-minus-transverse profiles remain
+available for pileup controls and forward-region studies. A precision
+iteration should still compare this choice with a simultaneous non-negative
+signal/background likelihood. The ROOT metadata and JSON summary record the
+choice explicitly.
 
 ## Local validation
 
@@ -119,6 +133,18 @@ The quantitative ROOT output and machine-readable tables are written below
 figures in the same directory.  A one-file run is a schema and numerical
 stability test only; final efficiencies and response residuals require the
 full sample and uncertainty propagation.
+
+The vector validation deck is maintained as `flavorMatrixAnalysis.tex`. After
+regenerating the ROOT plots, rebuild it with
+
+```bash
+latexmk -pdf -interaction=nonstopmode -halt-on-error \
+  -outdir=output/pdf flavorMatrixAnalysis.tex
+```
+
+The deck deliberately rejects pT slices whose four-flavor response system is
+rank deficient or has condition number at least 100. The TSV tables retain
+all slices for diagnosis even when they are omitted from the summary graph.
 
 ## Metadata key cycles
 

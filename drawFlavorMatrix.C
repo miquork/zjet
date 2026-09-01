@@ -1,4 +1,4 @@
-// Publication-style plots for the compact UParT FlavorMatrix output.
+// Publication-style plots for the compact hybrid-tagger FlavorMatrix output.
 //
 // The macro deliberately draws score densities as binned heat maps.  It does
 // not turn individual jets into TGraph points, which keeps vector output small
@@ -27,6 +27,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -226,32 +228,36 @@ struct PairSpec {
 
 std::unique_ptr<TH2D> pairProjection(
   TH3D *source, const PairSpec &spec, const FlavorStyle &flavor) {
-  const int oldFirst = source->GetZaxis()->GetFirst();
-  const int oldLast = source->GetZaxis()->GetLast();
-  std::unique_ptr<TH2D> projection;
+  if (!source) return nullptr;
+  // All stored pair controls use x=first discriminator and y=second
+  // discriminator.  The requested figures put the second discriminator on
+  // the horizontal axis and the first on the vertical axis.  Build this
+  // transposition explicitly: ROOT's Project3D option ordering is easy to
+  // misread and caused the previous titles and contents to be crossed.
+  std::unique_ptr<TH2D> projection(new TH2D(
+    (std::string("h2_")+spec.stem+"_true"+flavor.fileName).c_str(),"",
+    source->GetNbinsY(),source->GetYaxis()->GetXmin(),
+    source->GetYaxis()->GetXmax(),
+    source->GetNbinsX(),source->GetXaxis()->GetXmin(),
+    source->GetXaxis()->GetXmax()));
+  projection->SetDirectory(nullptr);
+  projection->Sumw2();
   for (int id : flavor.ids) {
-    source->GetZaxis()->SetRange(id+1,id+1);
-    TH2D *temporary = dynamic_cast<TH2D*>(source->Project3D("yxe"));
-    if (!temporary) {
-      source->GetZaxis()->SetRange(oldFirst,oldLast);
-      throw std::runtime_error("Failed to project " +
-                               std::string(spec.object));
+    const int zbin = source->GetZaxis()->FindFixBin(id);
+    for (int sourceX=1; sourceX<=source->GetNbinsX(); ++sourceX) {
+      for (int sourceY=1; sourceY<=source->GetNbinsY(); ++sourceY) {
+        const int sourceBin = source->GetBin(sourceX,sourceY,zbin);
+        const int targetBin = projection->GetBin(sourceY,sourceX);
+        projection->SetBinContent(
+          targetBin,projection->GetBinContent(targetBin)+
+                    source->GetBinContent(sourceBin));
+        const double variance =
+          std::pow(projection->GetBinError(targetBin),2)+
+          std::pow(source->GetBinError(sourceBin),2);
+        projection->SetBinError(targetBin,std::sqrt(variance));
+      }
     }
-    temporary->SetDirectory(nullptr);
-    if (!projection) {
-      projection.reset(dynamic_cast<TH2D*>(temporary->Clone(
-        (std::string("h2_")+spec.stem+"_true"+
-         flavor.fileName).c_str())));
-      if (projection) projection->SetDirectory(nullptr);
-    }
-    else {
-      projection->Add(temporary);
-    }
-    delete temporary;
   }
-  source->GetZaxis()->SetRange(oldFirst,oldLast);
-  if (!projection)
-    throw std::runtime_error("Failed to combine pairwise score projection");
   projection->SetTitle("");
   projection->GetXaxis()->SetTitle(spec.xTitle);
   projection->GetYaxis()->SetTitle(spec.yTitle);
@@ -335,12 +341,12 @@ void drawPairCuts(const PairSpec &spec) {
   else if (spec.cutKind==1) {
     line.DrawLine(0.,0.5,1.,0.5);
     line.SetLineStyle(kDashed);
-    line.DrawLine(0.5,0.5,0.5,1.);
+    line.DrawLine(0.3,0.5,0.3,1.);
   }
   else {
     line.SetLineStyle(kDashed);
     line.DrawLine(0.,0.5,1.,0.5);
-    line.DrawLine(0.5,0.,0.5,0.5);
+    line.DrawLine(0.3,0.,0.3,0.5);
   }
 }
 
@@ -686,10 +692,10 @@ void drawFlavorCube(const std::vector<CubeFaces> &faces, double maximum,
 
   if (faces.size()!=kTruthFlavors.size())
     throw std::runtime_error("Flavor cube/style size mismatch");
-  const Point2D origin = {0.16,0.15};
-  const Point2D xAxis = {0.56,0.};
-  const Point2D yAxis = {0.,0.55};
-  const Point2D qAxis = {0.16,0.13};
+  const Point2D origin = {0.12,0.16};
+  const Point2D xAxis = {0.47,0.};
+  const Point2D yAxis = {0.,0.50};
+  const Point2D qAxis = {0.12,0.10};
   const int bins = faces.empty() ? 0 : faces.front().bins;
   std::vector<std::unique_ptr<TPolyLine> > polygons;
   polygons.reserve(3*bins*bins*faces.size());
@@ -792,28 +798,28 @@ void drawFlavorCube(const std::vector<CubeFaces> &faces, double maximum,
               add(add(origin,scale(xAxis,0.5)),yAxis),3);
   drawSegment(add(y,scale(xAxis,0.5)),
               add(add(y,scale(xAxis,0.5)),qAxis),3);
-  drawSegment(add(y,scale(qAxis,0.5)),
-              add(add(y,scale(xAxis,0.5)),scale(qAxis,0.5)),3);
+  drawSegment(add(y,scale(qAxis,0.3)),
+              add(add(y,scale(xAxis,0.5)),scale(qAxis,0.3)),3);
 
   TLatex text;
   text.SetTextAlign(22);
   text.SetTextSize(0.034);
-  text.DrawLatex(0.44,0.10,"UParT CvL");
+  text.DrawLatex(0.36,0.11,"UParT CvL");
   text.SetTextAngle(90.);
-  text.DrawLatex(0.105,0.43,"UParT CvB");
+  text.DrawLatex(0.070,0.41,"UParT CvB");
   text.SetTextAngle(34.);
-  text.DrawLatex(0.84,0.76,"ParticleNet QvG");
+  text.DrawLatex(0.69,0.76,"ParticleNet QvG");
   text.SetTextAngle(0.);
   text.SetTextSize(0.040);
-  text.DrawLatex(0.44,0.28,"b");
-  text.DrawLatex(0.58,0.56,"c");
-  text.DrawLatex(0.31,0.56,"uds / g");
+  text.DrawLatex(0.36,0.29,"b");
+  text.DrawLatex(0.48,0.54,"c");
+  text.DrawLatex(0.25,0.54,"uds / g");
   text.SetTextSize(0.032);
-  text.DrawLatex(0.34,0.76,"g");
-  text.DrawLatex(0.40,0.82,"uds");
+  text.DrawLatex(0.27,0.70,"g");
+  text.DrawLatex(0.33,0.75,"uds");
 
   std::vector<std::unique_ptr<TBox> > legendBoxes;
-  TLegend legend(0.73,0.18,0.94,0.39);
+  TLegend legend(0.75,0.18,0.94,0.39);
   legend.SetBorderSize(0);
   legend.SetFillStyle(0);
   legend.SetTextSize(0.030);
@@ -829,8 +835,8 @@ void drawFlavorCube(const std::vector<CubeFaces> &faces, double maximum,
   TLatex annotation;
   annotation.SetNDC();
   annotation.SetTextSize(0.027);
-  annotation.DrawLatex(0.73,0.46,"darker = denser");
-  annotation.DrawLatex(0.73,0.42,"unit-area shapes");
+  annotation.DrawLatex(0.75,0.46,"darker = denser");
+  annotation.DrawLatex(0.75,0.42,"unit-area shapes");
 
   gPad->RedrawAxis();
   saveBoth(canvas.get(),outputDirectory,"tagger_cube_allflavors");
@@ -850,17 +856,141 @@ void drawFlavorCubes(TFile &mc, const std::string &outputDirectory) {
   drawFlavorCube(allFaces,std::max(maximum,1.e-12),outputDirectory);
 }
 
+double taggedCubeCount(const TH3D *cube, int tag, double qvgThreshold) {
+  if (!cube) return 0.;
+  double result = 0.;
+  for (int cvbBin=1; cvbBin<=cube->GetNbinsX(); ++cvbBin) {
+    const double cvb = cube->GetXaxis()->GetBinCenter(cvbBin);
+    for (int cvlBin=1; cvlBin<=cube->GetNbinsY(); ++cvlBin) {
+      const double cvl = cube->GetYaxis()->GetBinCenter(cvlBin);
+      for (int qvgBin=1; qvgBin<=cube->GetNbinsZ(); ++qvgBin) {
+        const double qvg = cube->GetZaxis()->GetBinCenter(qvgBin);
+        int reconstructed = 0;
+        if (cvb<0.5) reconstructed = 5;
+        else if (cvl>=0.5) reconstructed = 4;
+        else reconstructed = (qvg>=qvgThreshold ? 1 : 6);
+        if (reconstructed==tag)
+          result += cube->GetBinContent(cvbBin,cvlBin,qvgBin);
+      }
+    }
+  }
+  return result;
+}
+
+void drawQvgWorkingPointScan(TFile &mc,
+                             const std::string &outputDirectory) {
+  const std::vector<FlavorStyle> scanFlavors = {
+    {{1,3},"uds","uds_scan",kBlue+1},
+    {{4},"c","c_scan",kGreen+2},
+    {{5},"b","b_scan",kRed+1},
+    {{0,6},"g","g_scan",kMagenta+1},
+  };
+  std::vector<std::unique_ptr<TH3D> > cubes;
+  std::vector<double> totals;
+  for (const FlavorStyle &flavor : scanFlavors) {
+    cubes.push_back(combinedFlavorCube(mc,flavor));
+    totals.push_back(cubes.back()->Integral());
+  }
+  TGraph gPurity;
+  TGraph gEfficiency;
+  TGraph udsPurity;
+  TGraph udsEfficiency;
+  for (int step=0; step<=50; ++step) {
+    const double threshold = 0.02*step;
+    double gTaggedTotal = 0.;
+    double udsTaggedTotal = 0.;
+    for (size_t flavor=0; flavor<cubes.size(); ++flavor) {
+      gTaggedTotal += taggedCubeCount(cubes[flavor].get(),6,threshold);
+      udsTaggedTotal += taggedCubeCount(cubes[flavor].get(),1,threshold);
+    }
+    const double gTagged = taggedCubeCount(cubes[3].get(),6,threshold);
+    const double udsTagged = taggedCubeCount(cubes[0].get(),1,threshold);
+    gPurity.SetPoint(step,threshold,
+                     gTaggedTotal>0. ? gTagged/gTaggedTotal : 0.);
+    gEfficiency.SetPoint(step,threshold,
+                         totals[3]>0. ? gTagged/totals[3] : 0.);
+    udsPurity.SetPoint(step,threshold,
+                       udsTaggedTotal>0. ? udsTagged/udsTaggedTotal : 0.);
+    udsEfficiency.SetPoint(step,threshold,
+                           totals[0]>0. ? udsTagged/totals[0] : 0.);
+  }
+  std::ofstream table(
+    (outputDirectory+"/qvg_working_point_scan.tsv").c_str());
+  table << std::setprecision(10)
+        << "threshold\tg_purity\tg_efficiency\tuds_purity"
+           "\tuds_efficiency\n";
+  for (int point=0; point<gPurity.GetN(); ++point) {
+    double threshold = 0.;
+    double gPurityValue = 0.;
+    double ignored = 0.;
+    double gEfficiencyValue = 0.;
+    double udsPurityValue = 0.;
+    double udsEfficiencyValue = 0.;
+    gPurity.GetPoint(point,threshold,gPurityValue);
+    gEfficiency.GetPoint(point,ignored,gEfficiencyValue);
+    udsPurity.GetPoint(point,ignored,udsPurityValue);
+    udsEfficiency.GetPoint(point,ignored,udsEfficiencyValue);
+    table << threshold << '\t' << gPurityValue << '\t'
+          << gEfficiencyValue << '\t' << udsPurityValue << '\t'
+          << udsEfficiencyValue << '\n';
+  }
+  configureFlavorStyle("Summer24 DY simulation");
+  TH1D frame("frame_qvg_working_point_scan","",100,0.,1.);
+  frame.SetDirectory(nullptr);
+  frame.SetMinimum(0.);
+  frame.SetMaximum(1.05);
+  frame.GetXaxis()->SetTitle("ParticleNet QvG threshold");
+  frame.GetYaxis()->SetTitle("efficiency or purity");
+  std::unique_ptr<TCanvas> canvas(tdrCanvas(
+    "c_qvg_working_point_scan",&frame,8,11,kSquare));
+  for (auto graphAndStyle : {
+         std::make_pair(&gPurity,std::make_pair(kMagenta+1,kSolid)),
+         std::make_pair(&gEfficiency,std::make_pair(kMagenta+1,kDashed)),
+         std::make_pair(&udsPurity,std::make_pair(kBlue+1,kSolid)),
+         std::make_pair(&udsEfficiency,std::make_pair(kBlue+1,kDashed))}) {
+    graphAndStyle.first->SetLineColor(graphAndStyle.second.first);
+    graphAndStyle.first->SetLineStyle(graphAndStyle.second.second);
+    graphAndStyle.first->SetLineWidth(3);
+    graphAndStyle.first->Draw("L SAME");
+  }
+  TLine chosen(0.3,0.,0.3,1.05);
+  chosen.SetLineColor(kBlack);
+  chosen.SetLineWidth(3);
+  chosen.DrawClone();
+  TLine old(0.5,0.,0.5,1.05);
+  old.SetLineColor(kGray+2);
+  old.SetLineStyle(kDotted);
+  old.SetLineWidth(2);
+  old.DrawClone();
+  TLegend legend(0.50,0.66,0.89,0.88);
+  legend.SetBorderSize(0);
+  legend.SetFillStyle(0);
+  legend.SetNColumns(2);
+  legend.AddEntry(&gPurity,"g purity","l");
+  legend.AddEntry(&gEfficiency,"g efficiency","l");
+  legend.AddEntry(&udsPurity,"uds purity","l");
+  legend.AddEntry(&udsEfficiency,"uds efficiency","l");
+  legend.AddEntry(&chosen,"chosen 0.3","l");
+  legend.AddEntry(&old,"previous 0.5","l");
+  legend.Draw();
+  TLatex selection;
+  selection.SetNDC();
+  selection.SetTextSize(0.030);
+  selection.DrawLatex(0.19,0.79,
+    "|#eta_{jet}| < 1.3, p_{T,jet} > 30 GeV");
+  selection.DrawLatex(0.19,0.74,
+    "truth undefined is combined with g");
+  gPad->RedrawAxis();
+  saveBoth(canvas.get(),outputDirectory,"qvg_working_point_scan");
+}
+
 std::unique_ptr<TH2D> compactFlavorMatrix(const TH2D *source,
                                           const std::string &name) {
   if (!source) return nullptr;
-  const std::vector<int> recoIds = {0,1,4,5,6};
-  const std::vector<int> truthIds = {0,1,3,4,5,6};
-  const std::vector<std::string> recoLabels = {
-    "undefined","uds","c","b","g",
-  };
-  const std::vector<std::string> truthLabels = {
-    "undefined","d+u","s","c","b","g",
-  };
+  const std::vector<int> recoIds = {1,4,5,6};
+  const std::vector<int> truthIds = {1,4,5,6};
+  const std::vector<std::string> recoLabels = {"uds","c","b","g"};
+  const std::vector<std::string> truthLabels = {"uds","c","b","g"};
   std::unique_ptr<TH2D> result(new TH2D(
     name.c_str(),"",recoIds.size(),-0.5,recoIds.size()-0.5,
     truthIds.size(),-0.5,truthIds.size()-0.5));
@@ -962,17 +1092,49 @@ void drawAnalysisMatrix(
   saveBoth(canvas.get(),outputDirectory,stem);
 }
 
+void drawDirectAnalysisMatrix(
+  TFile &analysis, const char *path, const std::string &stem,
+  double minimum, double maximum, const std::string &outputDirectory) {
+  TH2D *source = optionalObject<TH2D>(&analysis,path);
+  if (!source) return;
+  std::unique_ptr<TH2D> histogram(dynamic_cast<TH2D*>(source->Clone(
+    ("plot_"+stem).c_str())));
+  if (!histogram) return;
+  histogram->SetDirectory(nullptr);
+  histogram->SetTitle("");
+  histogram->SetMinimum(minimum);
+  histogram->SetMaximum(maximum);
+  configureFlavorStyle("2024I + Summer24");
+  setWhiteSequentialPalette();
+  std::unique_ptr<TCanvas> canvas = heatmapCanvas(
+    "c_"+stem,histogram.get(),"2024I + Summer24");
+  canvas->SetLeftMargin(0.24);
+  // The absolute scale is stated in the slide/plot caption.  With the large
+  // TDR fonts a rotated palette title obscures both the palette ticks and the
+  // rightmost matrix cells, so keep the palette itself deliberately compact.
+  histogram->GetYaxis()->SetTitle("");
+  histogram->GetZaxis()->SetTitle("");
+  setWhiteSequentialPalette();
+  histogram->Draw("COLZ");
+  drawMatrixText(histogram.get(),minimum,maximum,false);
+  drawHeatmapHeader(canvas.get(),"preliminary propagation");
+  gPad->RedrawAxis();
+  saveBoth(canvas.get(),outputDirectory,stem);
+}
+
 std::unique_ptr<TGraphErrors> graphFromHistogram(TH1 *histogram) {
   if (!histogram) return nullptr;
   std::unique_ptr<TGraphErrors> graph(new TGraphErrors());
   graph->SetName("g_response_residual_plot");
-  for (int bin=1; bin<=histogram->GetNbinsX(); ++bin) {
+  const std::vector<int> flavorIds = {1,4,5,6};
+  for (size_t index=0; index<flavorIds.size(); ++index) {
+    const int bin = histogram->GetXaxis()->FindFixBin(flavorIds[index]);
     const double value = histogram->GetBinContent(bin);
     const double error = histogram->GetBinError(bin);
     if (!std::isfinite(value) || (value==0. && error==0.)) continue;
     const int point = graph->GetN();
-    graph->SetPoint(point,histogram->GetBinCenter(bin),value);
-    graph->SetPointError(point,0.5*histogram->GetBinWidth(bin),error);
+    graph->SetPoint(point,index,value);
+    graph->SetPointError(point,0.,error);
   }
   return graph;
 }
@@ -1003,16 +1165,18 @@ void drawResponseResidual(TFile &analysis,
   }
   extent = std::min(0.50,1.25*extent);
   configureFlavorStyle("Run2024I + Summer24 DY");
-  TH1D frame("frame_response_residual","",7,-0.5,6.5);
+  TH1D frame("frame_response_residual","",4,-0.5,3.5);
   frame.SetDirectory(nullptr);
   frame.SetMinimum(1.-extent);
   frame.SetMaximum(1.+extent);
   frame.GetXaxis()->SetTitle("Generator parton flavor");
   frame.GetYaxis()->SetTitle("fitted data / MC flavor response");
-  labelFlavorAxis(frame.GetXaxis(),false);
+  const char *labels[] = {"uds","c","b","g"};
+  for (int bin=1; bin<=4; ++bin)
+    frame.GetXaxis()->SetBinLabel(bin,labels[bin-1]);
   std::unique_ptr<TCanvas> canvas(tdrCanvas(
     "c_flavor_response_residual",&frame,8,11,kSquare));
-  TLine unity(-0.5,1.,6.5,1.);
+  TLine unity(-0.5,1.,3.5,1.);
   unity.SetLineStyle(kDashed);
   unity.SetLineColor(kGray+2);
   unity.DrawClone();
@@ -1024,12 +1188,88 @@ void drawResponseResidual(TFile &analysis,
   annotation.SetNDC();
   annotation.SetTextSize(0.035);
   annotation.DrawLatex(0.19,0.78,
-                       "matrix-inferred response, p_{T} > 30 GeV");
+                       "pure parallel barrel response, p_{T} > 30 GeV");
   annotation.SetTextSize(0.030);
   annotation.DrawLatex(0.19,0.73,
-                       "one-file smoke; null modes are prior-controlled");
+                       "one-file smoke; four-tag / four-flavor fit");
   gPad->RedrawAxis();
   saveBoth(canvas.get(),outputDirectory,"flavor_response_residual");
+}
+
+void drawResponseResidualVsPt(TFile &analysis,
+                              const std::string &outputDirectory) {
+  struct GraphStyle {
+    const char *name;
+    const char *label;
+    int color;
+    int marker;
+  };
+  const GraphStyle styles[] = {
+    {"uds","uds",kBlue+1,kFullCircle},
+    {"c","c",kGreen+2,kFullSquare},
+    {"b","b",kRed+1,kFullTriangleUp},
+    {"g","g",kMagenta+1,kFullDiamond},
+  };
+  std::vector<std::unique_ptr<TGraphErrors> > graphs;
+  std::vector<const GraphStyle*> graphStyles;
+  double extent = 0.03;
+  for (const GraphStyle &style : styles) {
+    TGraphErrors *source = optionalObject<TGraphErrors>(
+      &analysis,(std::string("response/g_response_residual_vs_pt_")+
+                 style.name).c_str());
+    if (!source) continue;
+    std::unique_ptr<TGraphErrors> graph(dynamic_cast<TGraphErrors*>(
+      source->Clone((std::string("plot_response_vs_pt_")+
+                     style.name).c_str())));
+    if (!graph) continue;
+    graph->SetLineColor(style.color);
+    graph->SetMarkerColor(style.color);
+    graph->SetMarkerStyle(style.marker);
+    graph->SetLineWidth(2);
+    for (int point=0; point<graph->GetN(); ++point) {
+      double x = 0.;
+      double y = 0.;
+      graph->GetPoint(point,x,y);
+      if (std::isfinite(y))
+        extent = std::max(extent,std::fabs(y-1.)+graph->GetErrorY(point));
+    }
+    graphs.push_back(std::move(graph));
+    graphStyles.push_back(&style);
+  }
+  if (graphs.empty()) return;
+  extent = std::min(0.45,std::max(0.08,1.15*extent));
+  configureFlavorStyle("Run2024I + Summer24 DY");
+  TH1D frame("frame_response_residual_vs_pt","",100,30.,400.);
+  frame.SetDirectory(nullptr);
+  frame.SetMinimum(1.-extent);
+  frame.SetMaximum(1.+extent);
+  frame.GetXaxis()->SetTitle("p_{T,Z} (GeV)");
+  frame.GetYaxis()->SetTitle("fitted data / MC flavor response");
+  frame.GetXaxis()->SetMoreLogLabels();
+  frame.GetXaxis()->SetNoExponent();
+  std::unique_ptr<TCanvas> canvas(tdrCanvas(
+    "c_flavor_response_residual_vs_pt",&frame,8,11,kSquare));
+  canvas->SetLogx();
+  TLine unity(30.,1.,400.,1.);
+  unity.SetLineStyle(kDashed);
+  unity.SetLineColor(kGray+2);
+  unity.DrawClone();
+  for (auto &graph : graphs) graph->Draw("PZ SAME");
+  TLegend legend(0.62,0.70,0.88,0.88);
+  legend.SetBorderSize(0);
+  legend.SetFillStyle(0);
+  legend.SetNColumns(2);
+  for (size_t index=0; index<graphs.size(); ++index)
+    legend.AddEntry(graphs[index].get(),graphStyles[index]->label,"pl");
+  legend.Draw();
+  TLatex annotation;
+  annotation.SetNDC();
+  annotation.SetTextSize(0.030);
+  annotation.DrawLatex(0.19,0.76,
+                       "rank 4 and condition number < 100 only");
+  gPad->RedrawAxis();
+  saveBoth(canvas.get(),outputDirectory,
+           "flavor_response_residual_vs_pt");
 }
 
 void drawOptionalAnalysis(TFile &analysis,
@@ -1042,7 +1282,30 @@ void drawOptionalAnalysis(TFile &analysis,
   drawAnalysisMatrix(analysis,"tagging/h2_transition_sf",
     "efficiency_transition_sf","#epsilon_{data} / #epsilon_{MC}",
     0.5,1.5,outputDirectory,true);
+  drawAnalysisMatrix(analysis,"tagging/h2_composition_mc",
+    "purity_mc","P_{MC}(true | reco)",0.,1.,outputDirectory);
+  drawAnalysisMatrix(analysis,"tagging/h2_composition_data",
+    "purity_data_inferred","inferred P_{data}(true | reco)",
+    0.,1.,outputDirectory);
+  drawAnalysisMatrix(analysis,
+    "tagging/h2_composition_ratio_data_over_mc",
+    "purity_ratio_data_over_mc","P_{data}/P_{MC}",
+    0.5,1.5,outputDirectory,true);
+  drawAnalysisMatrix(analysis,"response/h2_response_mc_by_transition",
+    "response_transition_mc","MC HDM response",0.4,1.2,outputDirectory);
+  drawAnalysisMatrix(
+    analysis,"response/h2_response_data_estimated_by_transition",
+    "response_transition_data_estimated","estimated data HDM response",
+    0.4,1.2,outputDirectory);
+  drawAnalysisMatrix(
+    analysis,"response/h2_response_ratio_data_over_mc_by_transition",
+    "response_transition_ratio_data_over_mc","estimated data / MC",
+    0.8,1.2,outputDirectory,true);
   drawResponseResidual(analysis,outputDirectory);
+  drawResponseResidualVsPt(analysis,outputDirectory);
+  drawDirectAnalysisMatrix(
+    analysis,"diagnostics/h2_response_uncertainty_components",
+    "response_uncertainty_components",0.,0.20,outputDirectory);
 }
 
 } // namespace
@@ -1069,6 +1332,7 @@ void drawFlavorMatrix(
   drawScoreDistributions(*mc,outputDirectory);
   drawPairwiseDensities(*mc,outputDirectory);
   drawFlavorCubes(*mc,outputDirectory);
+  drawQvgWorkingPointScan(*mc,outputDirectory);
 
   std::string resolvedAnalysis = (analysisFile ? analysisFile : "");
   if (resolvedAnalysis.empty()) {

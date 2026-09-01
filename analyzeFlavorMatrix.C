@@ -63,8 +63,23 @@ struct FitResult {
   }
 };
 
-const std::vector<int> recoIds = {0,1,4,5,6};
-const std::vector<int> truthIds = {0,1,3,4,5,6};
+struct TruthGroup {
+  int outputId;
+  const char *name;
+  std::vector<int> sourceIds;
+};
+
+// The undefined reconstructed tag is intentionally omitted: it is empty for
+// valid NanoAOD v15 hybrid scores.  Combining d/u+s and undefined+g gives the
+// four physically useful truth groups constrained by the four measured tag
+// rows.  The undefined parton category is gluon-like in the tagger controls.
+const std::vector<int> recoIds = {1,4,5,6};
+const std::vector<TruthGroup> truthGroups = {
+  {1,"uds",{1,3}},
+  {4,"c",{4}},
+  {5,"b",{5}},
+  {6,"g",{0,6}},
+};
 
 const char *recoName(int id) {
   if (id==0) return "undefined";
@@ -76,9 +91,9 @@ const char *recoName(int id) {
 }
 
 const char *truthName(int id) {
-  if (id==0) return "undefined";
-  if (id==1) return "d+u";
-  if (id==3) return "s";
+  if (id==0) return "unused";
+  if (id==1) return "uds";
+  if (id==3) return "unused";
   if (id==4) return "c";
   if (id==5) return "b";
   if (id==6) return "g";
@@ -98,40 +113,47 @@ void labelRecoAxis(TAxis *axis) {
 
 void labelTruthAxis(TAxis *axis) {
   if (!axis) return;
-  axis->SetBinLabel(1,"undefined");
-  axis->SetBinLabel(2,"d+u");
+  axis->SetBinLabel(1,"unused");
+  axis->SetBinLabel(2,"uds");
   axis->SetBinLabel(3,"unused");
-  axis->SetBinLabel(4,"s");
+  axis->SetBinLabel(4,"unused");
   axis->SetBinLabel(5,"c");
   axis->SetBinLabel(6,"b");
   axis->SetBinLabel(7,"g");
 }
 
-bool selectedPtBin(const TAxis *axis, int bin, double minimumPt) {
+bool selectedPtBin(const TAxis *axis, int bin, double minimumPt,
+                   double maximumPt) {
   return axis && bin>=1 && bin<=axis->GetNbins() &&
-         axis->GetBinUpEdge(bin)>minimumPt+1.e-9;
+         axis->GetBinUpEdge(bin)>minimumPt+1.e-9 &&
+         axis->GetBinLowEdge(bin)<maximumPt-1.e-9;
 }
 
-double integratedCount(const TH3D *histogram, int recoId, int truthId,
-                       double minimumPt) {
+double integratedCount(const TH3D *histogram, int recoId,
+                       const std::vector<int> &truthIds,
+                       double minimumPt, double maximumPt) {
   if (!histogram) return 0.;
   double result = 0.;
   const int iy = histogram->GetYaxis()->FindFixBin(recoId);
-  const int iz = histogram->GetZaxis()->FindFixBin(truthId);
   for (int ix=1; ix<=histogram->GetNbinsX(); ++ix) {
-    if (!selectedPtBin(histogram->GetXaxis(),ix,minimumPt)) continue;
-    result += histogram->GetBinContent(ix,iy,iz);
+    if (!selectedPtBin(
+          histogram->GetXaxis(),ix,minimumPt,maximumPt)) continue;
+    for (int truthId : truthIds) {
+      const int iz = histogram->GetZaxis()->FindFixBin(truthId);
+      result += histogram->GetBinContent(ix,iy,iz);
+    }
   }
   return result;
 }
 
 double integratedDataCount(const TH3D *histogram, int recoId,
-                           double minimumPt) {
+                           double minimumPt, double maximumPt) {
   if (!histogram) return 0.;
   double result = 0.;
   const int iy = histogram->GetYaxis()->FindFixBin(recoId);
   for (int ix=1; ix<=histogram->GetNbinsX(); ++ix) {
-    if (!selectedPtBin(histogram->GetXaxis(),ix,minimumPt)) continue;
+    if (!selectedPtBin(
+          histogram->GetXaxis(),ix,minimumPt,maximumPt)) continue;
     for (int iz=1; iz<=histogram->GetNbinsZ(); ++iz)
       result += histogram->GetBinContent(ix,iy,iz);
   }
@@ -139,18 +161,18 @@ double integratedDataCount(const TH3D *histogram, int recoId,
 }
 
 ProfileSummary summarizeProfile(const TProfile3D *profile, int recoId,
-                                int truthId, bool sumTruth,
-                                double minimumPt) {
+                                const std::vector<int> &truthIds,
+                                double minimumPt, double maximumPt) {
   ProfileSummary result;
   if (!profile) return result;
   const int iy = profile->GetYaxis()->FindFixBin(recoId);
-  const int firstTruth = sumTruth ? 1 : profile->GetZaxis()->FindFixBin(truthId);
-  const int lastTruth = sumTruth ? profile->GetNbinsZ() : firstTruth;
   double weightedSum = 0.;
   double numeratorVariance = 0.;
   for (int ix=1; ix<=profile->GetNbinsX(); ++ix) {
-    if (!selectedPtBin(profile->GetXaxis(),ix,minimumPt)) continue;
-    for (int iz=firstTruth; iz<=lastTruth; ++iz) {
+    if (!selectedPtBin(
+          profile->GetXaxis(),ix,minimumPt,maximumPt)) continue;
+    for (int truthId : truthIds) {
+      const int iz = profile->GetZaxis()->FindFixBin(truthId);
       const int globalBin = profile->GetBin(ix,iy,iz);
       const double entries = profile->GetBinEntries(globalBin);
       const double value = profile->GetBinContent(globalBin);
@@ -172,20 +194,21 @@ ProfileSummary summarizeProfile(const TProfile3D *profile, int recoId,
   return result;
 }
 
-ProfileSummary componentHDMFallback(TFile *file, int recoId, int truthId,
-                                    bool sumTruth, double minimumPt) {
+ProfileSummary componentHDMFallback(
+  TFile *file, int recoId, const std::vector<int> &truthIds,
+  double minimumPt, double maximumPt) {
   ProfileSummary result;
   if (!file) return result;
   const char *names[] = {
-    "FlavorMatrix/p3m0tc_flavormatrix",
-    "FlavorMatrix/p3mntc_flavormatrix",
-    "FlavorMatrix/p3mutc_flavormatrix",
+    "FlavorMatrix/p3m0tc_parallel_flavormatrix",
+    "FlavorMatrix/p3mntc_parallel_flavormatrix",
+    "FlavorMatrix/p3mutc_parallel_flavormatrix",
   };
   ProfileSummary component[3];
   for (int index=0; index!=3; ++index) {
     TProfile3D *profile = dynamic_cast<TProfile3D*>(file->Get(names[index]));
     component[index] = summarizeProfile(
-      profile,recoId,truthId,sumTruth,minimumPt);
+      profile,recoId,truthIds,minimumPt,maximumPt);
     if (!component[index].valid) return result;
   }
   const double m0 = component[0].mean;
@@ -215,13 +238,15 @@ ProfileSummary componentHDMFallback(TFile *file, int recoId, int truthId,
   return result;
 }
 
-ProfileSummary readHDM(TFile *file, int recoId, int truthId, bool sumTruth,
-                       double minimumPt) {
+ProfileSummary readHDM(TFile *file, int recoId,
+                       const std::vector<int> &truthIds,
+                       double minimumPt, double maximumPt) {
   // HDM is a nonlinear ratio.  Averaging an event-wise HDM profile is not the
   // same as constructing HDM from the merged component means, and individual
   // events can have a nearly singular denominator.  Always use the mergeable
   // m0/mn/mu component profiles here.
-  return componentHDMFallback(file,recoId,truthId,sumTruth,minimumPt);
+  return componentHDMFallback(
+    file,recoId,truthIds,minimumPt,maximumPt);
 }
 
 std::string jsonEscape(const std::string &input) {
@@ -374,8 +399,9 @@ void analyzeFlavorMatrix(
       "Missing FlavorMatrix/h3counts_parallel_flavormatrix");
 
   const int nReco = recoIds.size();
-  const int nTruthAll = truthIds.size();
-  TMatrixD mcRaw(nReco,nTruthAll);
+  const int nTruth = truthGroups.size();
+  const double maximumPt = std::numeric_limits<double>::infinity();
+  TMatrixD mcRaw(nReco,nTruth);
   TVectorD dataRaw(nReco);
   mcRaw.Zero();
   dataRaw.Zero();
@@ -383,16 +409,18 @@ void analyzeFlavorMatrix(
   double totalData = 0.;
   for (int reco=0; reco!=nReco; ++reco) {
     const double dataCount =
-      integratedDataCount(dataCounts,recoIds[reco],minimumPt);
+      integratedDataCount(
+        dataCounts,recoIds[reco],minimumPt,maximumPt);
     if (dataCount < -1.e-9)
       throw std::runtime_error(
         "Negative integrated data parallel count: the IPF likelihood "
         "requires a non-negative population");
     dataRaw[reco] = std::max(0.,dataCount);
     totalData += dataRaw[reco];
-    for (int truth=0; truth!=nTruthAll; ++truth) {
+    for (int truth=0; truth!=nTruth; ++truth) {
       const double mcCount = integratedCount(
-        mcCounts,recoIds[reco],truthIds[truth],minimumPt);
+        mcCounts,recoIds[reco],truthGroups[truth].sourceIds,
+        minimumPt,maximumPt);
       if (mcCount < -1.e-9)
         throw std::runtime_error(
           "Negative integrated MC parallel count: do not clip signed NLO "
@@ -406,14 +434,14 @@ void analyzeFlavorMatrix(
     throw std::runtime_error(
       "No positive FlavorMatrix parallel counts above the requested pT");
 
-  std::vector<int> activeTruth;
-  for (int truth=0; truth!=nTruthAll; ++truth) {
+  for (int truth=0; truth!=nTruth; ++truth) {
     double column = 0.;
     for (int reco=0; reco!=nReco; ++reco) column += mcRaw(reco,truth);
-    if (column>1.e-12*totalMC) activeTruth.push_back(truth);
+    if (!(column>1.e-12*totalMC))
+      throw std::runtime_error(
+        "The four-flavor response model has an empty MC truth group " +
+        std::string(truthGroups[truth].name));
   }
-  const int nTruth = activeTruth.size();
-  if (nTruth==0) throw std::runtime_error("No active MC truth flavors");
 
   TVectorD truthPrior(nTruth);
   TVectorD dataRecoFraction(nReco);
@@ -421,18 +449,15 @@ void analyzeFlavorMatrix(
   TMatrixD jointMC(nReco,nTruth);
   for (int reco=0; reco!=nReco; ++reco)
     dataRecoFraction[reco] = dataRaw[reco]/totalData;
-  double activeTotalMC = 0.;
-  for (int index : activeTruth)
-    for (int reco=0; reco!=nReco; ++reco)
-      activeTotalMC += mcRaw(reco,index);
+  const double activeTotalMC = totalMC;
   for (int flavor=0; flavor!=nTruth; ++flavor) {
-    const int truth = activeTruth[flavor];
     double column = 0.;
-    for (int reco=0; reco!=nReco; ++reco) column += mcRaw(reco,truth);
+    for (int reco=0; reco!=nReco; ++reco) column += mcRaw(reco,flavor);
     truthPrior[flavor] = column/activeTotalMC;
     for (int reco=0; reco!=nReco; ++reco) {
-      efficiencyMC(reco,flavor) = column>0. ? mcRaw(reco,truth)/column : 0.;
-      jointMC(reco,flavor) = mcRaw(reco,truth)/activeTotalMC;
+      efficiencyMC(reco,flavor) = column>0.
+        ? mcRaw(reco,flavor)/column : 0.;
+      jointMC(reco,flavor) = mcRaw(reco,flavor)/activeTotalMC;
     }
   }
 
@@ -443,9 +468,8 @@ void analyzeFlavorMatrix(
   double initialTotal = 0.;
   for (int reco=0; reco!=nReco; ++reco)
     for (int flavor=0; flavor!=nTruth; ++flavor) {
-      const int truth = activeTruth[flavor];
       inferredJoint(reco,flavor) =
-        std::max(mcRaw(reco,truth),pseudocount);
+        std::max(mcRaw(reco,flavor),pseudocount);
       initialTotal += inferredJoint(reco,flavor);
     }
   inferredJoint *= 1./initialTotal;
@@ -501,15 +525,24 @@ void analyzeFlavorMatrix(
 
   TMatrixD efficiencyData(nReco,nTruth);
   TMatrixD transitionSF(nReco,nTruth);
+  TMatrixD compositionMC(nReco,nTruth);
   TMatrixD compositionData(nReco,nTruth);
+  TMatrixD compositionRatio(nReco,nTruth);
   for (int reco=0; reco!=nReco; ++reco)
     for (int flavor=0; flavor!=nTruth; ++flavor) {
       efficiencyData(reco,flavor) = truthPrior[flavor]>0.
         ? inferredJoint(reco,flavor)/truthPrior[flavor] : 0.;
       transitionSF(reco,flavor) = efficiencyMC(reco,flavor)>0.
         ? efficiencyData(reco,flavor)/efficiencyMC(reco,flavor) : 0.;
+      double mcRecoFraction = 0.;
+      for (int other=0; other!=nTruth; ++other)
+        mcRecoFraction += jointMC(reco,other);
+      compositionMC(reco,flavor) = mcRecoFraction>0.
+        ? jointMC(reco,flavor)/mcRecoFraction : 0.;
       compositionData(reco,flavor) = dataRecoFraction[reco]>0.
         ? inferredJoint(reco,flavor)/dataRecoFraction[reco] : 0.;
+      compositionRatio(reco,flavor) = compositionMC(reco,flavor)>0.
+        ? compositionData(reco,flavor)/compositionMC(reco,flavor) : 0.;
     }
 
   std::vector<ProfileSummary> dataResponse(nReco);
@@ -518,11 +551,12 @@ void analyzeFlavorMatrix(
   int cellFallbacks = 0;
   for (int reco=0; reco!=nReco; ++reco) {
     dataResponse[reco] = readHDM(
-      dataFile.get(),recoIds[reco],0,true,minimumPt);
+      dataFile.get(),recoIds[reco],std::vector<int>{0},
+      minimumPt,maximumPt);
     for (int flavor=0; flavor!=nTruth; ++flavor) {
       mcResponse[reco][flavor] = readHDM(
-        mcFile.get(),recoIds[reco],truthIds[activeTruth[flavor]],false,
-        minimumPt);
+        mcFile.get(),recoIds[reco],truthGroups[flavor].sourceIds,
+        minimumPt,maximumPt);
     }
   }
 
@@ -536,10 +570,9 @@ void analyzeFlavorMatrix(
   for (int flavor=0; flavor!=nTruth; ++flavor) {
     double numerator = 0.;
     double denominator = 0.;
-    const int truth = activeTruth[flavor];
     for (int reco=0; reco!=nReco; ++reco) {
       if (!mcResponse[reco][flavor].valid) continue;
-      const double count = mcRaw(reco,truth);
+      const double count = mcRaw(reco,flavor);
       numerator += count*mcResponse[reco][flavor].mean;
       denominator += count;
     }
@@ -583,6 +616,251 @@ void analyzeFlavorMatrix(
     throw std::runtime_error(
       "Flavor-response SVD solve failed; refusing to write unity residuals "
       "with zero uncertainty");
+
+  TVectorD responseTemplateUncertainty(nTruth);
+  TVectorD purityStatUncertainty(nTruth);
+  TVectorD flavorFractionSensitivity(nTruth);
+  responseTemplateUncertainty.Zero();
+  purityStatUncertainty.Zero();
+  flavorFractionSensitivity.Zero();
+
+  for (int row=0; row!=static_cast<int>(fitReco.size()); ++row) {
+    const int reco = fitReco[row];
+    for (int flavor=0; flavor!=nTruth; ++flavor) {
+      const double sigma = mcResponse[reco][flavor].error;
+      if (!std::isfinite(sigma) || sigma<=0.) continue;
+      TMatrixD plus = design;
+      TMatrixD minus = design;
+      plus(row,flavor) += compositionData(reco,flavor)*sigma;
+      minus(row,flavor) -= compositionData(reco,flavor)*sigma;
+      FitResult plusFit = fitResponse(
+        plus,observed,observedError,responsePriorSigma);
+      FitResult minusFit = fitResponse(
+        minus,observed,observedError,responsePriorSigma);
+      if (!plusFit.solved || !minusFit.solved) continue;
+      for (int resultFlavor=0; resultFlavor!=nTruth; ++resultFlavor) {
+        const double shift = 0.5*(plusFit.residual[resultFlavor]-
+                                  minusFit.residual[resultFlavor]);
+        responseTemplateUncertainty[resultFlavor] += shift*shift;
+      }
+    }
+  }
+  for (int flavor=0; flavor!=nTruth; ++flavor)
+    responseTemplateUncertainty[flavor] =
+      std::sqrt(responseTemplateUncertainty[flavor]);
+
+  for (int row=0; row!=static_cast<int>(fitReco.size()); ++row) {
+    const int reco = fitReco[row];
+    double rowCount = 0.;
+    for (int flavor=0; flavor!=nTruth; ++flavor)
+      rowCount += mcRaw(reco,flavor);
+    if (!(rowCount>0.)) continue;
+    for (int variedFlavor=0; variedFlavor!=nTruth; ++variedFlavor) {
+      const double probability = compositionData(reco,variedFlavor);
+      const double sigma = std::sqrt(
+        std::max(0.,probability*(1.-probability)/rowCount));
+      if (!(sigma>0.)) continue;
+      TMatrixD variedDesign[2] = {design,design};
+      for (int direction=0; direction!=2; ++direction) {
+        std::vector<double> varied(nTruth);
+        double normalization = 0.;
+        for (int flavor=0; flavor!=nTruth; ++flavor) {
+          varied[flavor] = compositionData(reco,flavor);
+          if (flavor==variedFlavor)
+            varied[flavor] = std::max(
+              0.,varied[flavor]+(direction==0 ? sigma : -sigma));
+          normalization += varied[flavor];
+        }
+        if (normalization>0.)
+          for (int flavor=0; flavor!=nTruth; ++flavor)
+            variedDesign[direction](row,flavor) =
+              varied[flavor]/normalization*mcResponse[reco][flavor].mean;
+      }
+      FitResult plusFit = fitResponse(
+        variedDesign[0],observed,observedError,responsePriorSigma);
+      FitResult minusFit = fitResponse(
+        variedDesign[1],observed,observedError,responsePriorSigma);
+      if (!plusFit.solved || !minusFit.solved) continue;
+      for (int resultFlavor=0; resultFlavor!=nTruth; ++resultFlavor) {
+        const double shift = 0.5*(plusFit.residual[resultFlavor]-
+                                  minusFit.residual[resultFlavor]);
+        purityStatUncertainty[resultFlavor] += shift*shift;
+      }
+    }
+  }
+  for (int flavor=0; flavor!=nTruth; ++flavor)
+    purityStatUncertainty[flavor] =
+      std::sqrt(purityStatUncertainty[flavor]);
+
+  for (int variedFlavor=0; variedFlavor!=nTruth; ++variedFlavor) {
+    TMatrixD variedDesign = design;
+    for (int row=0; row!=static_cast<int>(fitReco.size()); ++row) {
+      const int reco = fitReco[row];
+      std::vector<double> varied(nTruth);
+      double normalization = 0.;
+      for (int flavor=0; flavor!=nTruth; ++flavor) {
+        varied[flavor] = compositionData(reco,flavor)*
+          (flavor==variedFlavor ? 1.01 : 1.00);
+        normalization += varied[flavor];
+      }
+      for (int flavor=0; flavor!=nTruth; ++flavor)
+        variedDesign(row,flavor) = varied[flavor]/normalization*
+          mcResponse[reco][flavor].mean;
+    }
+    FitResult variedFit = fitResponse(
+      variedDesign,observed,observedError,responsePriorSigma);
+    if (!variedFit.solved) continue;
+    for (int resultFlavor=0; resultFlavor!=nTruth; ++resultFlavor) {
+      const double shift = variedFit.residual[resultFlavor]-
+                           fit.residual[resultFlavor];
+      flavorFractionSensitivity[resultFlavor] += shift*shift;
+    }
+  }
+  for (int flavor=0; flavor!=nTruth; ++flavor)
+    flavorFractionSensitivity[flavor] =
+      std::sqrt(flavorFractionSensitivity[flavor]);
+
+  auto fitPtRange = [&](double lowPt, double highPt) {
+    FitResult rangeResult(nTruth);
+    TMatrixD rangeMC(nReco,nTruth);
+    TVectorD rangeData(nReco);
+    rangeMC.Zero();
+    rangeData.Zero();
+    double rangeTotalMC = 0.;
+    double rangeTotalData = 0.;
+    for (int reco=0; reco!=nReco; ++reco) {
+      rangeData[reco] = std::max(0.,integratedDataCount(
+        dataCounts,recoIds[reco],lowPt,highPt));
+      rangeTotalData += rangeData[reco];
+      for (int flavor=0; flavor!=nTruth; ++flavor) {
+        rangeMC(reco,flavor) = std::max(0.,integratedCount(
+          mcCounts,recoIds[reco],truthGroups[flavor].sourceIds,
+          lowPt,highPt));
+        rangeTotalMC += rangeMC(reco,flavor);
+      }
+    }
+    if (!(rangeTotalMC>0.) || !(rangeTotalData>0.)) return rangeResult;
+
+    TVectorD rangeTruthPrior(nTruth);
+    TVectorD rangeRecoFraction(nReco);
+    for (int reco=0; reco!=nReco; ++reco)
+      rangeRecoFraction[reco] = rangeData[reco]/rangeTotalData;
+    for (int flavor=0; flavor!=nTruth; ++flavor) {
+      double column = 0.;
+      for (int reco=0; reco!=nReco; ++reco)
+        column += rangeMC(reco,flavor);
+      if (!(column>0.)) return rangeResult;
+      rangeTruthPrior[flavor] = column/rangeTotalMC;
+    }
+
+    TMatrixD rangeJoint(nReco,nTruth);
+    const double rangePseudocount = std::max(1.e-12,rangeTotalMC*1.e-12);
+    double rangeInitialTotal = 0.;
+    for (int reco=0; reco!=nReco; ++reco)
+      for (int flavor=0; flavor!=nTruth; ++flavor) {
+        rangeJoint(reco,flavor) =
+          std::max(rangeMC(reco,flavor),rangePseudocount);
+        rangeInitialTotal += rangeJoint(reco,flavor);
+      }
+    rangeJoint *= 1./rangeInitialTotal;
+    bool rangeConverged = false;
+    for (int iteration=0; iteration!=10000; ++iteration) {
+      for (int reco=0; reco!=nReco; ++reco) {
+        double row = 0.;
+        for (int flavor=0; flavor!=nTruth; ++flavor)
+          row += rangeJoint(reco,flavor);
+        if (row>0.) {
+          const double scale = rangeRecoFraction[reco]/row;
+          for (int flavor=0; flavor!=nTruth; ++flavor)
+            rangeJoint(reco,flavor) *= scale;
+        }
+      }
+      for (int flavor=0; flavor!=nTruth; ++flavor) {
+        double column = 0.;
+        for (int reco=0; reco!=nReco; ++reco)
+          column += rangeJoint(reco,flavor);
+        if (column>0.) {
+          const double scale = rangeTruthPrior[flavor]/column;
+          for (int reco=0; reco!=nReco; ++reco)
+            rangeJoint(reco,flavor) *= scale;
+        }
+      }
+      double maximumError = 0.;
+      for (int reco=0; reco!=nReco; ++reco) {
+        double row = 0.;
+        for (int flavor=0; flavor!=nTruth; ++flavor)
+          row += rangeJoint(reco,flavor);
+        maximumError = std::max(
+          maximumError,std::fabs(row-rangeRecoFraction[reco]));
+      }
+      if (maximumError<1.e-10) {
+        rangeConverged = true;
+        break;
+      }
+    }
+    if (!rangeConverged) return rangeResult;
+
+    TMatrixD rangeComposition(nReco,nTruth);
+    for (int reco=0; reco!=nReco; ++reco)
+      for (int flavor=0; flavor!=nTruth; ++flavor)
+        rangeComposition(reco,flavor) = rangeRecoFraction[reco]>0.
+          ? rangeJoint(reco,flavor)/rangeRecoFraction[reco] : 0.;
+
+    std::vector<ProfileSummary> rangeDataResponse(nReco);
+    std::vector<std::vector<ProfileSummary> > rangeMCResponse(
+      nReco,std::vector<ProfileSummary>(nTruth));
+    for (int reco=0; reco!=nReco; ++reco) {
+      rangeDataResponse[reco] = readHDM(
+        dataFile.get(),recoIds[reco],std::vector<int>{0},lowPt,highPt);
+      for (int flavor=0; flavor!=nTruth; ++flavor)
+        rangeMCResponse[reco][flavor] = readHDM(
+          mcFile.get(),recoIds[reco],truthGroups[flavor].sourceIds,
+          lowPt,highPt);
+    }
+    for (int flavor=0; flavor!=nTruth; ++flavor) {
+      double numerator = 0.;
+      double denominator = 0.;
+      for (int reco=0; reco!=nReco; ++reco) {
+        if (!rangeMCResponse[reco][flavor].valid) continue;
+        numerator += rangeMC(reco,flavor)*
+                     rangeMCResponse[reco][flavor].mean;
+        denominator += rangeMC(reco,flavor);
+      }
+      if (!(denominator>0.)) return rangeResult;
+      const double fallback = numerator/denominator;
+      for (int reco=0; reco!=nReco; ++reco)
+        if (!rangeMCResponse[reco][flavor].valid) {
+          rangeMCResponse[reco][flavor].valid = true;
+          rangeMCResponse[reco][flavor].mean = fallback;
+          rangeMCResponse[reco][flavor].error = 0.;
+        }
+    }
+
+    std::vector<int> rangeFitReco;
+    for (int reco=0; reco!=nReco; ++reco)
+      if (rangeRecoFraction[reco]>0. && rangeDataResponse[reco].valid)
+        rangeFitReco.push_back(reco);
+    TMatrixD rangeDesign(rangeFitReco.size(),nTruth);
+    TVectorD rangeObserved(rangeFitReco.size());
+    TVectorD rangeErrors(rangeFitReco.size());
+    for (int row=0; row!=static_cast<int>(rangeFitReco.size()); ++row) {
+      const int reco = rangeFitReco[row];
+      rangeObserved[row] = rangeDataResponse[reco].mean;
+      rangeErrors[row] = rangeDataResponse[reco].error;
+      for (int flavor=0; flavor!=nTruth; ++flavor)
+        rangeDesign(row,flavor) = rangeComposition(reco,flavor)*
+          rangeMCResponse[reco][flavor].mean;
+    }
+    return fitResponse(
+      rangeDesign,rangeObserved,rangeErrors,responsePriorSigma);
+  };
+
+  const std::vector<double> ptFitEdges = {
+    30.,40.,60.,85.,125.,180.,250.,400.,
+  };
+  std::vector<FitResult> ptFits;
+  for (size_t bin=0; bin+1<ptFitEdges.size(); ++bin)
+    ptFits.push_back(fitPtRange(ptFitEdges[bin],ptFitEdges[bin+1]));
 
   std::vector<double> responsePrediction(nReco,
     std::numeric_limits<double>::quiet_NaN());
@@ -631,6 +909,12 @@ void analyzeFlavorMatrix(
   TH2D *hCompositionData = makeMatrix(
     "h2_composition_data",
     ";Reco hybrid flavor;True flavor;Inferred P_{data}(f|t)");
+  TH2D *hCompositionMC = makeMatrix(
+    "h2_composition_mc",
+    ";Reco hybrid flavor;True flavor;P_{MC}(f|t)");
+  TH2D *hCompositionRatio = makeMatrix(
+    "h2_composition_ratio_data_over_mc",
+    ";Reco hybrid flavor;True flavor;P_{data}(f|t)/P_{MC}(f|t)");
   TH1D *hTruthPrior = new TH1D(
     "h1_truth_prior_mc",";True flavor;MC truth prior",7,idBins);
   TH1D *hRecoFractionData = new TH1D(
@@ -644,36 +928,62 @@ void analyzeFlavorMatrix(
     hRecoFractionData->SetBinContent(bin,dataRecoFraction[reco]);
   }
   for (int flavor=0; flavor!=nTruth; ++flavor) {
-    const int trueId = truthIds[activeTruth[flavor]];
+    const int trueId = truthGroups[flavor].outputId;
     const int bin = hTruthPrior->GetXaxis()->FindFixBin(trueId);
     hTruthPrior->SetBinContent(bin,truthPrior[flavor]);
   }
   for (int reco=0; reco!=nReco; ++reco)
     for (int flavor=0; flavor!=nTruth; ++flavor) {
       const int xbin = hEfficiencyMC->GetXaxis()->FindFixBin(recoIds[reco]);
-      const int trueId = truthIds[activeTruth[flavor]];
+      const int trueId = truthGroups[flavor].outputId;
       const int ybin = hEfficiencyMC->GetYaxis()->FindFixBin(trueId);
       hEfficiencyMC->SetBinContent(xbin,ybin,efficiencyMC(reco,flavor));
       hEfficiencyData->SetBinContent(xbin,ybin,efficiencyData(reco,flavor));
       hTransitionSF->SetBinContent(xbin,ybin,transitionSF(reco,flavor));
       hJointMC->SetBinContent(xbin,ybin,jointMC(reco,flavor));
       hJointData->SetBinContent(xbin,ybin,inferredJoint(reco,flavor));
+      hCompositionMC->SetBinContent(
+        xbin,ybin,compositionMC(reco,flavor));
       hCompositionData->SetBinContent(xbin,ybin,compositionData(reco,flavor));
+      hCompositionRatio->SetBinContent(
+        xbin,ybin,compositionRatio(reco,flavor));
     }
 
   response->cd();
   TH2D *hResponseMC = new TH2D(
     "h2_response_mc_by_transition",
     ";Reco hybrid flavor;True flavor;MC HDM response",7,idBins,7,idBins);
+  TH2D *hResponseData = new TH2D(
+    "h2_response_data_estimated_by_transition",
+    ";Reco hybrid flavor;True flavor;Estimated data HDM response",
+    7,idBins,7,idBins);
+  TH2D *hResponseRatio = new TH2D(
+    "h2_response_ratio_data_over_mc_by_transition",
+    ";Reco hybrid flavor;True flavor;Estimated data/MC HDM response",
+    7,idBins,7,idBins);
   labelRecoAxis(hResponseMC->GetXaxis());
   labelTruthAxis(hResponseMC->GetYaxis());
+  labelRecoAxis(hResponseData->GetXaxis());
+  labelTruthAxis(hResponseData->GetYaxis());
+  labelRecoAxis(hResponseRatio->GetXaxis());
+  labelTruthAxis(hResponseRatio->GetYaxis());
   for (int reco=0; reco!=nReco; ++reco)
     for (int flavor=0; flavor!=nTruth; ++flavor) {
       const int xbin = hResponseMC->GetXaxis()->FindFixBin(recoIds[reco]);
-      const int trueId = truthIds[activeTruth[flavor]];
+      const int trueId = truthGroups[flavor].outputId;
       const int ybin = hResponseMC->GetYaxis()->FindFixBin(trueId);
       hResponseMC->SetBinContent(xbin,ybin,mcResponse[reco][flavor].mean);
       hResponseMC->SetBinError(xbin,ybin,mcResponse[reco][flavor].error);
+      hResponseData->SetBinContent(
+        xbin,ybin,mcResponse[reco][flavor].mean*fit.residual[flavor]);
+      hResponseData->SetBinError(
+        xbin,ybin,std::hypot(
+          fit.residual[flavor]*mcResponse[reco][flavor].error,
+          mcResponse[reco][flavor].mean*
+            std::sqrt(std::max(0.,fit.covariance(flavor,flavor)))));
+      hResponseRatio->SetBinContent(xbin,ybin,fit.residual[flavor]);
+      hResponseRatio->SetBinError(
+        xbin,ybin,std::sqrt(std::max(0.,fit.covariance(flavor,flavor))));
     }
   TH1D *hDataReco = new TH1D(
     "h1_response_data_reco",";Reco hybrid flavor;Data HDM response",7,idBins);
@@ -703,7 +1013,7 @@ void analyzeFlavorMatrix(
   gResidual->SetName("g_response_residual_data_over_mc");
   gResidual->SetTitle(";True-flavor ID;R^{data}_{f}/R^{MC}_{f}");
   for (int flavor=0; flavor!=nTruth; ++flavor) {
-    const int trueId = truthIds[activeTruth[flavor]];
+    const int trueId = truthGroups[flavor].outputId;
     const int bin = hResidual->GetXaxis()->FindFixBin(trueId);
     const double value = fit.residual[flavor];
     const double error = fit.covariance(flavor,flavor)>0.
@@ -719,6 +1029,31 @@ void analyzeFlavorMatrix(
   }
   gResidual->Write();
   fit.covariance.Write("response_residual_covariance");
+  for (int flavor=0; flavor!=nTruth; ++flavor) {
+    TGraphErrors *graph = new TGraphErrors();
+    graph->SetName(Form("g_response_residual_vs_pt_%s",
+                        truthGroups[flavor].name));
+    graph->SetTitle(Form(
+      ";p_{T,Z} (GeV);R^{data}_{%s}/R^{MC}_{%s}",
+      truthGroups[flavor].name,truthGroups[flavor].name));
+    for (size_t bin=0; bin<ptFits.size(); ++bin) {
+      // Keep the graph quantitative: rank-deficient or nearly singular bins
+      // remain in the TSV diagnostics but are not drawn as measurements.
+      if (!ptFits[bin].solved || ptFits[bin].rank<nTruth ||
+          !std::isfinite(ptFits[bin].nonzeroCondition) ||
+          ptFits[bin].nonzeroCondition>100.)
+        continue;
+      const double low = ptFitEdges[bin];
+      const double high = ptFitEdges[bin+1];
+      const double x = std::sqrt(low*high);
+      const double error = ptFits[bin].covariance(flavor,flavor)>0.
+        ? std::sqrt(ptFits[bin].covariance(flavor,flavor)) : 0.;
+      const int point = graph->GetN();
+      graph->SetPoint(point,x,ptFits[bin].residual[flavor]);
+      graph->SetPointError(point,0.5*(high-low),error);
+    }
+    graph->Write();
+  }
 
   diagnostics->cd();
   TH1D *hSingular = new TH1D(
@@ -744,12 +1079,36 @@ void analyzeFlavorMatrix(
   TParameter<int>("hdm_constructed_from_component_means",1).Write();
   TParameter<int>("sparse_cell_response_fallbacks",cellFallbacks).Write();
   TParameter<int>("zero_profile_error_fallbacks",fit.zeroErrorFallbacks).Write();
+  TH2D *hUncertainty = new TH2D(
+    "h2_response_uncertainty_components",
+    ";True flavor;Source;Absolute uncertainty",
+    nTruth,-0.5,nTruth-0.5,4,-0.5,3.5);
+  const char *uncertaintySources[] = {
+    "data stat.", "purity stat.",
+    "response stat.", "fractions 1%",
+  };
+  for (int flavor=0; flavor!=nTruth; ++flavor) {
+    hUncertainty->GetXaxis()->SetBinLabel(
+      flavor+1,truthGroups[flavor].name);
+    hUncertainty->SetBinContent(
+      flavor+1,1,std::sqrt(std::max(0.,fit.covariance(flavor,flavor))));
+    hUncertainty->SetBinContent(
+      flavor+1,2,purityStatUncertainty[flavor]);
+    hUncertainty->SetBinContent(
+      flavor+1,3,responseTemplateUncertainty[flavor]);
+    hUncertainty->SetBinContent(
+      flavor+1,4,flavorFractionSensitivity[flavor]);
+  }
+  for (int source=0; source!=4; ++source)
+    hUncertainty->GetYaxis()->SetBinLabel(
+      source+1,uncertaintySources[source]);
   TObjString(
     "Data transition efficiencies are the KL/IPF projection closest to the "
     "MC joint matrix with fixed MC truth marginals and observed data reco "
     "marginals. Tagging marginals use the un-subtracted parallel population "
-    "to keep a non-negative likelihood, while response profiles use the "
-    "signed parallel-minus-transverse estimator. Individual transition SFs "
+    "to keep a non-negative likelihood. The undefined reco tag is omitted; "
+    "truth d/u+s and undefined+g are combined into four physical groups. "
+    "Individual transition SFs "
     "are model dependent and are not independently identified by data tag "
     "fractions.")
     .Write("tagging_inference_model",TObject::kOverwrite);
@@ -757,11 +1116,16 @@ void analyzeFlavorMatrix(
     "Response fit assumes one multiplicative data/MC residual per true "
     "flavor, common to all reconstructed tags. HDM is constructed after "
     "merging from the m0, mn and mu profile means with Rn=1 and Ru=0.92; "
-    "the event-wise p3hdm profile is deliberately not used. The fit uses "
+    "the event-wise p3hdm profile is deliberately not used. Flavor response "
+    "uses the pure parallel barrel population; the transverse sideband is "
+    "retained elsewhere as a pileup control. The fit uses "
     "cell-specific MC responses and a Gaussian prior centered at one. "
     "MC/template and "
-    "truth-fraction uncertainties are not yet included in the reported "
-    "conditional covariance.")
+    "truth-fraction uncertainties are not included in the reported "
+    "conditional covariance. Separate diagnostics estimate MC template "
+    "statistics, an approximate multinomial purity term, and the response "
+    "sensitivity to independent 1% relative flavor-fraction changes. These "
+    "terms are not yet a complete systematic covariance.")
     .Write("response_inference_model",TObject::kOverwrite);
   output->Write("",TObject::kOverwrite);
   output->Purge();
@@ -774,9 +1138,9 @@ void analyzeFlavorMatrix(
     << "pt_min\ttrue_id\ttrue_flavor\treco_id\treco_flavor"
        "\ttruth_prior_mc\treco_fraction_data\tjoint_mc"
        "\tjoint_data_inferred\tefficiency_mc\tefficiency_data_inferred"
-       "\ttransition_sf\n";
+       "\ttransition_sf\tpurity_mc\tpurity_data_inferred\tpurity_ratio\n";
   for (int flavor=0; flavor!=nTruth; ++flavor) {
-    const int trueId = truthIds[activeTruth[flavor]];
+    const int trueId = truthGroups[flavor].outputId;
     for (int reco=0; reco!=nReco; ++reco)
       taggingStream
         << minimumPt << '\t' << trueId << '\t' << truthName(trueId) << '\t'
@@ -785,7 +1149,10 @@ void analyzeFlavorMatrix(
         << jointMC(reco,flavor) << '\t' << inferredJoint(reco,flavor) << '\t'
         << efficiencyMC(reco,flavor) << '\t'
         << efficiencyData(reco,flavor) << '\t'
-        << transitionSF(reco,flavor) << '\n';
+        << transitionSF(reco,flavor) << '\t'
+        << compositionMC(reco,flavor) << '\t'
+        << compositionData(reco,flavor) << '\t'
+        << compositionRatio(reco,flavor) << '\n';
   }
 
   const std::string responseTable =
@@ -795,7 +1162,7 @@ void analyzeFlavorMatrix(
     << "pt_min\ttrue_id\ttrue_flavor\tdata_over_mc\tuncertainty"
        "\tmc_over_data\tcorrection_uncertainty\n";
   for (int flavor=0; flavor!=nTruth; ++flavor) {
-    const int trueId = truthIds[activeTruth[flavor]];
+    const int trueId = truthGroups[flavor].outputId;
     const double value = fit.residual[flavor];
     const double error = fit.covariance(flavor,flavor)>0.
       ? std::sqrt(fit.covariance(flavor,flavor)) : 0.;
@@ -804,6 +1171,43 @@ void analyzeFlavorMatrix(
       << (value!=0. ? 1./value : 0.) << '\t'
       << (value!=0. ? error/(value*value) : 0.) << '\n';
   }
+
+  const std::string responsePtTable =
+    std::string(outputDirectory)+"/response_residuals_vs_pt.tsv";
+  std::ofstream responsePtStream(responsePtTable.c_str());
+  responsePtStream << std::setprecision(10)
+    << "pt_low\tpt_high\ttrue_id\ttrue_flavor\tdata_over_mc"
+       "\tuncertainty\tfit_solved\trank\tcondition\n";
+  for (size_t ptBin=0; ptBin<ptFits.size(); ++ptBin) {
+    for (int flavor=0; flavor!=nTruth; ++flavor) {
+      const int trueId = truthGroups[flavor].outputId;
+      const double error = ptFits[ptBin].covariance(flavor,flavor)>0.
+        ? std::sqrt(ptFits[ptBin].covariance(flavor,flavor)) : 0.;
+      responsePtStream
+        << ptFitEdges[ptBin] << '\t' << ptFitEdges[ptBin+1] << '\t'
+        << trueId << '\t' << truthGroups[flavor].name << '\t'
+        << ptFits[ptBin].residual[flavor] << '\t' << error << '\t'
+        << (ptFits[ptBin].solved ? 1 : 0) << '\t'
+        << ptFits[ptBin].rank << '\t'
+        << ptFits[ptBin].nonzeroCondition << '\n';
+    }
+  }
+
+  const std::string uncertaintyTable =
+    std::string(outputDirectory)+"/response_uncertainties.tsv";
+  std::ofstream uncertaintyStream(uncertaintyTable.c_str());
+  uncertaintyStream << std::setprecision(10)
+    << "true_id\ttrue_flavor\tdata_response_stat_conditional"
+       "\tmc_purity_stat_approx\tmc_response_template_stat"
+       "\tresponse_shift_for_independent_1pct_flavor_fractions\n";
+  for (int flavor=0; flavor!=nTruth; ++flavor)
+    uncertaintyStream
+      << truthGroups[flavor].outputId << '\t'
+      << truthGroups[flavor].name << '\t'
+      << std::sqrt(std::max(0.,fit.covariance(flavor,flavor))) << '\t'
+      << purityStatUncertainty[flavor] << '\t'
+      << responseTemplateUncertainty[flavor] << '\t'
+      << flavorFractionSensitivity[flavor] << '\n';
 
   const std::string summaryName =
     std::string(outputDirectory)+"/fit_summary.json";
@@ -816,8 +1220,8 @@ void analyzeFlavorMatrix(
     << "  \"tagging_model\": \"KL/IPF projection with fixed MC truth and "
        "observed data reco marginals\",\n"
     << "  \"tagging_count_source\": \"unsubtracted parallel window\",\n"
-    << "  \"response_source\": \"signed parallel-minus-transverse "
-       "component profiles\",\n"
+    << "  \"response_source\": \"pure parallel barrel component "
+       "profiles\",\n"
     << "  \"transition_scale_factors_are_model_dependent\": true,\n"
     << "  \"ipf_converged\": " << (ipfConverged ? "true" : "false")
     << ",\n"

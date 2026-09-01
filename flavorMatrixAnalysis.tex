@@ -1,0 +1,278 @@
+\documentclass[aspectratio=169,10pt]{beamer}
+
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{array}
+
+\definecolor{cmsblue}{RGB}{0,92,170}
+\definecolor{cmsred}{RGB}{220,35,55}
+\definecolor{cmsgreen}{RGB}{0,145,85}
+\definecolor{cmsamber}{RGB}{185,110,0}
+\setbeamercolor{structure}{fg=cmsblue}
+\setbeamercolor{frametitle}{fg=black}
+\setbeamercolor{title}{fg=black}
+\setbeamercolor{alerted text}{fg=cmsred}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{itemize item}{\color{cmsblue}$\blacktriangleright$}
+\setbeamertemplate{footline}{%
+  \leavevmode%
+  \hbox{%
+    \begin{beamercolorbox}[wd=.82\paperwidth,ht=2.6ex,dp=1.1ex,leftskip=1.0em]{author in head/foot}%
+      \color{gray}\scriptsize CMS Work in progress
+    \end{beamercolorbox}%
+    \begin{beamercolorbox}[wd=.18\paperwidth,ht=2.6ex,dp=1.1ex,rightskip=1.0em plus1fil]{date in head/foot}%
+      \color{gray}\scriptsize\insertframenumber/\inserttotalframenumber
+    \end{beamercolorbox}}%
+  \vskip0pt}
+\setbeamertemplate{headline}{%
+  \color{cmsblue}\rule{\paperwidth}{1.2pt}}
+\setbeamersize{text margin left=0.55cm,text margin right=0.55cm}
+\graphicspath{{output/flavorMatrix/}}
+
+\newcommand{\plotbox}[2][0.93\textheight]{%
+  \centering\includegraphics[height=#1,keepaspectratio]{#2}}
+\newcommand{\cmark}{\textcolor{cmsgreen}{\textbf{+}}}
+\newcommand{\xmark}{\textcolor{cmsred}{\textbf{-}}}
+
+\title{Hybrid flavor tagging and response in all-pairs Z+jet}
+\subtitle{ParticleNet QvG, parallel barrel response, and a four-flavor matrix fit}
+\author{M. Voutilainen}
+\date{Run 2024I and Summer24 DY -- one-file local validation}
+
+\begin{document}
+
+\begin{frame}[plain]
+  \titlepage
+  \vfill
+  \begin{center}
+    \color{cmsamber}\small Numerical validation only; not a precision flavor correction
+  \end{center}
+\end{frame}
+
+\begin{frame}{The hybrid tag has four reconstructed categories}
+\begin{columns}[T,onlytextwidth]
+\column{0.48\textwidth}
+\begin{block}{Sequential definition}
+\begin{align*}
+ b &: \mathrm{UParT\ CvB}<0.5,\\
+ c &: \mathrm{CvB}\geq0.5,\quad \mathrm{CvL}\geq0.5,\\
+ uds &: \mathrm{CvB}\geq0.5,\quad \mathrm{CvL}<0.5,\quad
+        \mathrm{PNet\ QvG}\geq0.3,\\
+ g &: \mathrm{CvB}\geq0.5,\quad \mathrm{CvL}<0.5,\quad
+        \mathrm{PNet\ QvG}<0.3.
+\end{align*}
+\end{block}
+\column{0.50\textwidth}
+\begin{itemize}
+\item ParticleNet replaces the time-dependent UParT QvG node.
+\item The QvG decision is applied only after the b and c vetoes.
+\item The empty reconstructed-undefined category is removed from fits.
+\item Truth $d/u+s$ is combined into $uds$; truth undefined is combined with $g$ after checking its discriminator shapes.
+\item Four measured tags now constrain four truth groups.
+\end{itemize}
+\end{columns}
+\end{frame}
+
+\begin{frame}{A QvG threshold of 0.3 favors gluon purity}
+\begin{columns}[T,onlytextwidth]
+\column{0.60\textwidth}
+\plotbox[0.78\textheight]{qvg_working_point_scan.pdf}
+\column{0.38\textwidth}
+\small
+\begin{tabular}{lcc}
+\toprule
+ & 0.3 & 0.5\\
+\midrule
+$g$ purity & 0.631 & 0.521\\
+$g$ efficiency & 0.600 & 0.808\\
+$uds$ purity & 0.775 & 0.861\\
+$uds$ efficiency & 0.781 & 0.592\\
+\bottomrule
+\end{tabular}
+\vspace{0.5em}
+\begin{alertblock}{Working point choice}
+The lower threshold trades some gluon efficiency for an 11 percentage-point gain in gluon purity, while recovering substantial uds efficiency.
+\end{alertblock}
+\end{columns}
+\end{frame}
+
+\begin{frame}{The score cube is now separated from its legend}
+\plotbox[0.86\textheight]{tagger_cube_allflavors.pdf}
+\end{frame}
+
+\begin{frame}{One-dimensional scores show the dominant handles}
+\begin{columns}[c,onlytextwidth]
+\column{0.33\textwidth}\includegraphics[width=\linewidth]{tagger_CvB_trueflavor.pdf}
+\column{0.33\textwidth}\includegraphics[width=\linewidth]{tagger_CvL_trueflavor.pdf}
+\column{0.33\textwidth}\includegraphics[width=\linewidth]{tagger_QvG_trueflavor.pdf}
+\end{columns}
+\end{frame}
+
+\begin{frame}{Pairwise axes and stored discriminator coordinates now agree}
+\begin{columns}[c,onlytextwidth]
+\column{0.33\textwidth}\includegraphics[width=\linewidth]{tagger2d_CvL_CvB_allflavors.pdf}
+\column{0.33\textwidth}\includegraphics[width=\linewidth]{tagger2d_QvG_CvB_allflavors.pdf}
+\column{0.33\textwidth}\includegraphics[width=\linewidth]{tagger2d_QvG_CvL_allflavors.pdf}
+\end{columns}
+\vspace{-0.2em}
+\centering\scriptsize Horizontal coordinates are the second stored discriminator; vertical coordinates are the first. Black lines show the actual 0.5/0.3 category boundaries.
+\end{frame}
+
+\begin{frame}{Tagging efficiencies: MC, inferred data, and their ratio}
+\begin{columns}[c,onlytextwidth]
+\column{0.33\textwidth}\includegraphics[width=\linewidth]{efficiency_mc.pdf}
+\column{0.33\textwidth}\includegraphics[width=\linewidth]{efficiency_data_inferred.pdf}
+\column{0.33\textwidth}\includegraphics[width=\linewidth]{efficiency_transition_sf.pdf}
+\end{columns}
+\vspace{-0.2em}
+\centering\scriptsize Data transitions are the minimum-KL solution with fixed MC truth fractions, not independent truth-labeled measurements.
+\end{frame}
+
+\begin{frame}{Purities are the relevant mixture weights for response}
+\begin{columns}[c,onlytextwidth]
+\column{0.33\textwidth}\includegraphics[width=\linewidth]{purity_mc.pdf}
+\column{0.33\textwidth}\includegraphics[width=\linewidth]{purity_data_inferred.pdf}
+\column{0.33\textwidth}\includegraphics[width=\linewidth]{purity_ratio_data_over_mc.pdf}
+\end{columns}
+\vspace{-0.2em}
+\centering\scriptsize $P(f\mid t)$ enters each reconstructed-tag response. The b tag is very pure; c and g remain the most composition-sensitive rows.
+\end{frame}
+
+\begin{frame}{Transition responses expose sparse heavy-flavor cells}
+\begin{columns}[c,onlytextwidth]
+\column{0.33\textwidth}\includegraphics[width=\linewidth]{response_transition_mc.pdf}
+\column{0.33\textwidth}\includegraphics[width=\linewidth]{response_transition_data_estimated.pdf}
+\column{0.33\textwidth}\includegraphics[width=\linewidth]{response_transition_ratio_data_over_mc.pdf}
+\end{columns}
+\vspace{-0.2em}
+\centering\scriptsize The data map assumes one data/MC response factor per truth flavor, common to all reconstructed tags. Low-purity cells can have large MC template fluctuations.
+\end{frame}
+
+\begin{frame}{Pure-parallel HDM gives a full-rank four-flavor fit}
+\begin{columns}[T,onlytextwidth]
+\column{0.51\textwidth}
+\begin{align*}
+P_{\mathrm{data}}(f\mid t) &=
+\frac{W_{\mathrm{data}}(t,f)}{\sum_{f'}W_{\mathrm{data}}(t,f')},\\
+R_{\mathrm{data}}(t) &= \sum_f P_{\mathrm{data}}(f\mid t)
+R_{\mathrm{MC}}(t,f)\,k_f,\\
+R_{\mathrm{HDM}} &= \frac{m_0-m_n-m_u}
+{1-m_n/R_n-m_u/R_u}.
+\end{align*}
+\column{0.47\textwidth}
+\begin{block}{Current choices}
+\begin{itemize}
+\item $|\eta_{jet}|<1.3$ and pure parallel window
+\item $p_{T,Z}>30$ GeV
+\item $R_n=1.00$, $R_u=0.92$
+\item merged component means, never event-wise HDM
+\item four reco rows, four truth columns
+\item rank $4/4$, condition number 7.37
+\end{itemize}
+\end{block}
+\end{columns}
+\end{frame}
+
+\begin{frame}{The local file determines only percent-level flavor residuals}
+\begin{columns}[c,onlytextwidth]
+\column{0.55\textwidth}
+\includegraphics[width=\linewidth]{flavor_response_residual.pdf}
+\column{0.43\textwidth}
+\small
+\begin{tabular}{lcc}
+\toprule
+Flavor & data/MC & conditional stat.\\
+\midrule
+$uds$ & 0.986 & 5.1\%\\
+$c$   & 0.875 & 10.0\%\\
+$b$   & 0.916 & 15.6\%\\
+$g$   & 1.072 & 9.5\%\\
+\bottomrule
+\end{tabular}
+\vspace{0.6em}
+\begin{alertblock}{Interpretation}
+The c and b central values are not yet precision results. The local sample is two orders of magnitude away from a 0.1\% statistical target even before model systematics.
+\end{alertblock}
+\end{columns}
+\end{frame}
+
+\begin{frame}{Only two local pT bins pass the stability gate}
+\begin{columns}[c,onlytextwidth]
+\column{0.57\textwidth}
+\includegraphics[width=\linewidth]{flavor_response_residual_vs_pt.pdf}
+\column{0.41\textwidth}
+\scriptsize
+\begin{tabular}{lrrl}
+\toprule
+$p_T$ (GeV) & rank & condition & plot\\
+\midrule
+30--40  & 4 & $5.8\times10^7$ & rejected\\
+40--60  & 4 & 7.37 & shown\\
+60--85  & 4 & 4.49 & shown\\
+85--125 & 3 & 4.69 & rejected\\
+125--180& 3 & $2.7\times10^7$ & rejected\\
+180--250& 3 & $1.2\times10^7$ & rejected\\
+250--400& 2 & 4.88 & rejected\\
+\bottomrule
+\end{tabular}
+\vspace{0.5em}
+The TSV output retains every bin. The figure requires rank 4 and condition number below 100.
+\end{columns}
+\end{frame}
+
+\begin{frame}{Absolute response uncertainties identify the bottleneck}
+\begin{columns}[c,onlytextwidth]
+\column{0.56\textwidth}
+\centering
+\includegraphics[width=0.92\linewidth]{response_uncertainty_components.pdf}
+\column{0.42\textwidth}
+\small
+\begin{itemize}
+\item Data response statistics dominate this one-file test.
+\item MC response-template statistics contribute 1--3\%.
+\item A multinomial MC-purity estimate is below 0.4\%.
+\item Independent 1\% truth-fraction changes shift the fitted responses by less than 0.05\% in this conditional model.
+\end{itemize}
+\begin{alertblock}{Not yet a full covariance}
+Generator modeling, tagger-shape systematics, correlations, JEC/JER, pileup, and the signal/sideband likelihood remain to be added.
+\end{alertblock}
+\end{columns}
+\end{frame}
+
+\begin{frame}{Semileptonic heavy-flavor decays require a separate truth control}
+\begin{columns}[T,onlytextwidth]
+\column{0.48\textwidth}
+\begin{block}{Physical effect}
+Neutrinos from semileptonic c- and b-hadron decays lower the visible DB/MPF-HDM response. Depending on the particle-level jet definition, that loss need not appear in the nominal no-neutrino truth response.
+\end{block}
+\column{0.50\textwidth}
+\begin{block}{Next-run control}
+\begin{itemize}
+\item identify heavy-hadron descendant neutrinos with GenPart ancestry;
+\item store neutrino $p_T$ fraction and $R_{gen+\nu}/R_{gen}$ by truth/reco cell;
+\item retain an ambiguous ancestry category;
+\item separate decay-neutrino physics from detector response and tagging migrations.
+\end{itemize}
+\end{block}
+\end{columns}
+\end{frame}
+
+\begin{frame}{Recommended path before the next full Condor campaign}
+\begin{enumerate}
+\item Keep PNet QvG at 0.3 and validate the purity scan on the full 2024I sample.
+\item Use pure-parallel barrel response as the current central flavor fit; retain transverse profiles as a pileup systematic and forward control.
+\item Add heavy-decay-neutrino and direct-versus-splitting truth controls before interpreting c/b residuals physically.
+\item Require full rank and a bounded condition number separately in every reported pT bin.
+\item Move to the full 2024 sample only after closure with injected flavor-response shifts and varied truth fractions.
+\end{enumerate}
+\vfill
+\begin{center}
+\color{cmsgreen}\textbf{The present local sample validates the method and exposes its precision limit; it does not yet measure 0.1\% flavor corrections.}
+\end{center}
+\end{frame}
+
+\end{document}
