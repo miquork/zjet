@@ -62,9 +62,10 @@ echo "Compiler cache disabled; temporary files are local to ${PWD}."
 
 if command -v sha256sum >/dev/null 2>&1; then
   echo "Transferred analysis source SHA256 values:"
-  sha256sum zjet.C zjet.h ZJetJerResolution.h ZJetMuonCorrections.h \
+  sha256sum zjet.C zjet.h FlavorMatrixTools.h ZJetJerResolution.h \
+    ZJetMuonCorrections.h \
     data/MuonCorrections/2024_Summer24_generated.h \
-    mk_compile.C run_zjet_job.C
+    mk_compile.C run_zjet_job.C validateFlavorMatrix.C
 fi
 
 if [[ -z "${X509_USER_PROXY:-}" || ! -r "${X509_USER_PROXY}" ]]; then
@@ -110,5 +111,8 @@ if [[ ! -s "${output_file}" ]]; then
   echo "ERROR: expected output ${output_file} is missing or empty." >&2
   exit 13
 fi
+
+validation_macro="validateFlavorMatrix.C(\"${output_file}\",${is_mc})"
+root -l -b -q "${validation_macro}"
 
 echo "Job finished successfully at $(date -u '+%Y-%m-%dT%H:%M:%SZ')."

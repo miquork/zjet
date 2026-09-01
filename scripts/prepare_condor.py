@@ -213,7 +213,8 @@ def main() -> None:
     if len(optional_names) != len(set(optional_names)):
         raise ValueError("optional input files must have distinct basenames")
     reserved_names = {
-        "zjet.C", "zjet.h", "ZJetLumi.h", "mk_compile.C",
+        "zjet.C", "zjet.h", "ZJetLumi.h", "FlavorMatrixTools.h",
+        "validateFlavorMatrix.C", "mk_compile.C",
         "run_zjet_job.C",
     }
     if reserved_names.intersection(optional_names):
@@ -291,8 +292,12 @@ def main() -> None:
         "source": git_description(),
         "source_files": {
             name: file_description(REPOSITORY/name)
-            for name in ("zjet.C", "zjet.h", "mk_compile.C",
+            for name in ("zjet.C", "zjet.h", "FlavorMatrixTools.h",
+                         "validateFlavorMatrix.C", "mk_compile.C",
                          "run_zjet_job.C", "condor/run_zjet_job.sh",
+                         "embedCampaignMetadata.C",
+                         "scripts/merge_condor.py",
+                         "analyzeFlavorMatrix.C", "drawFlavorMatrix.C",
                          "ZJetJerResolution.h",
                          "ZJetMuonCorrections.h",
                          "data/MuonCorrections/2024_Summer24_generated.h",
@@ -369,9 +374,10 @@ def main() -> None:
 
     common_inputs = [
         "zjet.C", "zjet.h", "ZJetLumi.h", "ZJetJerResolution.h",
+        "FlavorMatrixTools.h",
         "ZJetMuonCorrections.h",
         "data/MuonCorrections/2024_Summer24_generated.h", "mk_compile.C",
-        "run_zjet_job.C",
+        "run_zjet_job.C", "validateFlavorMatrix.C",
         "CondFormats/JetMETObjects/interface/FactorizedJetCorrector.h",
         "CondFormats/JetMETObjects/interface/JetCorrectorParameters.h",
         "CondFormats/JetMETObjects/interface/SimpleJetCorrector.h",

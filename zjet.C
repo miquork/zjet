@@ -6,15 +6,18 @@
 
 #include "TLorentzVector.h"
 #include "TH2D.h"
+#include "TH3D.h"
 #include "TGraphErrors.h"
 #include "TProfile.h"
 #include "TProfile2D.h"
+#include "TProfile3D.h"
 #include "TObjString.h"
 #include "TSystem.h"
 
 #include "ZJetLumi.h"
 #include "ZJetJerResolution.h"
 #include "ZJetMuonCorrections.h"
+#include "FlavorMatrixTools.h"
 #include "CondFormats/JetMETObjects/interface/FactorizedJetCorrector.h"
 #include "CondFormats/JetMETObjects/interface/JetCorrectorParameters.h"
 
@@ -23,6 +26,7 @@
 #include <cmath>
 #include <ctime>
 #include <iomanip>
+#include <limits>
 #include <map>
 #include <memory>
 #include <random>
@@ -94,6 +98,29 @@ struct TruthHDMProfiles1D {
   std::map<std::string,std::map<std::string,TruthHDMAxis1D> > regions;
 };
 
+struct FlavorMatrixComponents {
+  double m0 = 0.;
+  double m2 = 0.;
+  double mn = 0.;
+  double mu = 0.;
+  double mnu = 0.;
+  double hdm = 0.;
+};
+
+struct FlavorMatrixVariant {
+  double x = 0.;
+  FlavorMatrixComponents response;
+};
+
+struct FlavorMatrixHistograms {
+  TH3D *counts = nullptr;
+  TH3D *parallelCounts = nullptr;
+  TH3D *transverseCounts = nullptr;
+  std::map<std::string,TProfile3D*> profiles;
+  std::map<std::string,TH3D*> pairControls;
+  std::map<int,TH3D*> cubeControls;
+};
+
 struct GeneratorRecoil {
   bool hasGeneratorZ = false;
   TLorentzVector z;
@@ -121,6 +148,197 @@ const double responseBins[] = {
   230.,300.,400.,500.,700.,1000.,1500.
 };
 const int responseBinCount = sizeof(responseBins)/sizeof(responseBins[0])-1;
+
+const double flavorMatrixPtBins[] = {
+  10.,15.,20.,25.,30.,35.,40.,50.,60.,70.,85.,100.,125.,155.,180.,
+  210.,250.,300.,350.,400.,500.,600.,800.,1000.,1200.,1500.,1800.,
+  2100.,2400.,2700.,3000.,3500.,4000.
+};
+const int flavorMatrixPtBinCount =
+  sizeof(flavorMatrixPtBins)/sizeof(flavorMatrixPtBins[0])-1;
+const double flavorIdBins[] = {
+  -0.5,0.5,1.5,2.5,3.5,4.5,5.5,6.5,
+};
+
+int reconstructedUParTFlavor(double cvb, double cvl, double qvg) {
+  if (!std::isfinite(cvb) || !std::isfinite(cvl) || !std::isfinite(qvg) ||
+      cvb<0. || cvl<0. || qvg<0.)
+    return 0;
+  if (cvb<0.5) return 5;
+  if (cvl>=0.5) return 4;
+  return (qvg>=0.5 ? 1 : 6);
+}
+
+int generatorFlavorId(int partonFlavor) {
+  const int flavor = std::abs(partonFlavor);
+  if (flavor==1 || flavor==2) return 1;
+  if (flavor==3 || flavor==4 || flavor==5) return flavor;
+  if (flavor==21) return 6;
+  return 0;
+}
+
+FlavorMatrixHistograms bookFlavorMatrix(TDirectory *parent) {
+  if (!parent)
+    throw std::runtime_error("Cannot book FlavorMatrix without a directory");
+  TDirectory *directory = parent->mkdir("FlavorMatrix");
+  if (!directory)
+    throw std::runtime_error("Failed to create FlavorMatrix directory");
+  directory->cd();
+
+  FlavorMatrixHistograms result;
+  result.counts = new TH3D(
+    "h3counts_flavormatrix",
+    ";p_{T,Z} (GeV);Reco UParT flavor;Generator parton flavor",
+    flavorMatrixPtBinCount,flavorMatrixPtBins,
+    7,flavorIdBins,7,flavorIdBins);
+  result.counts->Sumw2();
+  result.parallelCounts = dynamic_cast<TH3D*>(result.counts->Clone(
+    "h3counts_parallel_flavormatrix"));
+  result.parallelCounts->SetTitle(
+    ";p_{T,Z} (GeV);Reco UParT flavor;Generator parton flavor");
+  result.transverseCounts = dynamic_cast<TH3D*>(result.counts->Clone(
+    "h3counts_transverse_flavormatrix"));
+  result.transverseCounts->SetTitle(
+    ";p_{T,Z} (GeV);Reco UParT flavor;Generator parton flavor");
+
+  const std::vector<std::string> observables = {
+    "m0", "m2", "mn", "mu", "mnu", "hdm",
+  };
+  const std::vector<std::string> variants = {"ab","ad","tc","pf"};
+  for (const std::string &observable : observables) {
+    for (const std::string &variant : variants) {
+      const std::string name =
+        "p3"+observable+variant+"_flavormatrix";
+      TProfile3D *profile = new TProfile3D(
+        name.c_str(),
+        ";Reference p_{T} (GeV);Reco UParT flavor;Generator parton flavor",
+        flavorMatrixPtBinCount,flavorMatrixPtBins,
+        7,flavorIdBins,7,flavorIdBins);
+      result.profiles[name] = profile;
+    }
+  }
+
+  TDirectory *controls = directory->mkdir("controls");
+  if (!controls)
+    throw std::runtime_error("Failed to create FlavorMatrix/controls");
+  controls->cd();
+  const std::vector<std::tuple<std::string,std::string,std::string> > pairs = {
+    {"h3_cvb_cvl_trueflavor","UParT CvB","UParT CvL"},
+    {"h3_cvb_qvg_trueflavor","UParT CvB","UParT QvG"},
+    {"h3_cvl_qvg_trueflavor","UParT CvL","UParT QvG"},
+  };
+  for (const auto &pair : pairs) {
+    const std::string &name = std::get<0>(pair);
+    TH3D *histogram = new TH3D(
+      name.c_str(),
+      Form(";%s;%s;Generator parton flavor",
+           std::get<1>(pair).c_str(),std::get<2>(pair).c_str()),
+      50,0.,1.,50,0.,1.,7,-0.5,6.5);
+    histogram->Sumw2();
+    result.pairControls[name] = histogram;
+  }
+  for (int flavor=0; flavor<=6; ++flavor) {
+    TH3D *histogram = new TH3D(
+      Form("h3_cvb_cvl_qvg_true%d",flavor),
+      ";UParT CvB;UParT CvL;UParT QvG",
+      24,0.,1.,24,0.,1.,24,0.,1.);
+    histogram->Sumw2();
+    result.cubeControls[flavor] = histogram;
+  }
+  return result;
+}
+
+FlavorMatrixComponents flavorMatrixComponents(
+  double m0, double m2, double mn, double mu, double mnu) {
+  FlavorMatrixComponents result;
+  result.m0 = m0;
+  result.m2 = m2;
+  result.mn = mn;
+  result.mu = mu;
+  result.mnu = mnu;
+  const double denominator = 1.-result.mn/1.00-result.mu/0.92;
+  result.hdm = (std::fabs(denominator)>1.e-9
+                  ? (result.m0-result.mn-result.mu)/denominator
+                  : std::numeric_limits<double>::quiet_NaN());
+  return result;
+}
+
+std::map<std::string,FlavorMatrixVariant> flavorMatrixVariants(
+  const TLorentzVector &z, const TLorentzVector &jet,
+  double m0, double m2, double mn, double mu, double mnu,
+  bool transverse) {
+  std::map<std::string,FlavorMatrixVariant> result;
+  if (z.Pt()<=0. || jet.Pt()<=0.) return result;
+
+  TLorentzVector zAxis;
+  zAxis.SetPtEtaPhiM(1.,0.,z.Phi(),0.);
+  TLorentzVector probeAxis;
+  probeAxis.SetPtEtaPhiM(1.,0.,jet.Phi()+TMath::Pi(),0.);
+  const double ptave = 0.5*(z.Pt()+jet.Pt());
+
+  TLorentzVector bisector = zAxis+probeAxis;
+  if (bisector.Pt()>0.) bisector *= 1./bisector.Pt();
+  const double ptavp = transverse
+    ? ptave
+    : 0.5*((z.Px()*bisector.Px()+z.Py()*bisector.Py())-
+           (jet.Px()*bisector.Px()+jet.Py()*bisector.Py()));
+
+  // Z+jet already evaluates every component on the Z response axis. The
+  // ab/ad/tc/pf variants deliberately change only the reference-pT binning,
+  // matching the existing p2m* convention and avoiding a hidden change of
+  // response definition inside a flavor bookkeeping object.
+  const std::vector<std::pair<std::string,double> > variants = {
+    {"ab",ptavp}, {"ad",ptave}, {"tc",z.Pt()}, {"pf",jet.Pt()},
+  };
+  for (const auto &entry : variants) {
+    FlavorMatrixVariant variant;
+    variant.x = entry.second;
+    variant.response = flavorMatrixComponents(m0,m2,mn,mu,mnu);
+    result[entry.first] = variant;
+  }
+  return result;
+}
+
+void fillFlavorMatrix(
+  FlavorMatrixHistograms &histograms, double ptz, double ptj,
+  int recoFlavor, int trueFlavor, double cvb, double cvl, double qvg,
+  const std::map<std::string,FlavorMatrixVariant> &variants,
+  double weight, bool transverse) {
+  histograms.counts->Fill(ptz,recoFlavor,trueFlavor,weight);
+  (transverse ? histograms.transverseCounts : histograms.parallelCounts)
+    ->Fill(ptz,recoFlavor,trueFlavor,transverse ? -weight : weight);
+  for (const auto &variant : variants) {
+    const FlavorMatrixComponents &value = variant.second.response;
+    const std::map<std::string,double> observables = {
+      {"m0",value.m0}, {"m2",value.m2}, {"mn",value.mn},
+      {"mu",value.mu}, {"mnu",value.mnu},
+    };
+    for (const auto &observable : observables) {
+      const std::string name =
+        "p3"+observable.first+variant.first+"_flavormatrix";
+      if (std::isfinite(observable.second) &&
+          std::isfinite(variant.second.x))
+        histograms.profiles.at(name)->Fill(
+          variant.second.x,recoFlavor,trueFlavor,observable.second,weight);
+    }
+  }
+  // Tagger-shape controls describe the un-subtracted signal-window sample.
+  // Filling them with the signed transverse weight would make ordinary
+  // discriminator densities negative and would obscure the tagger working
+  // point study.  The signed estimator remains available in counts/profiles,
+  // while parallelCounts records the matching raw signal-window population
+  // (which can still contain negative generator weights in NLO samples).
+  if (transverse || ptj<=30. || cvb<0. || cvl<0. || qvg<0. ||
+      !std::isfinite(cvb) || !std::isfinite(cvl) || !std::isfinite(qvg))
+    return;
+  histograms.pairControls.at("h3_cvb_cvl_trueflavor")->Fill(
+    cvb,cvl,trueFlavor,weight);
+  histograms.pairControls.at("h3_cvb_qvg_trueflavor")->Fill(
+    cvb,qvg,trueFlavor,weight);
+  histograms.pairControls.at("h3_cvl_qvg_trueflavor")->Fill(
+    cvl,qvg,trueFlavor,weight);
+  histograms.cubeControls.at(trueFlavor)->Fill(cvb,cvl,qvg,weight);
+}
 
 ResponseProfiles1D bookResponseProfiles1D(TDirectory *parent,
                                           const char *directoryName) {
@@ -552,6 +770,9 @@ void zjet::Loop()
    fChain->SetBranchStatus("Jet_btagDeepFlavCvB",1);
    fChain->SetBranchStatus("Jet_btagDeepFlavCvL",1);
    fChain->SetBranchStatus("Jet_btagDeepFlavQG",1);
+   fChain->SetBranchStatus("Jet_btagUParTAK4CvB",1);
+   fChain->SetBranchStatus("Jet_btagUParTAK4CvL",1);
+   fChain->SetBranchStatus("Jet_btagUParTAK4QvG",1);
 
    fChain->SetBranchStatus("PV_npvs",1);
    fChain->SetBranchStatus("Rho_fixedGridRhoFastjetAll",1);
@@ -584,6 +805,7 @@ void zjet::Loop()
      fChain->SetBranchStatus("GenJet_mass",1);
      fChain->SetBranchStatus("GenJet_partonFlavour",1);
      fChain->SetBranchStatus("Jet_genJetIdx",1);
+     fChain->SetBranchStatus("Jet_partonFlavour",1);
      fChain->SetBranchStatus("nGenPart",1);
      fChain->SetBranchStatus("GenPart_pdgId",1);
      fChain->SetBranchStatus("GenPart_status",1);
@@ -757,33 +979,25 @@ void zjet::Loop()
    }
    fout->cd();
    TObjString jecMode(jec ? "raw-pT JEC recomputation" : "stored NanoAOD JEC");
-   jecMode.Write("zjet_jec_mode");
    TObjString jecL2(jecL2File.c_str());
-   jecL2.Write("zjet_jec_l2_file");
    TObjString jecResidual((!isMC ? jecResidualFile : "").c_str());
-   jecResidual.Write("zjet_jec_residual_file");
    TObjString jerResolutionMetadata(
      (isMC ? jerResolutionFile : "").c_str());
-   jerResolutionMetadata.Write("zjet_jer_resolution_file");
    TObjString jerScaleFactorMetadata(
      (isMC ? jerScaleFactorFile : "").c_str());
-   jerScaleFactorMetadata.Write("zjet_jer_scale_factor_file");
    TObjString muonCorrectionMetadata(muonCorrectionFile.c_str());
-   muonCorrectionMetadata.Write("zjet_muon_correction_file");
    TObjString muonCorrectionSha(
      applyMuonCorrections ? ZJetMuonCorrectionData::sourceSha256 : "");
-   muonCorrectionSha.Write("zjet_muon_correction_sha256");
    TObjString jetVetoMapMetadata(
      (!isMC ? jetVetoMapFile : "").c_str());
-   jetVetoMapMetadata.Write("zjet_jet_veto_map_file");
    TObjString type1MetMetadata(
      recalculatePuppiMet
        ? "RawPuppiMET plus raw-minus-JEC/JER-corrected lepton-cleaned jets with corrected pT>15 GeV"
        : "stored PuppiMET");
-   type1MetMetadata.Write("zjet_type1_met_definition");
    TObjString flavorDefinition(
      "Bettina/Sami DeepJet: B>0.7527; C=0.5*(CvB+CvL)>0.3985 after B veto; QG split at 0.5 after B/C veto");
-   flavorDefinition.Write("zjet_flavor_definition");
+   TObjString flavorMatrixDefinition(
+     "FlavorMatrix uses |eta(jet)|<1.3 and the signed all-pairs signal-minus-two-half-weight-sidebands estimator; UParTAK4 tag IDs: undefined=0, uds=1, c=4, b=5, g=6; true IDs: undefined=0, d+u=1, s=3, c=4, b=5, g=6; data uses true ID 0 because truth is unavailable; HDM is derived from component means and re-finalized after hadd with Rn=1.00 and Ru=0.92; category axes remain numerically unlabelled until plotting so ROOT merges them without extension");
 
    
    // Object pT plots
@@ -1122,6 +1336,8 @@ void zjet::Loop()
      }
    }
 
+   FlavorMatrixHistograms flavorMatrix = bookFlavorMatrix(fout);
+
    fout->mkdir("l2res1");
    fout->cd("l2res1");
 
@@ -1261,16 +1477,12 @@ void zjet::Loop()
    fout->cd();
    TObjString synchronizedSelection(
      "ZbAnalysis master 46dbf340 with production JetID setting: HLT_Mu17_TrkIsoVVL_Mu8_TrkIsoVVL_DZ_Mass8; both muons trigger matched within DeltaR<0.3; tight ID; pfRelIso04<0.15; pT>20/10 GeV; |eta|<2.3; pT(Z)>12 GeV; |m-90 GeV|<20 GeV; MC pileup<=100; leading lepton-cleaned jet pT>=12 GeV and |eta|<=5; alpha=pT(jet2)/pT(Z), set to zero below pT(jet2)=15 GeV, alpha<1; central profiles use 0<|eta(jet1)|<1.3");
-   synchronizedSelection.Write("zjet_synchronized_selection");
    TObjString legacyJetId(
      "disabled to match the current ZbAnalysis synchronization reference");
-   legacyJetId.Write("zjet_legacy_jet_id");
    TObjString truthDefinition(
      "truth_hdm profiles use status-1 generator muons matched to the selected reco muons within DeltaR<0.1; GenJet AK4 with pT>15 GeV and DeltaR(mu)>0.3 for generator HT; GenMET for invisible momentum; matched selected jet from Jet_genJetIdx; reco-axis and gen-axis recoil projections are both stored; R1, Rn and Ru should be formed from ratios of profile means, not means of event ratios");
-   truthDefinition.Write("zjet_truth_hdm_definition");
    TObjString residualDefinition(
      "p2res stores the inverse final L2L3Residual factor; all-pairs l2res uses signed parallel-minus-transverse weights; legacy/l2res uses the legacy leading-jet selection without transverse subtraction and reproduces ZbAnalysis p2res binning versus Z pT");
-   residualDefinition.Write("zjet_previous_residual_definition");
    
    curdir->cd();
 
@@ -2353,6 +2565,13 @@ void zjet::Loop()
 	    passesExtraMatchCuts = true;
 	  }
 	}
+	const double upartCvB = Jet_btagUParTAK4CvB[ijet];
+	const double upartCvL = Jet_btagUParTAK4CvL[ijet];
+	const double upartQvG = Jet_btagUParTAK4QvG[ijet];
+	const int recoUParTFlavor = reconstructedUParTFlavor(
+	  upartCvB,upartCvL,upartQvG);
+	const int truePartonFlavor =
+	  (isMC ? generatorFlavorId(Jet_partonFlavour[ijet]) : 0);
 
 	met1 = -p4z - p4jet;
 	met1.SetPtEtaPhiM(met1.Pt(),0,met1.Phi(),0.);
@@ -2428,6 +2647,13 @@ void zjet::Loop()
 		                  ? GenJet_partonFlavour[genJetIndex] : 0),
 		               hasGenResponse,genBalance,db,mpf,mpf1,mpfn,mpfu,wt);
 		    if (abseta<1.305) {
+		      if (abseta<1.3)
+		        fillFlavorMatrix(
+		          flavorMatrix,ptz,ptj,recoUParTFlavor,truePartonFlavor,
+		          upartCvB,upartCvL,upartQvG,
+		          flavorMatrixVariants(
+		            p4z,p4jet,mpf,mpf1,mpfn,mpfu,mpfnu,false),
+		          wt,false);
 		      const TLorentzVector &generatorAxis =
 		        generatorRecoil.hasGeneratorZ ? generatorRecoil.z : p4z;
 		      const GeneratorPairComponents generatorPair =
@@ -2556,6 +2782,13 @@ void zjet::Loop()
 		               hasGenResponse,genBalance,db,mpfT,mpf1T,mpfnT,
 		               mpfuT,wt);
 		    if (abseta<1.305) {
+		      if (abseta<1.3)
+		        fillFlavorMatrix(
+		          flavorMatrix,ptz,ptj,recoUParTFlavor,truePartonFlavor,
+		          upartCvB,upartCvL,upartQvG,
+		          flavorMatrixVariants(
+		            p4z,p4jet,mpfT,mpf1T,mpfnT,mpfuT,mpfnuT,true),
+		          wt,true);
 		      TLorentzVector generatorTransverseAxis = axis;
 		      if (generatorRecoil.hasGeneratorZ)
 		        generatorTransverseAxis.SetPtEtaPhiM(
@@ -2645,6 +2878,17 @@ void zjet::Loop()
    }
 	   writeTruthHDMDerivedGraphs(allPairsTruthProfiles);
 	   writeTruthHDMDerivedGraphs(legacyTruthProfiles);
+	   for (const char *variant : {"ab","ad","tc","pf"}) {
+	     ZJetFlavorMatrix::finalizeHDMProfile(
+	       flavorMatrix.profiles.at(std::string("p3hdm")+variant+
+	                                "_flavormatrix"),
+	       flavorMatrix.profiles.at(std::string("p3m0")+variant+
+	                                "_flavormatrix"),
+	       flavorMatrix.profiles.at(std::string("p3mn")+variant+
+	                                "_flavormatrix"),
+	       flavorMatrix.profiles.at(std::string("p3mu")+variant+
+	                                "_flavormatrix"));
+	   }
 
 	   cout << endl << "Finished loop, writing file " << outputFile << "." << endl << flush;
     cout << "Processed " << nentries << " events\n";
@@ -2655,7 +2899,37 @@ void zjet::Loop()
     //cout << "Skipped " << _nbadevents_veto << " events due to veto ("
     //	 << (100.*_nbadevents_veto/_nevents) << "%) \n";
 
-   fout->Write();
+   // Write the directory-owned histograms once, then write metadata only
+   // after that pass. Writing TObjString objects before TFile::Write creates
+   // another key cycle for every metadata item and multiplies those cycles
+   // when job outputs are merged with hadd.
+   fout->Write("",TObject::kOverwrite);
+   fout->cd();
+   jecMode.Write("zjet_jec_mode",TObject::kOverwrite);
+   jecL2.Write("zjet_jec_l2_file",TObject::kOverwrite);
+   jecResidual.Write("zjet_jec_residual_file",TObject::kOverwrite);
+   jerResolutionMetadata.Write(
+     "zjet_jer_resolution_file",TObject::kOverwrite);
+   jerScaleFactorMetadata.Write(
+     "zjet_jer_scale_factor_file",TObject::kOverwrite);
+   muonCorrectionMetadata.Write(
+     "zjet_muon_correction_file",TObject::kOverwrite);
+   muonCorrectionSha.Write(
+     "zjet_muon_correction_sha256",TObject::kOverwrite);
+   jetVetoMapMetadata.Write(
+     "zjet_jet_veto_map_file",TObject::kOverwrite);
+   type1MetMetadata.Write(
+     "zjet_type1_met_definition",TObject::kOverwrite);
+   flavorDefinition.Write("zjet_flavor_definition",TObject::kOverwrite);
+   flavorMatrixDefinition.Write(
+     "zjet_flavor_matrix_definition",TObject::kOverwrite);
+   synchronizedSelection.Write(
+     "zjet_synchronized_selection",TObject::kOverwrite);
+   legacyJetId.Write("zjet_legacy_jet_id",TObject::kOverwrite);
+   truthDefinition.Write("zjet_truth_hdm_definition",TObject::kOverwrite);
+   residualDefinition.Write(
+     "zjet_previous_residual_definition",TObject::kOverwrite);
+   fout->Purge();
    fout->Close();
    delete jec;
 }

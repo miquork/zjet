@@ -5,6 +5,7 @@
 #include <TH1.h>
 #include <TH2.h>
 #include <TObjString.h>
+#include <TKey.h>
 #include <TSystem.h>
 
 #include <algorithm>
@@ -37,6 +38,15 @@ int addInputList(TChain *chain, const char *inputList) {
     added += chain->AddFile(line.substr(first,last-first+1).c_str());
   }
   return added;
+}
+
+int keyCycles(TDirectory *directory, const char *name) {
+  if (!directory || !directory->GetListOfKeys()) return 0;
+  int cycles = 0;
+  TIter next(directory->GetListOfKeys());
+  while (TKey *key = dynamic_cast<TKey*>(next()))
+    if (std::string(key->GetName())==name) ++cycles;
+  return cycles;
 }
 
 } // namespace
@@ -95,6 +105,18 @@ void run_zjet_job(const char *inputList, bool isMC, const char *outputFile,
      jerScaleFactorMetadata->GetString()==expectedJerScaleFactor.c_str() &&
      muonCorrectionMetadata->GetString()==muonCorrections &&
      jetVetoMapMetadata->GetString()==expectedJetVetoMap.c_str());
+  bool metadataHasSingleCycles = true;
+  for (const char *name : {
+         "zjet_jec_mode", "zjet_jec_l2_file", "zjet_jec_residual_file",
+         "zjet_jer_resolution_file", "zjet_jer_scale_factor_file",
+         "zjet_muon_correction_file", "zjet_muon_correction_sha256",
+         "zjet_jet_veto_map_file", "zjet_type1_met_definition",
+         "zjet_flavor_definition", "zjet_flavor_matrix_definition",
+         "zjet_synchronized_selection", "zjet_legacy_jet_id",
+         "zjet_truth_hdm_definition", "zjet_previous_residual_definition",
+       })
+    metadataHasSingleCycles =
+      metadataHasSingleCycles && keyCycles(&check,name)==1;
   bool flavorCountsClose = false;
   if (inclusiveCounts && flavorCounts) {
     const int firstEtaBin =
@@ -135,6 +157,13 @@ void run_zjet_job(const char *inputList, bool isMC, const char *outputFile,
       !check.Get("legacy/truth_hdm/parallel/zmmjet/reco_over_gen") ||
       !check.Get("legacy/l2res/p2res") ||
       !check.Get("legacy/l2res/p2restc") ||
+      !check.Get("FlavorMatrix/h3counts_flavormatrix") ||
+      !check.Get("FlavorMatrix/h3counts_parallel_flavormatrix") ||
+      !check.Get("FlavorMatrix/h3counts_transverse_flavormatrix") ||
+      !check.Get("FlavorMatrix/p3hdmtc_flavormatrix") ||
+      !check.Get("FlavorMatrix/p3mnuab_flavormatrix") ||
+      !check.Get("FlavorMatrix/controls/h3_cvb_cvl_trueflavor") ||
+      !check.Get("FlavorMatrix/controls/h3_cvb_cvl_qvg_true0") ||
       !check.Get("zjet_truth_hdm_definition") ||
       !check.Get("zjet_previous_residual_definition") ||
       !check.Get("zjet_synchronized_selection") ||
@@ -142,6 +171,7 @@ void run_zjet_job(const char *inputList, bool isMC, const char *outputFile,
       !correctionMetadataMatches ||
       !check.Get("zjet_muon_correction_sha256") ||
       !check.Get("zjet_type1_met_definition") ||
+      !metadataHasSingleCycles ||
       !flavorCountsClose) {
     std::cerr << "ERROR: output validation failed for " << outputFile
               << std::endl;

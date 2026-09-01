@@ -174,6 +174,13 @@ def main() -> None:
                      f'"{root_macro_argument(campaign_provenance)}")')
             subprocess.run(["root","-l","-b","-q",macro],
                            cwd=REPOSITORY,check=True)
+            validation_macro = (
+                f'validateFlavorMatrix.C('
+                f'"{root_macro_argument(temporary)}",'
+                f'{str(sample == "mc").lower()})'
+            )
+            subprocess.run(["root", "-l", "-b", "-q", validation_macro],
+                           cwd=REPOSITORY, check=True)
             if remote_destination:
                 output = destination + output_name
                 upload(temporary,output,args.force)
