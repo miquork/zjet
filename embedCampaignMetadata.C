@@ -29,19 +29,22 @@ void embedCampaignMetadata(const char *rootFile, const char *metadataFile) {
   // sums. Worker-level HDM profiles are diagnostics; this pass makes the
   // final campaign object equal to HDM(<m0>,<mn>,<mu>) bin by bin.
   for (const char *variant : {"ab","ad","tc","pf"}) {
-    const std::string suffix = std::string(variant)+"_flavormatrix";
-    TProfile3D *hdm = dynamic_cast<TProfile3D*>(
-      output.Get(("FlavorMatrix/p3hdm"+suffix).c_str()));
-    TProfile3D *m0 = dynamic_cast<TProfile3D*>(
-      output.Get(("FlavorMatrix/p3m0"+suffix).c_str()));
-    TProfile3D *mn = dynamic_cast<TProfile3D*>(
-      output.Get(("FlavorMatrix/p3mn"+suffix).c_str()));
-    TProfile3D *mu = dynamic_cast<TProfile3D*>(
-      output.Get(("FlavorMatrix/p3mu"+suffix).c_str()));
-    ZJetFlavorMatrix::finalizeHDMProfile(hdm,m0,mn,mu);
-    output.cd("FlavorMatrix");
-    hdm->Write(hdm->GetName(),TObject::kOverwrite);
-    output.cd();
+    for (const char *family : {
+           "_flavormatrix", "_parallel_flavormatrix"}) {
+      const std::string suffix = std::string(variant)+family;
+      TProfile3D *hdm = dynamic_cast<TProfile3D*>(
+        output.Get(("FlavorMatrix/p3hdm"+suffix).c_str()));
+      TProfile3D *m0 = dynamic_cast<TProfile3D*>(
+        output.Get(("FlavorMatrix/p3m0"+suffix).c_str()));
+      TProfile3D *mn = dynamic_cast<TProfile3D*>(
+        output.Get(("FlavorMatrix/p3mn"+suffix).c_str()));
+      TProfile3D *mu = dynamic_cast<TProfile3D*>(
+        output.Get(("FlavorMatrix/p3mu"+suffix).c_str()));
+      ZJetFlavorMatrix::finalizeHDMProfile(hdm,m0,mn,mu);
+      output.cd("FlavorMatrix");
+      hdm->Write(hdm->GetName(),TObject::kOverwrite);
+      output.cd();
+    }
   }
 
   // hadd keeps one key cycle per worker for non-mergeable TObjString
