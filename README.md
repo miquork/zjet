@@ -16,6 +16,7 @@ MC resolution, recomputes JEC from raw jet pT, applies MC JER smearing and the
 data-only 2024 jet veto map, and propagates the corrected jets to Type-I PUPPI
 MET. It writes both the raw response profiles and the central-eta input
 contract for the `jecsys3` reprocess/soft-radiation/global-fit chain. See
-`RUNNING.md` for local, XRootD and HTCondor workflows. The compact UParTAK4
-truth-to-reco matrix, its model-dependent data inference, and the associated
-validation plots are documented in `docs/FLAVOR_MATRIX.md`.
+`RUNNING.md` for local, XRootD and HTCondor workflows. The compact hybrid
+UParTAK4-CvB/CvL plus ParticleNet-QvG truth-to-reco matrix, its model-dependent
+data inference, and the associated validation plots are documented in
+`docs/FLAVOR_MATRIX.md`.

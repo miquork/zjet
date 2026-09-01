@@ -1,4 +1,4 @@
-# Compact UParT flavor matrix
+# Compact hybrid-tagger flavor matrix
 
 `zjet.C` writes the new all-pairs flavor study under `FlavorMatrix/`.  The
 objects are filled only for probe jets with `|eta| < 1.3`.  They complement the
@@ -14,17 +14,24 @@ The first axis uses the requested reference-pT bin edges
 1500, 1800, 2100, 2400, 2700, 3000, 3500, 4000 GeV.
 ```
 
-The reconstructed UParTAK4 category is encoded on the second axis:
+The reconstructed category uses UParTAK4 CvB and CvL together with the more
+stable ParticleNet QvG output. It is encoded on the second axis:
 
 | ID | Category | Selection |
 |---:|---|---|
-| 0 | undefined | any of CvB, CvL or QvG is negative or non-finite |
-| 1 | uds | `CvB >= 0.5`, `CvL < 0.5`, `QvG >= 0.5` |
+| 0 | undefined | any of UParT CvB, UParT CvL or PNet QvG is negative or non-finite |
+| 1 | uds | `UParT CvB >= 0.5`, `UParT CvL < 0.5`, `PNet QvG >= 0.5` |
 | 2 | reserved d | empty in the initial combined-uds definition |
 | 3 | reserved s | empty in the initial combined-uds definition |
-| 4 | c | `CvB >= 0.5`, `CvL >= 0.5` |
-| 5 | b | `CvB < 0.5` |
-| 6 | g | `CvB >= 0.5`, `CvL < 0.5`, `QvG < 0.5` |
+| 4 | c | `UParT CvB >= 0.5`, `UParT CvL >= 0.5` |
+| 5 | b | `UParT CvB < 0.5` |
+| 6 | g | `UParT CvB >= 0.5`, `UParT CvL < 0.5`, `PNet QvG < 0.5` |
+
+ParticleNet QvG is quark (`udsbc`) versus gluon, whereas the UParTAK4 node is
+documented as `uds` versus gluon. The b and c regions are applied before QvG,
+so this difference affects only b/c leakage into the residual light-flavor
+split. The parallel control `h3_upartqvg_pnetqvg_trueflavor` retains both
+outputs for direct validation.
 
 The third axis is the absolute NanoAOD `Jet_partonFlavour`.  The d and u
 partons are combined in ID 1, while s, c, b and g use IDs 3, 4, 5 and 6.
@@ -45,9 +52,21 @@ always use ID 0.
   x-axis binning variable changes.
 - `FlavorMatrix/controls/h3_cvb_cvl_trueflavor`, `h3_cvb_qvg_trueflavor` and
   `h3_cvl_qvg_trueflavor` store pairwise discriminator densities for the
-  un-subtracted parallel sample with probe pT above 30 GeV.
+  un-subtracted parallel sample with probe pT above 30 GeV. The QvG coordinate
+  in these objects is ParticleNet QvG.
 - `FlavorMatrix/controls/h3_cvb_cvl_qvg_true<ID>` stores the corresponding
   three-dimensional discriminator cube separately for every truth ID.
+- `h3counts_heavytopology` and the three
+  `FlavorMatrix/controls/h3_*_heavytopology` objects split the same population
+  by matched-GenJet heavy-hadron topology. The codes are no-heavy=0,
+  single-c=1, double-c=2, reserved-other=3, single-b=4, double-b=5 and no
+  GenJet match=6. Bottom has precedence over charm because charm hadrons from
+  bottom decays are common.
+- `FlavorMatrix/controls/h3_genjet_nc_nb_trueflavor` stores the underlying
+  `GenJet_nCHadrons` versus `GenJet_nBHadrons` multiplicities. Double-heavy
+  jets are gluon-splitting-enriched controls, not exclusive production-origin
+  labels. A direct-versus-splitting measurement needs an additional GenPart or
+  LHE ancestry refinement and must retain a category for truncated ancestry.
 
 The `hdm` profile uses the diagnostic constants `Rn = 1.00` and `Ru = 0.92`.
 It is never averaged event by event.  Each worker derives it from that file's

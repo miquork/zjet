@@ -116,8 +116,11 @@ struct FlavorMatrixHistograms {
   TH3D *counts = nullptr;
   TH3D *parallelCounts = nullptr;
   TH3D *transverseCounts = nullptr;
+  TH3D *heavyTopologyCounts = nullptr;
+  TH3D *heavyHadronMultiplicity = nullptr;
   std::map<std::string,TProfile3D*> profiles;
   std::map<std::string,TH3D*> pairControls;
+  std::map<std::string,TH3D*> heavyTopologyPairControls;
   std::map<int,TH3D*> cubeControls;
 };
 
@@ -160,13 +163,13 @@ const double flavorIdBins[] = {
   -0.5,0.5,1.5,2.5,3.5,4.5,5.5,6.5,
 };
 
-int reconstructedUParTFlavor(double cvb, double cvl, double qvg) {
-  if (!std::isfinite(cvb) || !std::isfinite(cvl) || !std::isfinite(qvg) ||
-      cvb<0. || cvl<0. || qvg<0.)
+int reconstructedHybridFlavor(double cvb, double cvl, double pnetQvg) {
+  if (!std::isfinite(cvb) || !std::isfinite(cvl) ||
+      !std::isfinite(pnetQvg) || cvb<0. || cvl<0. || pnetQvg<0.)
     return 0;
   if (cvb<0.5) return 5;
   if (cvl>=0.5) return 4;
-  return (qvg>=0.5 ? 1 : 6);
+  return (pnetQvg>=0.5 ? 1 : 6);
 }
 
 int generatorFlavorId(int partonFlavor) {
@@ -175,6 +178,31 @@ int generatorFlavorId(int partonFlavor) {
   if (flavor==3 || flavor==4 || flavor==5) return flavor;
   if (flavor==21) return 6;
   return 0;
+}
+
+enum HeavyHadronTopology {
+  kNoHeavyHadron = 0,
+  kSingleCharmHadron = 1,
+  kCharmPair = 2,
+  kOtherHeavyTopology = 3,
+  kSingleBottomHadron = 4,
+  kBottomPair = 5,
+  kNoGenJetMatch = 6,
+};
+
+int heavyHadronTopology(int genJetIndex, int genJetCount,
+                        const unsigned char *bottomHadronCount,
+                        const unsigned char *charmHadronCount) {
+  if (genJetIndex<0 || genJetIndex>=genJetCount) return kNoGenJetMatch;
+  const int nb = bottomHadronCount[genJetIndex];
+  const int nc = charmHadronCount[genJetIndex];
+  // Bottom takes precedence: charm hadrons from bottom decays are common and
+  // must not turn an ordinary b jet into a separate mixed-flavor origin.
+  if (nb>=2) return kBottomPair;
+  if (nb==1) return kSingleBottomHadron;
+  if (nc>=2) return kCharmPair;
+  if (nc==1) return kSingleCharmHadron;
+  return kNoHeavyHadron;
 }
 
 FlavorMatrixHistograms bookFlavorMatrix(TDirectory *parent) {
@@ -188,18 +216,24 @@ FlavorMatrixHistograms bookFlavorMatrix(TDirectory *parent) {
   FlavorMatrixHistograms result;
   result.counts = new TH3D(
     "h3counts_flavormatrix",
-    ";p_{T,Z} (GeV);Reco UParT flavor;Generator parton flavor",
+    ";p_{T,Z} (GeV);Reco hybrid flavor;Generator parton flavor",
     flavorMatrixPtBinCount,flavorMatrixPtBins,
     7,flavorIdBins,7,flavorIdBins);
   result.counts->Sumw2();
   result.parallelCounts = dynamic_cast<TH3D*>(result.counts->Clone(
     "h3counts_parallel_flavormatrix"));
   result.parallelCounts->SetTitle(
-    ";p_{T,Z} (GeV);Reco UParT flavor;Generator parton flavor");
+    ";p_{T,Z} (GeV);Reco hybrid flavor;Generator parton flavor");
   result.transverseCounts = dynamic_cast<TH3D*>(result.counts->Clone(
     "h3counts_transverse_flavormatrix"));
   result.transverseCounts->SetTitle(
-    ";p_{T,Z} (GeV);Reco UParT flavor;Generator parton flavor");
+    ";p_{T,Z} (GeV);Reco hybrid flavor;Generator parton flavor");
+  result.heavyTopologyCounts = new TH3D(
+    "h3counts_heavytopology",
+    ";p_{T,Z} (GeV);Reco hybrid flavor;Heavy-hadron topology",
+    flavorMatrixPtBinCount,flavorMatrixPtBins,
+    7,flavorIdBins,7,flavorIdBins);
+  result.heavyTopologyCounts->Sumw2();
 
   const std::vector<std::string> observables = {
     "m0", "m2", "mn", "mu", "mnu", "hdm",
@@ -211,7 +245,7 @@ FlavorMatrixHistograms bookFlavorMatrix(TDirectory *parent) {
         "p3"+observable+variant+"_flavormatrix";
       TProfile3D *profile = new TProfile3D(
         name.c_str(),
-        ";Reference p_{T} (GeV);Reco UParT flavor;Generator parton flavor",
+        ";Reference p_{T} (GeV);Reco hybrid flavor;Generator parton flavor",
         flavorMatrixPtBinCount,flavorMatrixPtBins,
         7,flavorIdBins,7,flavorIdBins);
       result.profiles[name] = profile;
@@ -222,10 +256,16 @@ FlavorMatrixHistograms bookFlavorMatrix(TDirectory *parent) {
   if (!controls)
     throw std::runtime_error("Failed to create FlavorMatrix/controls");
   controls->cd();
+  result.heavyHadronMultiplicity = new TH3D(
+    "h3_genjet_nc_nb_trueflavor",
+    ";N_{c hadrons};N_{b hadrons};Generator parton flavor",
+    5,-0.5,4.5,5,-0.5,4.5,7,-0.5,6.5);
+  result.heavyHadronMultiplicity->Sumw2();
   const std::vector<std::tuple<std::string,std::string,std::string> > pairs = {
     {"h3_cvb_cvl_trueflavor","UParT CvB","UParT CvL"},
-    {"h3_cvb_qvg_trueflavor","UParT CvB","UParT QvG"},
-    {"h3_cvl_qvg_trueflavor","UParT CvL","UParT QvG"},
+    {"h3_cvb_qvg_trueflavor","UParT CvB","ParticleNet QvG"},
+    {"h3_cvl_qvg_trueflavor","UParT CvL","ParticleNet QvG"},
+    {"h3_upartqvg_pnetqvg_trueflavor","UParT QvG","ParticleNet QvG"},
   };
   for (const auto &pair : pairs) {
     const std::string &name = std::get<0>(pair);
@@ -237,10 +277,26 @@ FlavorMatrixHistograms bookFlavorMatrix(TDirectory *parent) {
     histogram->Sumw2();
     result.pairControls[name] = histogram;
   }
+  const std::vector<std::tuple<std::string,std::string,std::string> >
+    topologyPairs = {
+      {"h3_cvb_cvl_heavytopology","UParT CvB","UParT CvL"},
+      {"h3_cvb_qvg_heavytopology","UParT CvB","ParticleNet QvG"},
+      {"h3_cvl_qvg_heavytopology","UParT CvL","ParticleNet QvG"},
+    };
+  for (const auto &pair : topologyPairs) {
+    const std::string &name = std::get<0>(pair);
+    TH3D *histogram = new TH3D(
+      name.c_str(),
+      Form(";%s;%s;Heavy-hadron topology",
+           std::get<1>(pair).c_str(),std::get<2>(pair).c_str()),
+      50,0.,1.,50,0.,1.,7,-0.5,6.5);
+    histogram->Sumw2();
+    result.heavyTopologyPairControls[name] = histogram;
+  }
   for (int flavor=0; flavor<=6; ++flavor) {
     TH3D *histogram = new TH3D(
       Form("h3_cvb_cvl_qvg_true%d",flavor),
-      ";UParT CvB;UParT CvL;UParT QvG",
+      ";UParT CvB;UParT CvL;ParticleNet QvG",
       24,0.,1.,24,0.,1.,24,0.,1.);
     histogram->Sumw2();
     result.cubeControls[flavor] = histogram;
@@ -301,10 +357,13 @@ std::map<std::string,FlavorMatrixVariant> flavorMatrixVariants(
 
 void fillFlavorMatrix(
   FlavorMatrixHistograms &histograms, double ptz, double ptj,
-  int recoFlavor, int trueFlavor, double cvb, double cvl, double qvg,
+  int recoFlavor, int trueFlavor, int heavyTopology,
+  int charmHadronCount, int bottomHadronCount,
+  double cvb, double cvl, double pnetQvg, double upartQvg,
   const std::map<std::string,FlavorMatrixVariant> &variants,
   double weight, bool transverse) {
   histograms.counts->Fill(ptz,recoFlavor,trueFlavor,weight);
+  histograms.heavyTopologyCounts->Fill(ptz,recoFlavor,heavyTopology,weight);
   (transverse ? histograms.transverseCounts : histograms.parallelCounts)
     ->Fill(ptz,recoFlavor,trueFlavor,transverse ? -weight : weight);
   for (const auto &variant : variants) {
@@ -328,16 +387,29 @@ void fillFlavorMatrix(
   // point study.  The signed estimator remains available in counts/profiles,
   // while parallelCounts records the matching raw signal-window population
   // (which can still contain negative generator weights in NLO samples).
-  if (transverse || ptj<=30. || cvb<0. || cvl<0. || qvg<0. ||
-      !std::isfinite(cvb) || !std::isfinite(cvl) || !std::isfinite(qvg))
+  if (transverse || ptj<=30. || cvb<0. || cvl<0. || pnetQvg<0. ||
+      !std::isfinite(cvb) || !std::isfinite(cvl) ||
+      !std::isfinite(pnetQvg))
     return;
+  histograms.heavyHadronMultiplicity->Fill(
+    std::min(charmHadronCount,4),std::min(bottomHadronCount,4),
+    trueFlavor,weight);
   histograms.pairControls.at("h3_cvb_cvl_trueflavor")->Fill(
     cvb,cvl,trueFlavor,weight);
   histograms.pairControls.at("h3_cvb_qvg_trueflavor")->Fill(
-    cvb,qvg,trueFlavor,weight);
+    cvb,pnetQvg,trueFlavor,weight);
   histograms.pairControls.at("h3_cvl_qvg_trueflavor")->Fill(
-    cvl,qvg,trueFlavor,weight);
-  histograms.cubeControls.at(trueFlavor)->Fill(cvb,cvl,qvg,weight);
+    cvl,pnetQvg,trueFlavor,weight);
+  if (std::isfinite(upartQvg) && upartQvg>=0.)
+    histograms.pairControls.at("h3_upartqvg_pnetqvg_trueflavor")->Fill(
+      upartQvg,pnetQvg,trueFlavor,weight);
+  histograms.heavyTopologyPairControls.at(
+    "h3_cvb_cvl_heavytopology")->Fill(cvb,cvl,heavyTopology,weight);
+  histograms.heavyTopologyPairControls.at(
+    "h3_cvb_qvg_heavytopology")->Fill(cvb,pnetQvg,heavyTopology,weight);
+  histograms.heavyTopologyPairControls.at(
+    "h3_cvl_qvg_heavytopology")->Fill(cvl,pnetQvg,heavyTopology,weight);
+  histograms.cubeControls.at(trueFlavor)->Fill(cvb,cvl,pnetQvg,weight);
 }
 
 ResponseProfiles1D bookResponseProfiles1D(TDirectory *parent,
@@ -773,6 +845,7 @@ void zjet::Loop()
    fChain->SetBranchStatus("Jet_btagUParTAK4CvB",1);
    fChain->SetBranchStatus("Jet_btagUParTAK4CvL",1);
    fChain->SetBranchStatus("Jet_btagUParTAK4QvG",1);
+   fChain->SetBranchStatus("Jet_btagPNetQvG",1);
 
    fChain->SetBranchStatus("PV_npvs",1);
    fChain->SetBranchStatus("Rho_fixedGridRhoFastjetAll",1);
@@ -804,6 +877,8 @@ void zjet::Loop()
      fChain->SetBranchStatus("GenJet_phi",1);
      fChain->SetBranchStatus("GenJet_mass",1);
      fChain->SetBranchStatus("GenJet_partonFlavour",1);
+     fChain->SetBranchStatus("GenJet_nBHadrons",1);
+     fChain->SetBranchStatus("GenJet_nCHadrons",1);
      fChain->SetBranchStatus("Jet_genJetIdx",1);
      fChain->SetBranchStatus("Jet_partonFlavour",1);
      fChain->SetBranchStatus("nGenPart",1);
@@ -997,7 +1072,7 @@ void zjet::Loop()
    TObjString flavorDefinition(
      "Bettina/Sami DeepJet: B>0.7527; C=0.5*(CvB+CvL)>0.3985 after B veto; QG split at 0.5 after B/C veto");
    TObjString flavorMatrixDefinition(
-     "FlavorMatrix uses |eta(jet)|<1.3 and the signed all-pairs signal-minus-two-half-weight-sidebands estimator; UParTAK4 tag IDs: undefined=0, uds=1, c=4, b=5, g=6; true IDs: undefined=0, d+u=1, s=3, c=4, b=5, g=6; data uses true ID 0 because truth is unavailable; HDM is derived from component means and re-finalized after hadd with Rn=1.00 and Ru=0.92; category axes remain numerically unlabelled until plotting so ROOT merges them without extension");
+     "FlavorMatrix uses |eta(jet)|<1.3 and the signed all-pairs signal-minus-two-half-weight-sidebands estimator; hybrid tag IDs use UParTAK4 CvB/CvL and ParticleNet QvG at thresholds 0.5: undefined=0, uds=1, c=4, b=5, g=6; true IDs: undefined=0, d+u=1, s=3, c=4, b=5, g=6; data uses true ID 0 because truth is unavailable; heavy-hadron topology controls use GenJet_nCHadrons and GenJet_nBHadrons with bottom precedence: none=0, single-c=1, c-pair=2, other=3, single-b=4, b-pair=5, no-match=6, where double-heavy categories are gluon-splitting-enriched rather than exclusive production labels; HDM is derived from component means and re-finalized after hadd with Rn=1.00 and Ru=0.92; category axes remain numerically unlabelled until plotting so ROOT merges them without extension");
 
    
    // Object pT plots
@@ -2568,10 +2643,19 @@ void zjet::Loop()
 	const double upartCvB = Jet_btagUParTAK4CvB[ijet];
 	const double upartCvL = Jet_btagUParTAK4CvL[ijet];
 	const double upartQvG = Jet_btagUParTAK4QvG[ijet];
-	const int recoUParTFlavor = reconstructedUParTFlavor(
-	  upartCvB,upartCvL,upartQvG);
+	const double pnetQvG = Jet_btagPNetQvG[ijet];
+	const int recoHybridFlavor = reconstructedHybridFlavor(
+	  upartCvB,upartCvL,pnetQvG);
 	const int truePartonFlavor =
 	  (isMC ? generatorFlavorId(Jet_partonFlavour[ijet]) : 0);
+	const int charmHadronCount =
+	  (isMC && genJetIndex>=0 ? GenJet_nCHadrons[genJetIndex] : 0);
+	const int bottomHadronCount =
+	  (isMC && genJetIndex>=0 ? GenJet_nBHadrons[genJetIndex] : 0);
+	const int heavyTopology = isMC
+	  ? heavyHadronTopology(genJetIndex,nGenJet,GenJet_nBHadrons,
+	                        GenJet_nCHadrons)
+	  : kNoGenJetMatch;
 
 	met1 = -p4z - p4jet;
 	met1.SetPtEtaPhiM(met1.Pt(),0,met1.Phi(),0.);
@@ -2649,8 +2733,9 @@ void zjet::Loop()
 		    if (abseta<1.305) {
 		      if (abseta<1.3)
 		        fillFlavorMatrix(
-		          flavorMatrix,ptz,ptj,recoUParTFlavor,truePartonFlavor,
-		          upartCvB,upartCvL,upartQvG,
+		          flavorMatrix,ptz,ptj,recoHybridFlavor,truePartonFlavor,
+		          heavyTopology,charmHadronCount,bottomHadronCount,
+		          upartCvB,upartCvL,pnetQvG,upartQvG,
 		          flavorMatrixVariants(
 		            p4z,p4jet,mpf,mpf1,mpfn,mpfu,mpfnu,false),
 		          wt,false);
@@ -2784,8 +2869,9 @@ void zjet::Loop()
 		    if (abseta<1.305) {
 		      if (abseta<1.3)
 		        fillFlavorMatrix(
-		          flavorMatrix,ptz,ptj,recoUParTFlavor,truePartonFlavor,
-		          upartCvB,upartCvL,upartQvG,
+		          flavorMatrix,ptz,ptj,recoHybridFlavor,truePartonFlavor,
+		          heavyTopology,charmHadronCount,bottomHadronCount,
+		          upartCvB,upartCvL,pnetQvG,upartQvG,
 		          flavorMatrixVariants(
 		            p4z,p4jet,mpfT,mpf1T,mpfnT,mpfuT,mpfnuT,true),
 		          wt,true);

@@ -215,6 +215,52 @@ void validateFlavorMatrix(const char *fileName, bool isMC) {
                              "data truth ID "+std::to_string(truth),failures);
   }
 
+  TH3D *heavyTopology = requireExact<TH3D>(
+    file.get(),"FlavorMatrix/h3counts_heavytopology",failures);
+  checkMatrixGeometry(
+    heavyTopology,"FlavorMatrix/h3counts_heavytopology",failures);
+  if (heavyTopology && !counts.empty() && counts[0]) {
+    bool projectionMismatch = false;
+    for (int ix=0;
+         ix<=heavyTopology->GetNbinsX()+1 && !projectionMismatch; ++ix) {
+      for (int iy=0; iy<=heavyTopology->GetNbinsY()+1; ++iy) {
+        double truthSum = 0.;
+        double truthSumw2 = 0.;
+        double topologySum = 0.;
+        double topologySumw2 = 0.;
+        for (int iz=0; iz<=heavyTopology->GetNbinsZ()+1; ++iz) {
+          const int truthBin = counts[0]->GetBin(ix,iy,iz);
+          const int topologyBin = heavyTopology->GetBin(ix,iy,iz);
+          truthSum += counts[0]->GetBinContent(truthBin);
+          truthSumw2 += binSumW2(counts[0],truthBin);
+          topologySum += heavyTopology->GetBinContent(topologyBin);
+          topologySumw2 += binSumW2(heavyTopology,topologyBin);
+        }
+        if (!closeEnough(truthSum,topologySum) ||
+            !closeEnough(truthSumw2,topologySumw2)) {
+          std::ostringstream message;
+          message << "heavy-topology projection differs from flavor counts"
+                  << " at x/y bins " << ix << "/" << iy;
+          fail(failures,message.str());
+          projectionMismatch = true;
+          break;
+        }
+      }
+    }
+    checkEmptyCountSlice(
+      heavyTopology,true,2,"reserved reco ID 2",failures);
+    checkEmptyCountSlice(
+      heavyTopology,true,3,"reserved reco ID 3",failures);
+    if (isMC)
+      checkEmptyCountSlice(
+        heavyTopology,false,3,"reserved heavy-topology ID 3",failures);
+    else
+      for (int topology=0; topology<=5; ++topology)
+        checkEmptyCountSlice(
+          heavyTopology,false,topology,
+          "data heavy-topology ID "+std::to_string(topology),failures);
+  }
+
   const std::vector<std::string> observables = {
     "m0", "m2", "mn", "mu", "mnu", "hdm",
   };
@@ -290,7 +336,7 @@ void validateFlavorMatrix(const char *fileName, bool isMC) {
 
   const std::vector<std::string> pairControls = {
     "h3_cvb_cvl_trueflavor", "h3_cvb_qvg_trueflavor",
-    "h3_cvl_qvg_trueflavor",
+    "h3_cvl_qvg_trueflavor", "h3_upartqvg_pnetqvg_trueflavor",
   };
   for (const std::string &name : pairControls) {
     TH3D *histogram = requireExact<TH3D>(
@@ -306,6 +352,28 @@ void validateFlavorMatrix(const char *fileName, bool isMC) {
       for (int truth=1; truth<=6; ++truth)
         checkEmptyCountSlice(histogram,false,truth,
                              "data truth ID "+std::to_string(truth),failures);
+  }
+  const std::vector<std::string> topologyControls = {
+    "h3_cvb_cvl_heavytopology", "h3_cvb_qvg_heavytopology",
+    "h3_cvl_qvg_heavytopology",
+  };
+  for (const std::string &name : topologyControls) {
+    TH3D *histogram = requireExact<TH3D>(
+      file.get(),"FlavorMatrix/controls/"+name,failures);
+    if (!histogram) continue;
+    checkUnitScoreAxis(histogram->GetXaxis(),name+" x",50,failures);
+    checkUnitScoreAxis(histogram->GetYaxis(),name+" y",50,failures);
+    checkFlavorAxis(histogram->GetZaxis(),name+" z",failures);
+  }
+  TH3D *heavyMultiplicity = requireExact<TH3D>(
+    file.get(),"FlavorMatrix/controls/h3_genjet_nc_nb_trueflavor",failures);
+  if (heavyMultiplicity) {
+    if (heavyMultiplicity->GetNbinsX()!=5 ||
+        heavyMultiplicity->GetNbinsY()!=5)
+      fail(failures,
+           "h3_genjet_nc_nb_trueflavor: expected 5x5 hadron-count axes");
+    checkFlavorAxis(heavyMultiplicity->GetZaxis(),
+                    "h3_genjet_nc_nb_trueflavor z",failures);
   }
   for (int truth=0; truth<=6; ++truth) {
     const std::string name = "h3_cvb_cvl_qvg_true"+std::to_string(truth);

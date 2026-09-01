@@ -162,8 +162,12 @@ void run_zjet_job(const char *inputList, bool isMC, const char *outputFile,
       !check.Get("FlavorMatrix/h3counts_transverse_flavormatrix") ||
       !check.Get("FlavorMatrix/p3hdmtc_flavormatrix") ||
       !check.Get("FlavorMatrix/p3mnuab_flavormatrix") ||
+      !check.Get("FlavorMatrix/h3counts_heavytopology") ||
       !check.Get("FlavorMatrix/controls/h3_cvb_cvl_trueflavor") ||
       !check.Get("FlavorMatrix/controls/h3_cvb_cvl_qvg_true0") ||
+      !check.Get("FlavorMatrix/controls/h3_genjet_nc_nb_trueflavor") ||
+      !check.Get("FlavorMatrix/controls/h3_upartqvg_pnetqvg_trueflavor") ||
+      !check.Get("FlavorMatrix/controls/h3_cvb_cvl_heavytopology") ||
       !check.Get("zjet_truth_hdm_definition") ||
       !check.Get("zjet_previous_residual_definition") ||
       !check.Get("zjet_synchronized_selection") ||

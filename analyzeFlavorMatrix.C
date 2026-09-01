@@ -617,24 +617,24 @@ void analyzeFlavorMatrix(
     return histogram;
   };
   TH2D *hEfficiencyMC = makeMatrix(
-    "h2_efficiency_mc",";Reco UParT flavor;True flavor;#epsilon^{MC}_{t|f}");
+    "h2_efficiency_mc",";Reco hybrid flavor;True flavor;#epsilon^{MC}_{t|f}");
   TH2D *hEfficiencyData = makeMatrix(
     "h2_efficiency_data_inferred",
-    ";Reco UParT flavor;True flavor;Inferred #epsilon^{data}_{t|f}");
+    ";Reco hybrid flavor;True flavor;Inferred #epsilon^{data}_{t|f}");
   TH2D *hTransitionSF = makeMatrix(
-    "h2_transition_sf",";Reco UParT flavor;True flavor;Transition SF");
+    "h2_transition_sf",";Reco hybrid flavor;True flavor;Transition SF");
   TH2D *hJointMC = makeMatrix(
-    "h2_joint_mc",";Reco UParT flavor;True flavor;P_{MC}(t,f)");
+    "h2_joint_mc",";Reco hybrid flavor;True flavor;P_{MC}(t,f)");
   TH2D *hJointData = makeMatrix(
     "h2_joint_data_inferred",
-    ";Reco UParT flavor;True flavor;Inferred P_{data}(t,f)");
+    ";Reco hybrid flavor;True flavor;Inferred P_{data}(t,f)");
   TH2D *hCompositionData = makeMatrix(
     "h2_composition_data",
-    ";Reco UParT flavor;True flavor;Inferred P_{data}(f|t)");
+    ";Reco hybrid flavor;True flavor;Inferred P_{data}(f|t)");
   TH1D *hTruthPrior = new TH1D(
     "h1_truth_prior_mc",";True flavor;MC truth prior",7,idBins);
   TH1D *hRecoFractionData = new TH1D(
-    "h1_reco_fraction_data",";Reco UParT flavor;Data tag fraction",7,idBins);
+    "h1_reco_fraction_data",";Reco hybrid flavor;Data tag fraction",7,idBins);
   hTruthPrior->SetDirectory(tagging);
   hRecoFractionData->SetDirectory(tagging);
   labelTruthAxis(hTruthPrior->GetXaxis());
@@ -664,7 +664,7 @@ void analyzeFlavorMatrix(
   response->cd();
   TH2D *hResponseMC = new TH2D(
     "h2_response_mc_by_transition",
-    ";Reco UParT flavor;True flavor;MC HDM response",7,idBins,7,idBins);
+    ";Reco hybrid flavor;True flavor;MC HDM response",7,idBins,7,idBins);
   labelRecoAxis(hResponseMC->GetXaxis());
   labelTruthAxis(hResponseMC->GetYaxis());
   for (int reco=0; reco!=nReco; ++reco)
@@ -676,10 +676,10 @@ void analyzeFlavorMatrix(
       hResponseMC->SetBinError(xbin,ybin,mcResponse[reco][flavor].error);
     }
   TH1D *hDataReco = new TH1D(
-    "h1_response_data_reco",";Reco UParT flavor;Data HDM response",7,idBins);
+    "h1_response_data_reco",";Reco hybrid flavor;Data HDM response",7,idBins);
   TH1D *hPredictionReco = new TH1D(
     "h1_response_prediction_reco",
-    ";Reco UParT flavor;Fitted data-response prediction",7,idBins);
+    ";Reco hybrid flavor;Fitted data-response prediction",7,idBins);
   labelRecoAxis(hDataReco->GetXaxis());
   labelRecoAxis(hPredictionReco->GetXaxis());
   for (int reco=0; reco!=nReco; ++reco) {
