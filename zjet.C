@@ -238,7 +238,7 @@ FlavorMatrixHistograms bookFlavorMatrix(TDirectory *parent) {
   result.heavyTopologyCounts->Sumw2();
 
   const std::vector<std::string> observables = {
-    "m0", "m2", "mn", "mu", "mnu", "hdm",
+    "m0", "m2", "mn", "mu", "mnu", "hdm", "rho", "muef",
   };
   const std::vector<std::string> variants = {"ab","ad","tc","pf"};
   for (const std::string &observable : observables) {
@@ -370,6 +370,7 @@ void fillFlavorMatrix(
   int recoFlavor, int trueFlavor, int heavyTopology,
   int charmHadronCount, int bottomHadronCount,
   double cvb, double cvl, double pnetQvg, double upartQvg,
+  double muonEnergyFraction, double rho,
   const std::map<std::string,FlavorMatrixVariant> &variants,
   double weight, bool transverse) {
   histograms.counts->Fill(ptz,recoFlavor,trueFlavor,weight);
@@ -380,7 +381,8 @@ void fillFlavorMatrix(
     const FlavorMatrixComponents &value = variant.second.response;
     const std::map<std::string,double> observables = {
       {"m0",value.m0}, {"m2",value.m2}, {"mn",value.mn},
-      {"mu",value.mu}, {"mnu",value.mnu},
+      {"mu",value.mu}, {"mnu",value.mnu}, {"rho",rho},
+      {"muef",muonEnergyFraction},
     };
     for (const auto &observable : observables) {
       const std::string name =
@@ -1089,7 +1091,7 @@ void zjet::Loop()
    TObjString flavorDefinition(
      "Bettina/Sami DeepJet: B>0.7527; C=0.5*(CvB+CvL)>0.3985 after B veto; QG split at 0.5 after B/C veto");
    TObjString flavorMatrixDefinition(
-     "FlavorMatrix uses |eta(jet)|<1.3 and stores both the signed all-pairs signal-minus-two-half-weight-sidebands estimator and pure-parallel response profiles; hybrid tag IDs use UParTAK4 CvB/CvL at 0.5 and ParticleNet QvG at 0.3: undefined=0, uds=1, c=4, b=5, g=6; true IDs: undefined=0, d+u=1, s=3, c=4, b=5, g=6; data uses true ID 0 because truth is unavailable; heavy-hadron topology controls use GenJet_nCHadrons and GenJet_nBHadrons with bottom precedence: none=0, single-c=1, c-pair=2, other=3, single-b=4, b-pair=5, no-match=6, where double-heavy categories are gluon-splitting-enriched rather than exclusive production labels; HDM is derived from component means and re-finalized after hadd with Rn=1.00 and Ru=0.92; category axes remain numerically unlabelled until plotting so ROOT merges them without extension");
+     "FlavorMatrix uses |eta(jet)|<1.3 and stores both the signed all-pairs signal-minus-two-half-weight-sidebands estimator and pure-parallel response profiles; hybrid tag IDs use UParTAK4 CvB/CvL at 0.5 and ParticleNet QvG at 0.3: undefined=0, uds=1, c=4, b=5, g=6; true IDs: undefined=0, d+u=1, s=3, c=4, b=5, g=6; data uses true ID 0 because truth is unavailable; heavy-hadron topology controls use GenJet_nCHadrons and GenJet_nBHadrons with bottom precedence: none=0, single-c=1, c-pair=2, other=3, single-b=4, b-pair=5, no-match=6, where double-heavy categories are gluon-splitting-enriched rather than exclusive production labels; HDM is derived from component means and re-finalized after hadd with Rn=1.00 and Ru=0.92; rho and jet PF-muon energy fraction are stored by flavor cell and reference-pT variant as UE/pileup and semileptonic heavy-flavor controls; category axes remain numerically unlabelled until plotting so ROOT merges them without extension");
 
    
    // Object pT plots
@@ -2753,6 +2755,7 @@ void zjet::Loop()
 		          flavorMatrix,ptz,ptj,recoHybridFlavor,truePartonFlavor,
 		          heavyTopology,charmHadronCount,bottomHadronCount,
 		          upartCvB,upartCvL,pnetQvG,upartQvG,
+		          Jet_muEF[ijet],Rho_fixedGridRhoFastjetAll,
 		          flavorMatrixVariants(
 		            p4z,p4jet,mpf,mpf1,mpfn,mpfu,mpfnu,false),
 		          wt,false);
@@ -2889,6 +2892,7 @@ void zjet::Loop()
 		          flavorMatrix,ptz,ptj,recoHybridFlavor,truePartonFlavor,
 		          heavyTopology,charmHadronCount,bottomHadronCount,
 		          upartCvB,upartCvL,pnetQvG,upartQvG,
+		          Jet_muEF[ijet],Rho_fixedGridRhoFastjetAll,
 		          flavorMatrixVariants(
 		            p4z,p4jet,mpfT,mpf1T,mpfnT,mpfuT,mpfnuT,true),
 		          wt,true);

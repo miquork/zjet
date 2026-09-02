@@ -119,7 +119,7 @@ The lower threshold trades some gluon efficiency for an 11 percentage-point gain
 \column{0.33\textwidth}\includegraphics[width=\linewidth]{tagger2d_QvG_CvB_allflavors.pdf}
 \column{0.33\textwidth}\includegraphics[width=\linewidth]{tagger2d_QvG_CvL_allflavors.pdf}
 \end{columns}
-\vspace{-0.2em}
+\vspace{0.15em}
 \centering\scriptsize Horizontal coordinates are the second stored discriminator; vertical coordinates are the first. Black lines show the actual 0.5/0.3 category boundaries.
 \end{frame}
 
@@ -129,7 +129,7 @@ The lower threshold trades some gluon efficiency for an 11 percentage-point gain
 \column{0.33\textwidth}\includegraphics[width=\linewidth]{efficiency_data_inferred.pdf}
 \column{0.33\textwidth}\includegraphics[width=\linewidth]{efficiency_transition_sf.pdf}
 \end{columns}
-\vspace{-0.2em}
+\vspace{0.15em}
 \centering\scriptsize Data transitions are the minimum-KL solution with fixed MC truth fractions, not independent truth-labeled measurements.
 \end{frame}
 
@@ -139,7 +139,7 @@ The lower threshold trades some gluon efficiency for an 11 percentage-point gain
 \column{0.33\textwidth}\includegraphics[width=\linewidth]{purity_data_inferred.pdf}
 \column{0.33\textwidth}\includegraphics[width=\linewidth]{purity_ratio_data_over_mc.pdf}
 \end{columns}
-\vspace{-0.2em}
+\vspace{0.15em}
 \centering\scriptsize $P(f\mid t)$ enters each reconstructed-tag response. The b tag is very pure; c and g remain the most composition-sensitive rows.
 \end{frame}
 
@@ -151,6 +151,42 @@ The lower threshold trades some gluon efficiency for an 11 percentage-point gain
 \end{columns}
 \vspace{-0.2em}
 \centering\scriptsize The data map assumes one data/MC response factor per truth flavor, common to all reconstructed tags. Low-purity cells can have large MC template fluctuations.
+\end{frame}
+
+\begin{frame}{Raw tagged categories isolate the measured input}
+\begin{columns}[c,onlytextwidth]
+\column{0.62\textwidth}
+\centering
+\includegraphics[width=0.82\linewidth]{tag_response_raw_data_over_mc_vs_pt.pdf}
+\column{0.36\textwidth}
+\small
+\begin{block}{Before flavor inference}
+Each curve is the HDM response in one reconstructed tag category,
+\[
+  \frac{R_{\mathrm{data}}(t)}{R_{\mathrm{MC}}(t)}.
+\]
+No data-inferred purity correction or truth-flavor inversion is applied.
+\end{block}
+The result is built from merged $m_0,m_n,m_u$ means, not from $m_0$ or $m_2$ alone.
+\end{columns}
+\end{frame}
+
+\begin{frame}{Composition correction is small before inversion}
+\begin{columns}[c,onlytextwidth]
+\column{0.62\textwidth}
+\centering
+\includegraphics[width=0.82\linewidth]{tag_response_composition_corrected_data_over_mc_vs_pt.pdf}
+\column{0.36\textwidth}
+\small
+\begin{block}{Denominator after reweighting}
+\[
+R^{\mathrm{corr}}_{\mathrm{MC}}(t)=
+\sum_f P_{\mathrm{data}}(f\mid t)R_{\mathrm{MC}}(t,f).
+\]
+The ratio shown is $R_{\mathrm{data}}(t)/R^{\mathrm{corr}}_{\mathrm{MC}}(t)$.
+\end{block}
+Its similarity to the raw ratio shows that the larger truth-flavor movements arise mainly in the four-component inversion, not in this first mixture correction.
+\end{columns}
 \end{frame}
 
 \begin{frame}{Pure-parallel HDM gives a full-rank four-flavor fit}
@@ -202,7 +238,7 @@ The full 2024I sample resolves percent-level central shifts. The quoted errors a
 \end{columns}
 \end{frame}
 
-\begin{frame}{Every 2024I pT bin passes the stability gate}
+\begin{frame}{The stable $p_{T,Z}$ fit now spans 15--800 GeV}
 \begin{columns}[c,onlytextwidth]
 \column{0.57\textwidth}
 \centering
@@ -213,6 +249,9 @@ The full 2024I sample resolves percent-level central shifts. The quoted errors a
 \toprule
 $p_T$ (GeV) & rank & condition & plot\\
 \midrule
+15--20  & 4 & 12.15 & shown\\
+20--25  & 4 & 9.19 & shown\\
+25--30  & 4 & 7.26 & shown\\
 30--40  & 4 & 6.00 & shown\\
 40--60  & 4 & 5.17 & shown\\
 60--85  & 4 & 4.86 & shown\\
@@ -220,11 +259,46 @@ $p_T$ (GeV) & rank & condition & plot\\
 125--180& 4 & 5.13 & shown\\
 180--250& 4 & 5.59 & shown\\
 250--400& 4 & 6.29 & shown\\
+400--600& 4 & 5.95 & shown\\
+600--800& 4 & 9.05 & shown\\
+800--1000& 3 & 4.22 & omitted\\
 \bottomrule
 \end{tabular}
 \par\vspace{0.5em}
-The TSV output retains every bin. The figure requires rank 4 and condition number below 100.
+The TSV output retains every bin. The figure requires rank 4 and condition number below 100; the low-$p_T$ inversion is algebraically stable but statistically broad.
 \end{columns}
+\end{frame}
+
+\begin{frame}{Changing the reference $p_T$ exposes migration biases}
+\begin{columns}[c,onlytextwidth]
+\column{0.25\textwidth}\includegraphics[width=\linewidth]{flavor_response_binning_comparison_uds.pdf}
+\column{0.25\textwidth}\includegraphics[width=\linewidth]{flavor_response_binning_comparison_c.pdf}
+\column{0.25\textwidth}\includegraphics[width=\linewidth]{flavor_response_binning_comparison_b.pdf}
+\column{0.25\textwidth}\includegraphics[width=\linewidth]{flavor_response_binning_comparison_g.pdf}
+\end{columns}
+\vspace{0.1em}
+\tiny
+$tc=p_{T,Z}$, $ad=p_{T,ave}$, $pf=p_{T,jet}$, and $ab$ is projected $p_{T,ave}$. Only binning changes. The low-$p_T$ spread, especially c with $p_{T,jet}$, diagnoses JER/selection migration. Geometric point positions differ from spectrum-weighted means; new $\langle p_T\rangle$ profiles should constrain this averaging bias.
+\end{frame}
+
+\begin{frame}{The $m_n$ component is an effective FSR-like control}
+\begin{columns}[c,onlytextwidth]
+\column{0.50\textwidth}\includegraphics[width=0.92\linewidth]{fsr_fraction_data_mc_vs_pt.pdf}
+\column{0.50\textwidth}\includegraphics[width=0.92\linewidth]{fsr_fraction_data_over_mc_vs_pt.pdf}
+\end{columns}
+\vspace{-0.2em}
+\tiny
+We define $f_n=\langle m_n\rangle/R_n$ with $R_n=1$. Above 40 GeV the MC ratio $f_n(g)/f_n(uds)$ is about 2.2--2.4, suggestively close to the leading color-factor ratio $C_A/C_F=2.25$. This is only a rough cross-check: acceptance, showering, jet clustering, flavor mixing, and the all-pairs selection prevent interpreting $f_n$ as a pure FSR probability. Negative values below 25 GeV confirm that limitation.
+\end{frame}
+
+\begin{frame}{The $m_u$ component is an effective UE-like control}
+\begin{columns}[c,onlytextwidth]
+\column{0.50\textwidth}\includegraphics[width=0.92\linewidth]{ue_fraction_data_mc_vs_pt.pdf}
+\column{0.50\textwidth}\includegraphics[width=0.92\linewidth]{ue_fraction_data_over_mc_vs_pt.pdf}
+\end{columns}
+\vspace{-0.2em}
+\tiny
+We define $f_u=\langle m_u\rangle/R_u$ with $R_u=0.92$. It falls rapidly with $p_T$ and is larger in the gluon-enriched category, as expected for broader soft activity. It still mixes UE, unclustered recoil, acceptance, pileup, and response. Flavor-resolved $\rho$ was not stored in this production; the next output adds $\rho$ and jet PF-muon fraction profiles for each reco--truth cell and all four reference-$p_T$ choices.
 \end{frame}
 
 \begin{frame}{Absolute response uncertainties identify the bottleneck}
@@ -238,10 +312,11 @@ The TSV output retains every bin. The figure requires rank 4 and condition numbe
 \item Data response statistics are 0.17--0.56\% and remain dominant.
 \item MC response-template statistics contribute 0.04--0.13\%.
 \item The multinomial MC-purity estimate is below 0.01\%.
-\item Independent 1\% truth-fraction changes shift the fitted responses by less than 0.02\% in this conditional model.
+\item Independent 5\% tagging-transition shifts move the result by 0.02--0.13\%.
+\item Independent 10\% truth-fraction shifts move it by 0.02--0.18\%.
 \end{itemize}
 \begin{alertblock}{Not yet a full covariance}
-Generator modeling, tagger-shape systematics, correlations, JEC/JER, pileup, and the signal/sideband likelihood remain to be added.
+The 5\%/10\% rows are deliberately conservative one-at-a-time sensitivity tests. Generator modeling, correlations, JEC/JER, pileup, PS weights, and the signal/sideband likelihood remain to be added.
 \end{alertblock}
 \end{columns}
 \end{frame}
@@ -259,6 +334,7 @@ Neutrinos from semileptonic c- and b-hadron decays lower the visible DB/MPF-HDM 
 \item store neutrino $p_T$ fraction and $R_{gen+\nu}/R_{gen}$ by truth/reco cell;
 \item retain an ambiguous ancestry category;
 \item separate decay-neutrino physics from detector response and tagging migrations.
+\item use the newly stored jet PF-muon fraction as a correlated reconstructed-level proxy, not as a replacement for ancestry truth.
 \end{itemize}
 \end{block}
 \end{columns}
@@ -268,9 +344,9 @@ Neutrinos from semileptonic c- and b-hadron decays lower the visible DB/MPF-HDM 
 \begin{enumerate}
 \item Keep PNet QvG at 0.3; the full 2024I purity scan confirms the expected trade-off.
 \item Use pure-parallel barrel response as the current central flavor fit; retain transverse profiles as a pileup systematic and forward control.
-\item Add heavy-decay-neutrino and direct-versus-splitting truth controls before interpreting c/b residuals physically.
+\item Use the new flavor-cell $\rho$ and jet PF-muon-fraction profiles in the next production; add heavy-decay-neutrino and direct-versus-splitting ancestry controls before interpreting c/b residuals physically.
 \item Require full rank and a bounded condition number separately in every reported pT bin.
-\item Move to the full 2024 sample only after closure with injected flavor-response shifts and varied truth fractions.
+\item Add JER, parton-shower/PSWeight, UE, and correlated tagging/fraction variations, then require closure with injected flavor-response shifts before the full 2024 sample.
 \end{enumerate}
 \vfill
 \begin{center}

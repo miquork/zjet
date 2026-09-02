@@ -339,6 +339,36 @@ void validateFlavorMatrix(const char *fileName, bool isMC) {
     }
   }
 
+  // rho and jet PF-muon fraction were added after the first FlavorMatrix
+  // production.  Keep old merged files readable, but once either new control
+  // is present require the complete variant/suffix set and matching entries.
+  const bool hasFlavorEnvironmentControls =
+    file->Get("FlavorMatrix/p3rhotc_flavormatrix") ||
+    file->Get("FlavorMatrix/p3mueftc_flavormatrix");
+  if (hasFlavorEnvironmentControls) {
+    for (const std::string &suffix : {
+           std::string("_flavormatrix"),
+           std::string("_parallel_flavormatrix")})
+      for (const std::string &variant : variants) {
+        TProfile3D *reference = dynamic_cast<TProfile3D*>(file->Get(
+          ("FlavorMatrix/p3m0"+variant+suffix).c_str()));
+        for (const std::string &observable : {"rho","muef"}) {
+          const std::string name = "p3"+observable+variant+suffix;
+          TProfile3D *profile = requireExact<TProfile3D>(
+            file.get(),"FlavorMatrix/"+name,failures);
+          checkMatrixGeometry(profile,"FlavorMatrix/"+name,failures);
+          if (!reference || !profile) continue;
+          for (int bin=0; bin<reference->GetNcells(); ++bin)
+            if (!closeEnough(profile->GetBinEntries(bin),
+                             reference->GetBinEntries(bin))) {
+              fail(failures,name+" entries differ from p3m0 at global bin "+
+                std::to_string(bin));
+              break;
+            }
+        }
+      }
+  }
+
   const std::vector<std::string> pairControls = {
     "h3_cvb_cvl_trueflavor", "h3_cvb_qvg_trueflavor",
     "h3_cvl_qvg_trueflavor", "h3_upartqvg_pnetqvg_trueflavor",
