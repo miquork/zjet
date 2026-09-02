@@ -41,7 +41,7 @@
 \title{Hybrid flavor tagging and response in all-pairs Z+jet}
 \subtitle{ParticleNet QvG, parallel barrel response, and a four-flavor matrix fit}
 \author{M. Voutilainen}
-\date{Run 2024I and Summer24 DY -- one-file local validation}
+\date{Full Run 2024I data and Summer24 DY simulation}
 
 \begin{document}
 
@@ -49,13 +49,14 @@
   \titlepage
   \vfill
   \begin{center}
-    \color{cmsamber}\small Numerical validation only; not a precision flavor correction
+    \color{cmsamber}\small Conditional statistical precision; systematic covariance still incomplete
   \end{center}
 \end{frame}
 
 \begin{frame}{The hybrid tag has four reconstructed categories}
 \begin{columns}[T,onlytextwidth]
 \column{0.48\textwidth}
+\small
 \begin{block}{Sequential definition}
 \begin{align*}
  b &: \mathrm{UParT\ CvB}<0.5,\\
@@ -87,10 +88,10 @@
 \toprule
  & 0.3 & 0.5\\
 \midrule
-$g$ purity & 0.631 & 0.521\\
-$g$ efficiency & 0.600 & 0.808\\
-$uds$ purity & 0.775 & 0.861\\
-$uds$ efficiency & 0.781 & 0.592\\
+$g$ purity & 0.624 & 0.513\\
+$g$ efficiency & 0.595 & 0.803\\
+$uds$ purity & 0.775 & 0.853\\
+$uds$ efficiency & 0.785 & 0.598\\
 \bottomrule
 \end{tabular}
 \vspace{0.5em}
@@ -171,55 +172,57 @@ R_{\mathrm{HDM}} &= \frac{m_0-m_n-m_u}
 \item $R_n=1.00$, $R_u=0.92$
 \item merged component means, never event-wise HDM
 \item four reco rows, four truth columns
-\item rank $4/4$, condition number 7.37
+\item rank $4/4$, condition number 4.98
 \end{itemize}
 \end{block}
 \end{columns}
 \end{frame}
 
-\begin{frame}{The local file determines only percent-level flavor residuals}
+\begin{frame}{Full 2024I gives sub-percent conditional precision}
 \begin{columns}[c,onlytextwidth]
 \column{0.55\textwidth}
-\includegraphics[width=\linewidth]{flavor_response_residual.pdf}
+\centering
+\includegraphics[width=0.95\linewidth]{flavor_response_residual.pdf}
 \column{0.43\textwidth}
 \small
 \begin{tabular}{lcc}
 \toprule
 Flavor & data/MC & conditional stat.\\
 \midrule
-$uds$ & 0.986 & 5.1\%\\
-$c$   & 0.875 & 10.0\%\\
-$b$   & 0.916 & 15.6\%\\
-$g$   & 1.072 & 9.5\%\\
+$uds$ & 1.0093 & 0.17\%\\
+$c$   & 0.9986 & 0.56\%\\
+$b$   & 1.0262 & 0.47\%\\
+$g$   & 1.0088 & 0.30\%\\
 \bottomrule
 \end{tabular}
 \vspace{0.6em}
 \begin{alertblock}{Interpretation}
-The c and b central values are not yet precision results. The local sample is two orders of magnitude away from a 0.1\% statistical target even before model systematics.
+The full 2024I sample resolves percent-level central shifts. The quoted errors are conditional statistics only: flavor fractions, tagger modeling, JEC/JER, pileup, and correlated response templates still require a full covariance.
 \end{alertblock}
 \end{columns}
 \end{frame}
 
-\begin{frame}{Only two local pT bins pass the stability gate}
+\begin{frame}{Every 2024I pT bin passes the stability gate}
 \begin{columns}[c,onlytextwidth]
 \column{0.57\textwidth}
-\includegraphics[width=\linewidth]{flavor_response_residual_vs_pt.pdf}
+\centering
+\includegraphics[width=0.92\linewidth]{flavor_response_residual_vs_pt.pdf}
 \column{0.41\textwidth}
 \scriptsize
 \begin{tabular}{lrrl}
 \toprule
 $p_T$ (GeV) & rank & condition & plot\\
 \midrule
-30--40  & 4 & $5.8\times10^7$ & rejected\\
-40--60  & 4 & 7.37 & shown\\
-60--85  & 4 & 4.49 & shown\\
-85--125 & 3 & 4.69 & rejected\\
-125--180& 3 & $2.7\times10^7$ & rejected\\
-180--250& 3 & $1.2\times10^7$ & rejected\\
-250--400& 2 & 4.88 & rejected\\
+30--40  & 4 & 6.00 & shown\\
+40--60  & 4 & 5.17 & shown\\
+60--85  & 4 & 4.86 & shown\\
+85--125 & 4 & 4.82 & shown\\
+125--180& 4 & 5.13 & shown\\
+180--250& 4 & 5.59 & shown\\
+250--400& 4 & 6.29 & shown\\
 \bottomrule
 \end{tabular}
-\vspace{0.5em}
+\par\vspace{0.5em}
 The TSV output retains every bin. The figure requires rank 4 and condition number below 100.
 \end{columns}
 \end{frame}
@@ -232,10 +235,10 @@ The TSV output retains every bin. The figure requires rank 4 and condition numbe
 \column{0.42\textwidth}
 \small
 \begin{itemize}
-\item Data response statistics dominate this one-file test.
-\item MC response-template statistics contribute 1--3\%.
-\item A multinomial MC-purity estimate is below 0.4\%.
-\item Independent 1\% truth-fraction changes shift the fitted responses by less than 0.05\% in this conditional model.
+\item Data response statistics are 0.17--0.56\% and remain dominant.
+\item MC response-template statistics contribute 0.04--0.13\%.
+\item The multinomial MC-purity estimate is below 0.01\%.
+\item Independent 1\% truth-fraction changes shift the fitted responses by less than 0.02\% in this conditional model.
 \end{itemize}
 \begin{alertblock}{Not yet a full covariance}
 Generator modeling, tagger-shape systematics, correlations, JEC/JER, pileup, and the signal/sideband likelihood remain to be added.
@@ -261,9 +264,9 @@ Neutrinos from semileptonic c- and b-hadron decays lower the visible DB/MPF-HDM 
 \end{columns}
 \end{frame}
 
-\begin{frame}{Recommended path before the next full Condor campaign}
+\begin{frame}{Recommended path before the full 2024 campaign}
 \begin{enumerate}
-\item Keep PNet QvG at 0.3 and validate the purity scan on the full 2024I sample.
+\item Keep PNet QvG at 0.3; the full 2024I purity scan confirms the expected trade-off.
 \item Use pure-parallel barrel response as the current central flavor fit; retain transverse profiles as a pileup systematic and forward control.
 \item Add heavy-decay-neutrino and direct-versus-splitting truth controls before interpreting c/b residuals physically.
 \item Require full rank and a bounded condition number separately in every reported pT bin.
@@ -271,7 +274,7 @@ Neutrinos from semileptonic c- and b-hadron decays lower the visible DB/MPF-HDM 
 \end{enumerate}
 \vfill
 \begin{center}
-\color{cmsgreen}\textbf{The present local sample validates the method and exposes its precision limit; it does not yet measure 0.1\% flavor corrections.}
+\color{cmsgreen}\textbf{Run 2024I reaches 0.17--0.56\% conditional statistical precision. A 0.1\% result needs more data and the missing systematic covariance.}
 \end{center}
 \end{frame}
 

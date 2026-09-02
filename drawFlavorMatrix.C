@@ -1094,7 +1094,8 @@ void drawAnalysisMatrix(
 
 void drawDirectAnalysisMatrix(
   TFile &analysis, const char *path, const std::string &stem,
-  double minimum, double maximum, const std::string &outputDirectory) {
+  double minimum, double maximum, const std::string &outputDirectory,
+  bool percentage=false) {
   TH2D *source = optionalObject<TH2D>(&analysis,path);
   if (!source) return;
   std::unique_ptr<TH2D> histogram(dynamic_cast<TH2D*>(source->Clone(
@@ -1102,6 +1103,9 @@ void drawDirectAnalysisMatrix(
   if (!histogram) return;
   histogram->SetDirectory(nullptr);
   histogram->SetTitle("");
+  if (percentage) histogram->Scale(100.);
+  if (!(maximum>minimum))
+    maximum = std::max(minimum+1.e-6,1.08*histogram->GetMaximum());
   histogram->SetMinimum(minimum);
   histogram->SetMaximum(maximum);
   configureFlavorStyle("2024I + Summer24");
@@ -1191,7 +1195,7 @@ void drawResponseResidual(TFile &analysis,
                        "pure parallel barrel response, p_{T} > 30 GeV");
   annotation.SetTextSize(0.030);
   annotation.DrawLatex(0.19,0.73,
-                       "one-file smoke; four-tag / four-flavor fit");
+                       "full Run 2024I; four-tag / four-flavor fit");
   gPad->RedrawAxis();
   saveBoth(canvas.get(),outputDirectory,"flavor_response_residual");
 }
@@ -1305,7 +1309,7 @@ void drawOptionalAnalysis(TFile &analysis,
   drawResponseResidualVsPt(analysis,outputDirectory);
   drawDirectAnalysisMatrix(
     analysis,"diagnostics/h2_response_uncertainty_components",
-    "response_uncertainty_components",0.,0.20,outputDirectory);
+    "response_uncertainty_components",0.,0.,outputDirectory,true);
 }
 
 } // namespace
