@@ -1274,6 +1274,7 @@ void drawRecoilFraction(TFile &analysis, const std::string &component,
     const char *title = "effective unclustered fraction f_{u}";
     if (component=="fsr") title = "effective extra-recoil fraction f_{n}";
     if (component=="mnu") title = "combined recoil m_{n}+m_{u}";
+    if (component=="fnu") title = "response-corrected recoil f_{n}+f_{u}";
     if (component=="mnufsr")
       title = "UE-hole-corrected m_{n}+m_{u}";
     frame.GetYaxis()->SetTitle(title);
@@ -1341,9 +1342,11 @@ std::unique_ptr<TGraphErrors> divideGraphs(
   return result;
 }
 
-void drawMnuBinningComparison(TFile &analysis,
-                              const PtGraphStyle &flavor,
-                              const std::string &outputDirectory) {
+void drawNuBinningComparison(TFile &analysis,
+                             const PtGraphStyle &flavor,
+                             const std::string &component,
+                             const char *axisLabel,
+                             const std::string &outputDirectory) {
   struct BinningStyle { const char *name; const char *label; int color; int marker; };
   const BinningStyle binnings[] = {
     {"tc","p_{T,Z}",kBlack,kFullCircle},
@@ -1356,9 +1359,11 @@ void drawMnuBinningComparison(TFile &analysis,
     PtGraphStyle style = {
       flavor.name,flavor.label,binning.color,binning.marker};
     graphs.push_back(clonePtGraph(
-      analysis,"response/g_mnu_fraction_ratio_data_over_mc_vs_pt_"+
+      analysis,"response/g_"+component+
+        "_fraction_ratio_data_over_mc_vs_pt_"+
         std::string(binning.name)+"_"+flavor.name,
-      "plot_mnu_binning_"+std::string(binning.name)+"_"+flavor.name,
+      "plot_"+component+"_binning_"+std::string(binning.name)+"_"+
+        flavor.name,
       style));
   }
   double xmin, xmax, ymin, ymax;
@@ -1370,18 +1375,20 @@ void drawMnuBinningComparison(TFile &analysis,
                                         std::fabs(ymax-1.)));
   extent = std::min(0.70,1.12*extent);
   configureFlavorStyle("Run2024I + Summer24 DY");
-  TH1D frame(("frame_mnu_binning_"+std::string(flavor.name)).c_str(),"",
+  TH1D frame(("frame_"+component+"_binning_"+
+              std::string(flavor.name)).c_str(),"",
              100,xmin,xmax);
   frame.SetDirectory(nullptr);
   frame.SetMinimum(1.-extent);
   frame.SetMaximum(1.+1.35*extent);
   frame.GetXaxis()->SetTitle("reference p_{T} (GeV)");
-  frame.GetYaxis()->SetTitle(Form("data / MC (m_{n}+m_{u}), %s",
-                                  flavor.label));
+  frame.GetYaxis()->SetTitle(Form("data / MC (%s), %s",
+                                  axisLabel,flavor.label));
   frame.GetXaxis()->SetMoreLogLabels();
   frame.GetXaxis()->SetNoExponent();
   std::unique_ptr<TCanvas> canvas(tdrCanvas(
-    ("c_mnu_binning_"+std::string(flavor.name)).c_str(),&frame,8,11,kSquare));
+    ("c_"+component+"_binning_"+std::string(flavor.name)).c_str(),
+    &frame,8,11,kSquare));
   canvas->SetLogx();
   TLine unity(xmin,1.,xmax,1.);
   unity.SetLineStyle(kDashed);
@@ -1398,35 +1405,36 @@ void drawMnuBinningComparison(TFile &analysis,
   legend.Draw();
   gPad->RedrawAxis();
   saveBoth(canvas.get(),outputDirectory,
-           "mnu_binning_comparison_"+std::string(flavor.name));
+           component+"_binning_comparison_"+std::string(flavor.name));
 }
 
-void drawMnuColorFactor(TFile &analysis,
-                        const std::string &outputDirectory) {
+void drawNuColorFactor(TFile &analysis, const std::string &component,
+                       const char *axisLabel,
+                       const std::string &outputDirectory) {
   std::vector<std::unique_ptr<TGraphErrors> > graphs;
   for (const std::string sample : {"data","mc"}) {
     TGraphErrors *gluon = optionalObject<TGraphErrors>(
-      &analysis,("response/g_mnu_fraction_"+sample+
+      &analysis,("response/g_"+component+"_fraction_"+sample+
                  "_vs_pt_tc_g").c_str());
     TGraphErrors *quark = optionalObject<TGraphErrors>(
-      &analysis,("response/g_mnu_fraction_"+sample+
+      &analysis,("response/g_"+component+"_fraction_"+sample+
                  "_vs_pt_tc_uds").c_str());
     graphs.push_back(divideGraphs(
-      gluon,quark,"plot_mnu_color_ratio_"+sample));
+      gluon,quark,"plot_"+component+"_color_ratio_"+sample));
   }
   if (!graphs[0] || !graphs[1] ||
       (graphs[0]->GetN()==0 && graphs[1]->GetN()==0)) return;
   configureFlavorStyle("Run2024I + Summer24 DY");
-  TH1D frame("frame_mnu_color_ratio","",100,30.,600.);
+  TH1D frame(("frame_"+component+"_color_ratio").c_str(),"",100,30.,600.);
   frame.SetDirectory(nullptr);
   frame.SetMinimum(0.5);
   frame.SetMaximum(3.8);
   frame.GetXaxis()->SetTitle("p_{T,Z} (GeV)");
-  frame.GetYaxis()->SetTitle("(m_{n}+m_{u})_{g}/(m_{n}+m_{u})_{uds}");
+  frame.GetYaxis()->SetTitle(Form("(%s)_{g}/(%s)_{uds}",axisLabel,axisLabel));
   frame.GetXaxis()->SetMoreLogLabels();
   frame.GetXaxis()->SetNoExponent();
   std::unique_ptr<TCanvas> canvas(tdrCanvas(
-    "c_mnu_color_ratio",&frame,8,11,kSquare));
+    ("c_"+component+"_color_ratio").c_str(),&frame,8,11,kSquare));
   canvas->SetLogx();
   TLine colorFactor(30.,9./4.,600.,9./4.);
   colorFactor.SetLineColor(kGray+2);
@@ -1448,11 +1456,12 @@ void drawMnuColorFactor(TFile &analysis,
   legend.AddEntry(&colorFactor,"C_{A}/C_{F}=2.25","l");
   legend.Draw();
   gPad->RedrawAxis();
-  saveBoth(canvas.get(),outputDirectory,"mnu_gluon_over_quark");
+  saveBoth(canvas.get(),outputDirectory,component+"_gluon_over_quark");
 }
 
-void drawMnuRunning(TFile &analysis,
-                    const std::string &outputDirectory) {
+void drawNuRunning(TFile &analysis, const std::string &component,
+                   const char *axisLabel,
+                   const std::string &outputDirectory) {
   struct Curve { const char *sample; const char *flavor; const char *label;
                  int color; int marker; };
   const Curve curves[] = {
@@ -1464,7 +1473,8 @@ void drawMnuRunning(TFile &analysis,
   std::vector<std::unique_ptr<TGraphErrors> > graphs;
   for (const Curve &curve : curves) {
     TGraphErrors *source = optionalObject<TGraphErrors>(
-      &analysis,("response/g_mnu_fraction_"+std::string(curve.sample)+
+      &analysis,("response/g_"+component+"_fraction_"+
+                 std::string(curve.sample)+
                  "_vs_pt_tc_"+curve.flavor).c_str());
     std::unique_ptr<TGraphErrors> graph(new TGraphErrors());
     if (source && source->GetN()>0) {
@@ -1487,16 +1497,16 @@ void drawMnuRunning(TFile &analysis,
   }
   if (graphs.empty() || graphs[0]->GetN()==0) return;
   configureFlavorStyle("Run2024I + Summer24 DY");
-  TH1D frame("frame_mnu_running","",100,30.,600.);
+  TH1D frame(("frame_"+component+"_running").c_str(),"",100,30.,600.);
   frame.SetDirectory(nullptr);
   frame.SetMinimum(0.45);
   frame.SetMaximum(1.35);
   frame.GetXaxis()->SetTitle("p_{T,Z} (GeV)");
-  frame.GetYaxis()->SetTitle("(m_{n}+m_{u})(p_{T}) / first bin");
+  frame.GetYaxis()->SetTitle(Form("(%s)(p_{T}) / first bin",axisLabel));
   frame.GetXaxis()->SetMoreLogLabels();
   frame.GetXaxis()->SetNoExponent();
   std::unique_ptr<TCanvas> canvas(tdrCanvas(
-    "c_mnu_running",&frame,8,11,kSquare));
+    ("c_"+component+"_running").c_str(),&frame,8,11,kSquare));
   canvas->SetLogx();
   for (auto &graph : graphs) if (graph) graph->Draw("PZL SAME");
   // One-loop alpha_s shape, normalized at the geometric center of 30--40 GeV.
@@ -1524,7 +1534,7 @@ void drawMnuRunning(TFile &analysis,
   legend.AddEntry(&alphaRunning,"one-loop #alpha_{s}(Q) shape","l");
   legend.Draw();
   gPad->RedrawAxis();
-  saveBoth(canvas.get(),outputDirectory,"mnu_alphaS_running");
+  saveBoth(canvas.get(),outputDirectory,component+"_alphaS_running");
 }
 
 std::unique_ptr<TGraphErrors> graphFromProfileRatio(
@@ -1992,16 +2002,24 @@ void drawOptionalAnalysis(TFile &analysis,
   drawRecoilFraction(analysis,"ue",true,outputDirectory);
   drawRecoilFraction(analysis,"mnu",false,outputDirectory);
   drawRecoilFraction(analysis,"mnu",true,outputDirectory);
+  drawRecoilFraction(analysis,"fnu",false,outputDirectory);
+  drawRecoilFraction(analysis,"fnu",true,outputDirectory);
   drawRecoilFraction(analysis,"mnufsr",false,outputDirectory);
   drawRecoilFraction(analysis,"mnufsr",true,outputDirectory);
-  drawMnuColorFactor(analysis,outputDirectory);
-  drawMnuRunning(analysis,outputDirectory);
+  drawNuColorFactor(analysis,"mnu","m_{n}+m_{u}",outputDirectory);
+  drawNuRunning(analysis,"mnu","m_{n}+m_{u}",outputDirectory);
+  drawNuColorFactor(analysis,"fnu","f_{n}+f_{u}",outputDirectory);
+  drawNuRunning(analysis,"fnu","f_{n}+f_{u}",outputDirectory);
   drawFlavorEffectiveResponse(analysis,"n",outputDirectory);
   drawFlavorEffectiveResponse(analysis,"u",outputDirectory);
   for (const PtGraphStyle &style : kPtGraphStyles)
     drawResponseBinningComparison(analysis,style,outputDirectory);
   for (const PtGraphStyle &style : kPtGraphStyles)
-    drawMnuBinningComparison(analysis,style,outputDirectory);
+    drawNuBinningComparison(
+      analysis,style,"mnu","m_{n}+m_{u}",outputDirectory);
+  for (const PtGraphStyle &style : kPtGraphStyles)
+    drawNuBinningComparison(
+      analysis,style,"fnu","f_{n}+f_{u}",outputDirectory);
   drawDirectAnalysisMatrix(
     analysis,"diagnostics/h2_response_uncertainty_components",
     "response_uncertainty_components",0.,0.,outputDirectory,true);

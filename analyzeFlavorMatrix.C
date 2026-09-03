@@ -100,6 +100,7 @@ struct PtRangeResult {
   FitResult fsrScaleFit;
   FitResult ueScaleFit;
   FitResult mnuScaleFit;
+  FitResult fnuScaleFit;
   FitResult mnuFsrScaleFit;
   std::vector<ProfileSummary> dataTagResponse;
   std::vector<ProfileSummary> mcRawTagResponse;
@@ -115,19 +116,23 @@ struct PtRangeResult {
   std::vector<ProfileSummary> mcMnuFraction;
   std::vector<ProfileSummary> dataMnuFraction;
   std::vector<ProfileSummary> mnuRatio;
+  std::vector<ProfileSummary> mcFnuFraction;
+  std::vector<ProfileSummary> dataFnuFraction;
+  std::vector<ProfileSummary> fnuRatio;
   std::vector<ProfileSummary> mcMnuFsrFraction;
   std::vector<ProfileSummary> dataMnuFsrFraction;
   std::vector<ProfileSummary> mnuFsrRatio;
 
   PtRangeResult(int nReco, int nTruth)
       : responseFit(nTruth), fsrScaleFit(nTruth), ueScaleFit(nTruth),
-        mnuScaleFit(nTruth), mnuFsrScaleFit(nTruth),
+        mnuScaleFit(nTruth), fnuScaleFit(nTruth), mnuFsrScaleFit(nTruth),
         dataTagResponse(nReco), mcRawTagResponse(nReco),
         mcCompositionCorrectedTagResponse(nReco), rawTagRatio(nReco),
         compositionCorrectedTagRatio(nReco), mcFsrFraction(nTruth),
         dataFsrFraction(nTruth), fsrRatio(nTruth), mcUeFraction(nTruth),
         dataUeFraction(nTruth), ueRatio(nTruth), mcMnuFraction(nTruth),
         dataMnuFraction(nTruth), mnuRatio(nTruth),
+        mcFnuFraction(nTruth), dataFnuFraction(nTruth), fnuRatio(nTruth),
         mcMnuFsrFraction(nTruth), dataMnuFsrFraction(nTruth),
         mnuFsrRatio(nTruth) {}
 };
@@ -264,6 +269,20 @@ ProfileSummary scaledSummary(ProfileSummary input, double scale) {
   input.error *= std::fabs(scale);
   input.valid = std::isfinite(input.mean) && std::isfinite(input.error);
   return input;
+}
+
+ProfileSummary sumSummaries(const ProfileSummary &first,
+                            const ProfileSummary &second) {
+  ProfileSummary result;
+  if (!first.valid || !second.valid) return result;
+  result.mean = first.mean+second.mean;
+  // Old productions do not contain an event-level fnu profile. Its central
+  // value is exactly linear in the two component means; use a conservative
+  // covariance-free uncertainty until the next production provides p3fnu.
+  result.error = std::hypot(first.error,second.error);
+  result.sumWeights = first.sumWeights;
+  result.valid = std::isfinite(result.mean) && std::isfinite(result.error);
+  return result;
 }
 
 ProfileSummary ratioSummary(const ProfileSummary &numerator,
@@ -1064,14 +1083,23 @@ void analyzeFlavorMatrix(
       std::vector<ProfileSummary> dataComponent(nReco);
       std::vector<std::vector<ProfileSummary> > mcComponent(
         nReco,std::vector<ProfileSummary>(nTruth));
+      auto readFraction = [&](TFile *file, int reco,
+                              const std::vector<int> &truthIds) {
+        ProfileSummary direct = readComponent(
+          file,component,variant,reco,truthIds,lowPt,highPt,scale);
+        if (direct.valid || std::string(component)!="fnu") return direct;
+        return sumSummaries(
+          readComponent(file,"mn",variant,reco,truthIds,lowPt,highPt,
+                        1./ZJetFlavorMatrix::responseN),
+          readComponent(file,"mu",variant,reco,truthIds,lowPt,highPt,
+                        1./ZJetFlavorMatrix::responseU));
+      };
       for (int reco=0; reco!=nReco; ++reco) {
-        dataComponent[reco] = readComponent(
-          dataFile.get(),component,variant,recoIds[reco],
-          std::vector<int>{0},lowPt,highPt,scale);
+        dataComponent[reco] = readFraction(
+          dataFile.get(),recoIds[reco],std::vector<int>{0});
         for (int flavor=0; flavor!=nTruth; ++flavor)
-          mcComponent[reco][flavor] = readComponent(
-            mcFile.get(),component,variant,recoIds[reco],
-            truthGroups[flavor].sourceIds,lowPt,highPt,scale);
+          mcComponent[reco][flavor] = readFraction(
+            mcFile.get(),recoIds[reco],truthGroups[flavor].sourceIds);
       }
 
       for (int flavor=0; flavor!=nTruth; ++flavor) {
@@ -1149,6 +1177,10 @@ void analyzeFlavorMatrix(
       "mnu",1.,rangeResult.mnuScaleFit,
       rangeResult.mcMnuFraction,rangeResult.dataMnuFraction,
       rangeResult.mnuRatio);
+    fitRecoilFraction(
+      "fnu",1.,rangeResult.fnuScaleFit,
+      rangeResult.mcFnuFraction,rangeResult.dataFnuFraction,
+      rangeResult.fnuRatio);
     // Available from productions made after the projected-area control was
     // introduced. Older files simply leave this optional fit unsolved.
     fitRecoilFraction(
@@ -1415,6 +1447,7 @@ void analyzeFlavorMatrix(
     if (component=="fsr") return range.fsrScaleFit;
     if (component=="ue") return range.ueScaleFit;
     if (component=="mnu") return range.mnuScaleFit;
+    if (component=="fnu") return range.fnuScaleFit;
     return range.mnuFsrScaleFit;
   };
   auto componentValues = [](const PtRangeResult &range,
@@ -1429,6 +1462,9 @@ void analyzeFlavorMatrix(
     if (component=="mnu")
       return kind==0 ? range.mcMnuFraction
                      : (kind==1 ? range.dataMnuFraction : range.mnuRatio);
+    if (component=="fnu")
+      return kind==0 ? range.mcFnuFraction
+                     : (kind==1 ? range.dataFnuFraction : range.fnuRatio);
     return kind==0 ? range.mcMnuFsrFraction
                    : (kind==1 ? range.dataMnuFsrFraction
                               : range.mnuFsrRatio);
@@ -1438,7 +1474,7 @@ void analyzeFlavorMatrix(
     const std::vector<PtRangeResult> &fits = variantEntry.second;
     for (int flavor=0; flavor!=nTruth; ++flavor) {
       const std::string name = truthGroups[flavor].name;
-      for (const std::string component : {"fsr","ue","mnu","mnufsr"}) {
+      for (const std::string component : {"fsr","ue","mnu","fnu","mnufsr"}) {
         TGraphErrors *mcGraph = new TGraphErrors();
         TGraphErrors *dataGraph = new TGraphErrors();
         TGraphErrors *ratioGraph = new TGraphErrors();
@@ -1741,7 +1777,7 @@ void analyzeFlavorMatrix(
   for (const auto &variantEntry : variantPtFits)
     for (size_t ptBin=0; ptBin<variantEntry.second.size(); ++ptBin)
       for (int flavor=0; flavor!=nTruth; ++flavor)
-        for (const std::string component : {"fsr","ue","mnu","mnufsr"}) {
+        for (const std::string component : {"fsr","ue","mnu","fnu","mnufsr"}) {
           const PtRangeResult &range = variantEntry.second[ptBin];
           const std::vector<ProfileSummary> &mcValues =
             componentValues(range,component,0);

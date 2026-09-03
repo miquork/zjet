@@ -238,7 +238,7 @@ FlavorMatrixHistograms bookFlavorMatrix(TDirectory *parent) {
   result.heavyTopologyCounts->Sumw2();
 
   const std::vector<std::string> observables = {
-    "m0", "m2", "mn", "mu", "mnu", "hdm", "rho", "muef",
+    "m0", "m2", "mn", "mu", "mnu", "fnu", "hdm", "rho", "muef",
     "areasum", "areaproj", "uehole", "mnufsr",
     "recomnmatched", "recoumatched", "genmn", "genmu",
     "recogenmn", "recogenmu", "genmn2", "genmu2",
@@ -387,6 +387,8 @@ void fillFlavorMatrix(
     const std::map<std::string,double> observables = {
       {"m0",value.m0}, {"m2",value.m2}, {"mn",value.mn},
       {"mu",value.mu}, {"mnu",value.mnu}, {"rho",rho},
+      {"fnu",value.mn/ZJetFlavorMatrix::responseN+
+               value.mu/ZJetFlavorMatrix::responseU},
       {"muef",muonEnergyFraction}, {"areasum",jetAreaSum},
       {"areaproj",projectedJetArea}, {"uehole",ueHoleEstimate},
       {"mnufsr",value.mnu-ueHoleEstimate},

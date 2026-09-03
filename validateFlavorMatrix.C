@@ -339,6 +339,39 @@ void validateFlavorMatrix(const char *fileName, bool isMC) {
     }
   }
 
+  // The response-corrected sum fnu=mn/Rn+mu/Ru was added after the first
+  // FlavorMatrix production. Require the complete family once it is present,
+  // while retaining validation support for existing merged samples.
+  const bool hasFlavorFnu =
+    file->Get("FlavorMatrix/p3fnutc_parallel_flavormatrix");
+  if (hasFlavorFnu)
+    for (const std::string &suffix : {
+           std::string("_flavormatrix"),
+           std::string("_parallel_flavormatrix")})
+      for (const std::string &variant : variants) {
+        const std::string base = "FlavorMatrix/p3";
+        TProfile3D *fnu = requireExact<TProfile3D>(
+          file.get(),base+"fnu"+variant+suffix,failures);
+        TProfile3D *mn = dynamic_cast<TProfile3D*>(
+          file->Get((base+"mn"+variant+suffix).c_str()));
+        TProfile3D *mu = dynamic_cast<TProfile3D*>(
+          file->Get((base+"mu"+variant+suffix).c_str()));
+        checkMatrixGeometry(
+          fnu,base+"fnu"+variant+suffix,failures);
+        if (!fnu || !mn || !mu) continue;
+        for (int bin=0; bin<fnu->GetNcells(); ++bin) {
+          const double expected = profileNumerator(mn,bin)/
+              ZJetFlavorMatrix::responseN+
+            profileNumerator(mu,bin)/ZJetFlavorMatrix::responseU;
+          if (!closeEnough(fnu->GetBinEntries(bin),mn->GetBinEntries(bin)) ||
+              !closeEnough(profileNumerator(fnu,bin),expected,1.e-8,2.e-10)) {
+            fail(failures,"fnu != mn/Rn+mu/Ru for "+variant+suffix+
+              " at global bin "+std::to_string(bin));
+            break;
+          }
+        }
+      }
+
   // Environmental and jet-area controls were added after the first
   // FlavorMatrix production. Keep old merged files readable, but once any
   // member of a generation is present require its complete variant/suffix

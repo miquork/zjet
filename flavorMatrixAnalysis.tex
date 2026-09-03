@@ -338,32 +338,37 @@ We define $f_n=\langle m_n\rangle/R_n$ with $R_n=1$. Above 40 GeV the MC ratio $
 We define $f_u=\langle m_u\rangle/R_u$ with $R_u=0.92$. It falls rapidly with $p_T$ and is larger in the gluon-enriched category, as expected for broader soft activity. It still mixes UE, unclustered recoil, acceptance, pileup, and response. Flavor-resolved $\rho$ was not stored in this production; the next output adds $\rho$ and jet PF-muon fraction profiles for each reco--truth cell and all four reference-$p_T$ choices.
 \end{frame}
 
-\begin{frame}{$m_n+m_u$ removes the arbitrary Type-I partition}
+\begin{frame}{$f_n+f_u$ reduces sensitivity to the Type-I partition}
 \begin{columns}[c,onlytextwidth]
-\column{0.50\textwidth}\includegraphics[width=0.92\linewidth]{mnu_fraction_data_mc_vs_pt.pdf}
-\column{0.50\textwidth}\includegraphics[width=0.92\linewidth]{mnu_fraction_data_over_mc_vs_pt.pdf}
+\column{0.50\textwidth}\includegraphics[width=0.92\linewidth]{fnu_fraction_data_mc_vs_pt.pdf}
+\column{0.50\textwidth}\includegraphics[width=0.92\linewidth]{fnu_fraction_data_over_mc_vs_pt.pdf}
 \end{columns}
 \vspace{-0.25em}
-\tiny
-$m_n$ and $m_u$ exchange contributions when the Type-I jet threshold is changed; their sum does not. In MC the gluon component is about twice the uds component and both fall with scale. The data/MC inversion remains statistically correlated and should not be interpreted as four independent measurements.
+\scriptsize
+We use $f_n+f_u=m_n/R_n+m_u/R_u$, not raw $m_n+m_u$. The curves are
+\alert{truth-flavor estimates inferred from four reconstructed tag rows}, not
+raw tags. The $p_T$-dependent gluon purity is recomputed in every bin, but its
+truth marginal is fixed to MC in the IPF step. The current file uses a
+covariance-free error fallback; the next production stores $f_n+f_u$ event by
+event.
 \end{frame}
 
 \begin{frame}{The color-factor and running tests are suggestive, not closed}
 \begin{columns}[c,onlytextwidth]
-\column{0.50\textwidth}\includegraphics[width=0.92\linewidth]{mnu_gluon_over_quark.pdf}
-\column{0.50\textwidth}\includegraphics[width=0.92\linewidth]{mnu_alphaS_running.pdf}
+\column{0.50\textwidth}\includegraphics[width=0.92\linewidth]{fnu_gluon_over_quark.pdf}
+\column{0.50\textwidth}\includegraphics[width=0.92\linewidth]{fnu_alphaS_running.pdf}
 \end{columns}
 \vspace{-0.2em}
 \tiny
-The MC $g/uds$ ratio is near 2.1 at low $p_T$ and decreases toward 1.7, below the leading $C_A/C_F=2.25$ expectation. Normalized $m_n+m_u$ falls broadly like $\alpha_s(Q)$, but faster for gluons. UE holes, ISR/FSR mixing, clustering, flavor migration, and the all-pairs acceptance must be removed before a quantitative shower constraint.
+The response-corrected, truth-flavor-unfolded result is the appropriate starting point for the $C_A/C_F$ and $\alpha_s(Q)$ comparisons. UE holes, ISR/FSR mixing, clustering, unfolding covariance, flavor-fraction modeling, and the all-pairs acceptance must still be controlled before a quantitative shower constraint. Raw tagged $m_n+m_u$ plots remain available as closure diagnostics.
 \end{frame}
 
 \begin{frame}{Reference-$p_T$ dependence separates migration from radiation}
 \begin{columns}[c,onlytextwidth]
-\column{0.25\textwidth}\includegraphics[width=\linewidth]{mnu_binning_comparison_uds.pdf}
-\column{0.25\textwidth}\includegraphics[width=\linewidth]{mnu_binning_comparison_c.pdf}
-\column{0.25\textwidth}\includegraphics[width=\linewidth]{mnu_binning_comparison_b.pdf}
-\column{0.25\textwidth}\includegraphics[width=\linewidth]{mnu_binning_comparison_g.pdf}
+\column{0.25\textwidth}\includegraphics[width=\linewidth]{fnu_binning_comparison_uds.pdf}
+\column{0.25\textwidth}\includegraphics[width=\linewidth]{fnu_binning_comparison_c.pdf}
+\column{0.25\textwidth}\includegraphics[width=\linewidth]{fnu_binning_comparison_b.pdf}
+\column{0.25\textwidth}\includegraphics[width=\linewidth]{fnu_binning_comparison_g.pdf}
 \end{columns}
 \vspace{0.1em}
 \tiny

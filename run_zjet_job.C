@@ -164,6 +164,7 @@ void run_zjet_job(const char *inputList, bool isMC, const char *outputFile,
       !check.Get("FlavorMatrix/p3mnuab_flavormatrix") ||
       !check.Get("FlavorMatrix/p3hdmtc_parallel_flavormatrix") ||
       !check.Get("FlavorMatrix/p3mnuab_parallel_flavormatrix") ||
+      !check.Get("FlavorMatrix/p3fnuab_parallel_flavormatrix") ||
       !check.Get("FlavorMatrix/p3areasumtc_parallel_flavormatrix") ||
       !check.Get("FlavorMatrix/p3areaprojtc_parallel_flavormatrix") ||
       !check.Get("FlavorMatrix/p3ueholetc_parallel_flavormatrix") ||
