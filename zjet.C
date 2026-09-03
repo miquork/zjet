@@ -123,6 +123,10 @@ struct FlavorMatrixHistograms {
   std::map<std::string,TH3D*> pairControls;
   std::map<std::string,TH3D*> heavyTopologyPairControls;
   std::map<int,TH3D*> cubeControls;
+  std::map<std::string,TH3D*> taggerAuditCounts;
+  std::map<std::string,TProfile3D*> taggerAuditProfiles;
+  std::map<std::string,TProfile3D*> heavyTopologyProfiles;
+  std::map<std::string,TProfile3D*> muonFractionProfiles;
 };
 
 struct GeneratorRecoil {
@@ -240,6 +244,7 @@ FlavorMatrixHistograms bookFlavorMatrix(TDirectory *parent) {
   const std::vector<std::string> observables = {
     "m0", "m2", "mn", "mu", "mnu", "fnu", "hdm", "rho", "muef",
     "areasum", "areaproj", "uehole", "mnufsr",
+    "fuclosure", "mufuclosure", "fuclosure2",
     "recomnmatched", "recoumatched", "genmn", "genmu",
     "recogenmn", "recogenmu", "genmn2", "genmu2",
   };
@@ -314,6 +319,50 @@ FlavorMatrixHistograms bookFlavorMatrix(TDirectory *parent) {
     histogram->Sumw2();
     result.cubeControls[flavor] = histogram;
   }
+  TDirectory *taggerAudit = directory->mkdir("taggerAudit");
+  if (!taggerAudit)
+    throw std::runtime_error("Failed to create FlavorMatrix/taggerAudit");
+  taggerAudit->cd();
+  double scoreBins[41];
+  for (int bin=0; bin<=40; ++bin) scoreBins[bin] = bin/40.;
+  for (const std::string &tagger : {"deepjet","pnet","upart"}) {
+    const std::string countName = "h3counts_"+tagger+"qvg";
+    TH3D *counts = new TH3D(
+      countName.c_str(),
+      ";p_{T,Z} (GeV);QvG score;Generator parton flavor",
+      flavorMatrixPtBinCount,flavorMatrixPtBins,
+      40,scoreBins,7,flavorIdBins);
+    counts->Sumw2();
+    result.taggerAuditCounts[countName] = counts;
+    for (const std::string &observable : {"m0","m2","mn","mu","fnu"}) {
+      const std::string name = "p3"+observable+"_"+tagger+"qvg";
+      result.taggerAuditProfiles[name] = new TProfile3D(
+        name.c_str(),
+        ";p_{T,Z} (GeV);QvG score;Generator parton flavor",
+        flavorMatrixPtBinCount,flavorMatrixPtBins,
+        40,scoreBins,7,flavorIdBins);
+    }
+  }
+  controls->cd();
+  for (const std::string &observable :
+       {"m0","mn","mu","fnu","muef","genmu"}) {
+    const std::string name = "p3"+observable+"tc_parallel_heavytopology";
+    result.heavyTopologyProfiles[name] = new TProfile3D(
+      name.c_str(),
+      ";p_{T,Z} (GeV);Reco hybrid flavor;Heavy-hadron topology",
+      flavorMatrixPtBinCount,flavorMatrixPtBins,
+      7,flavorIdBins,7,flavorIdBins);
+  }
+  double muonFractionBins[21];
+  for (int bin=0; bin<=20; ++bin) muonFractionBins[bin] = 0.5*bin/20.;
+  for (const std::string &observable : {"m0","mn","mu","fnu"}) {
+    const std::string name = "p3"+observable+"tc_parallel_muef_trueflavor";
+    result.muonFractionProfiles[name] = new TProfile3D(
+      name.c_str(),
+      ";p_{T,Z} (GeV);Jet PF muon energy fraction;Generator parton flavor",
+      flavorMatrixPtBinCount,flavorMatrixPtBins,
+      20,muonFractionBins,7,flavorIdBins);
+  }
   return result;
 }
 
@@ -373,6 +422,7 @@ void fillFlavorMatrix(
   int recoFlavor, int trueFlavor, int heavyTopology,
   int charmHadronCount, int bottomHadronCount,
   double cvb, double cvl, double pnetQvg, double upartQvg,
+  double deepjetQvg,
   double muonEnergyFraction, double rho, double jetAreaSum,
   double projectedJetArea, double ueHoleEstimate,
   const std::map<std::string,FlavorMatrixVariant> &variants,
@@ -384,6 +434,12 @@ void fillFlavorMatrix(
     ->Fill(ptz,recoFlavor,trueFlavor,transverse ? -weight : weight);
   for (const auto &variant : variants) {
     const FlavorMatrixComponents &value = variant.second.response;
+    // Data-accessible closure proxy for the generator unclustered fraction.
+    // It assumes R_2=R_n=1: f_u^closure=1-m_2/R_2-m_n/R_n.  Storing the
+    // event-level product and square makes a zero-intercept R_u regression
+    // merge-safe.  The MC truth profiles quantify its resolution bias.
+    const double fuClosure = 1.-value.m2/ZJetFlavorMatrix::response2-
+                                  value.mn/ZJetFlavorMatrix::responseN;
     const std::map<std::string,double> observables = {
       {"m0",value.m0}, {"m2",value.m2}, {"mn",value.mn},
       {"mu",value.mu}, {"mnu",value.mnu}, {"rho",rho},
@@ -392,6 +448,8 @@ void fillFlavorMatrix(
       {"muef",muonEnergyFraction}, {"areasum",jetAreaSum},
       {"areaproj",projectedJetArea}, {"uehole",ueHoleEstimate},
       {"mnufsr",value.mnu-ueHoleEstimate},
+      {"fuclosure",fuClosure}, {"mufuclosure",value.mu*fuClosure},
+      {"fuclosure2",fuClosure*fuClosure},
     };
     for (const auto &observable : observables) {
       const std::string name =
@@ -432,6 +490,56 @@ void fillFlavorMatrix(
           histograms.parallelProfiles.at(parallelName)->Fill(
             variant.second.x,recoFlavor,trueFlavor,observable.second,weight);
         }
+      }
+    }
+  }
+  if (!transverse) {
+    const FlavorMatrixComponents &tc = variants.at("tc").response;
+    const std::map<std::string,double> topologyObservables = {
+      {"m0",tc.m0}, {"mn",tc.mn}, {"mu",tc.mu},
+      {"fnu",tc.mn/ZJetFlavorMatrix::responseN+
+             tc.mu/ZJetFlavorMatrix::responseU},
+      {"muef",muonEnergyFraction},
+      {"genmu",generatorPair ? generatorPair->genMpfuRecoAxis :
+                               std::numeric_limits<double>::quiet_NaN()},
+    };
+    for (const auto &observable : topologyObservables) {
+      if (!std::isfinite(observable.second)) continue;
+      const std::string name = "p3"+observable.first+
+                               "tc_parallel_heavytopology";
+      histograms.heavyTopologyProfiles.at(name)->Fill(
+        ptz,recoFlavor,heavyTopology,observable.second,weight);
+    }
+    for (const auto &observable : std::map<std::string,double>{
+           {"m0",tc.m0}, {"mn",tc.mn}, {"mu",tc.mu},
+           {"fnu",tc.mn/ZJetFlavorMatrix::responseN+
+                  tc.mu/ZJetFlavorMatrix::responseU}}) {
+      if (!std::isfinite(observable.second) ||
+          !std::isfinite(muonEnergyFraction)) continue;
+      const std::string name = "p3"+observable.first+
+                               "tc_parallel_muef_trueflavor";
+      histograms.muonFractionProfiles.at(name)->Fill(
+        ptz,std::min(0.499999,std::max(0.,muonEnergyFraction)),trueFlavor,
+        observable.second,weight);
+    }
+    const std::map<std::string,double> scores = {
+      {"deepjet",deepjetQvg}, {"pnet",pnetQvg}, {"upart",upartQvg},
+    };
+    for (const auto &score : scores) {
+      if (!std::isfinite(score.second) || score.second<0. ||
+          score.second>1.) continue;
+      const double scoreValue = std::min(0.999999,std::max(0.,score.second));
+      const std::string countName = "h3counts_"+score.first+"qvg";
+      histograms.taggerAuditCounts.at(countName)->Fill(
+        ptz,scoreValue,trueFlavor,weight);
+      for (const auto &observable : std::map<std::string,double>{
+             {"m0",tc.m0}, {"m2",tc.m2}, {"mn",tc.mn}, {"mu",tc.mu},
+             {"fnu",tc.mn/ZJetFlavorMatrix::responseN+
+                    tc.mu/ZJetFlavorMatrix::responseU}}) {
+        const std::string name = "p3"+observable.first+"_"+
+                                 score.first+"qvg";
+        histograms.taggerAuditProfiles.at(name)->Fill(
+          ptz,scoreValue,trueFlavor,observable.second,weight);
       }
     }
   }
@@ -1126,7 +1234,7 @@ void zjet::Loop()
    TObjString flavorDefinition(
      "Bettina/Sami DeepJet: B>0.7527; C=0.5*(CvB+CvL)>0.3985 after B veto; QG split at 0.5 after B/C veto");
    TObjString flavorMatrixDefinition(
-     "FlavorMatrix uses |eta(jet)|<1.3 and stores both the signed all-pairs signal-minus-two-half-weight-sidebands estimator and pure-parallel response profiles; hybrid tag IDs use UParTAK4 CvB/CvL at 0.5 and ParticleNet QvG at 0.3: undefined=0, uds=1, c=4, b=5, g=6; true IDs: undefined=0, d+u=1, s=3, c=4, b=5, g=6; data uses true ID 0 because truth is unavailable; heavy-hadron topology controls use GenJet_nCHadrons and GenJet_nBHadrons with bottom precedence: none=0, single-c=1, c-pair=2, other=3, single-b=4, b-pair=5, no-match=6, where double-heavy categories are gluon-splitting-enriched rather than exclusive production labels; HDM is derived from component means and re-finalized after hadd with Rn=1.00 and Ru=0.92; rho, jet PF-muon energy fraction, scalar jet-area sum, Z-axis projected jet-hole area, rho times projected area over pT,Z, and m_n+m_u after subtracting that UE-hole estimate are stored by flavor cell and reference-pT variant; jet-area sums use the same lepton-cleaned pT>15 GeV jets as reconstructed HT; category axes remain numerically unlabelled until plotting so ROOT merges them without extension");
+     "FlavorMatrix uses |eta(jet)|<1.3 and stores both the signed all-pairs signal-minus-two-half-weight-sidebands estimator and pure-parallel response profiles; hybrid tag IDs use UParTAK4 CvB/CvL at 0.5 and ParticleNet QvG at 0.3: undefined=0, uds=1, c=4, b=5, g=6; true IDs: undefined=0, d+u=1, s=3, c=4, b=5, g=6; data uses true ID 0 because truth is unavailable; heavy-hadron topology controls use GenJet_nCHadrons and GenJet_nBHadrons with bottom precedence: none=0, single-c=1, c-pair=2, other=3, single-b=4, b-pair=5, no-match=6, where double-heavy categories are gluon-splitting-enriched rather than exclusive production labels; HDM is derived from component means and re-finalized after hadd with Rn=1.00 and Ru=0.92; rho, jet PF-muon energy fraction, scalar jet-area sum, Z-axis projected jet-hole area, rho times projected area over pT,Z, and m_n+m_u after subtracting that UE-hole estimate are stored by flavor cell and reference-pT variant; the data-accessible f_u closure proxy assumes R2=Rn=1 and stores f_u, m_u*f_u, and f_u^2 event by event for merge-safe R_u regression, with MC truth profiles retained to measure its bias; jet-area sums use the same lepton-cleaned pT>15 GeV jets as reconstructed HT; category axes remain numerically unlabelled until plotting so ROOT merges them without extension");
 
    
    // Object pT plots
@@ -2725,9 +2833,11 @@ void zjet::Loop()
 	const int truePartonFlavor =
 	  (isMC ? generatorFlavorId(Jet_partonFlavour[ijet]) : 0);
 	const int charmHadronCount =
-	  (isMC && genJetIndex>=0 ? GenJet_nCHadrons[genJetIndex] : 0);
+	  (isMC && genJetIndex>=0 && genJetIndex<nGenJet
+	     ? GenJet_nCHadrons[genJetIndex] : 0);
 	const int bottomHadronCount =
-	  (isMC && genJetIndex>=0 ? GenJet_nBHadrons[genJetIndex] : 0);
+	  (isMC && genJetIndex>=0 && genJetIndex<nGenJet
+	     ? GenJet_nBHadrons[genJetIndex] : 0);
 	const int heavyTopology = isMC
 	  ? heavyHadronTopology(genJetIndex,nGenJet,GenJet_nBHadrons,
 	                        GenJet_nCHadrons)
@@ -2817,6 +2927,7 @@ void zjet::Loop()
 		          flavorMatrix,ptz,ptj,recoHybridFlavor,truePartonFlavor,
 		          heavyTopology,charmHadronCount,bottomHadronCount,
 		          upartCvB,upartCvL,pnetQvG,upartQvG,
+		          Jet_btagDeepFlavQG[ijet],
 		          Jet_muEF[ijet],Rho_fixedGridRhoFastjetAll,jetAreaSum,
 		          projectedJetHoleArea(p4z),ueHoleContribution(p4z),
 		          flavorMatrixVariants(
@@ -2962,6 +3073,7 @@ void zjet::Loop()
 		          flavorMatrix,ptz,ptj,recoHybridFlavor,truePartonFlavor,
 		          heavyTopology,charmHadronCount,bottomHadronCount,
 		          upartCvB,upartCvL,pnetQvG,upartQvG,
+		          Jet_btagDeepFlavQG[ijet],
 		          Jet_muEF[ijet],Rho_fixedGridRhoFastjetAll,jetAreaSum,
 		          projectedJetHoleArea(p4z+axis),
 		          ueHoleContribution(p4z+axis),

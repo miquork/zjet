@@ -433,6 +433,83 @@ void validateFlavorMatrix(const char *fileName, bool isMC) {
       }
   }
 
+  // Event-level data closure proxy for R_u.  Its first moment is linear in
+  // m2 and mn; the product and square cannot be reconstructed after merging,
+  // so require their entries but preserve their independently accumulated
+  // numerators.
+  const bool hasFlavorClosure =
+    file->Get("FlavorMatrix/p3fuclosuretc_flavormatrix") ||
+    file->Get("FlavorMatrix/p3mufuclosuretc_flavormatrix");
+  if (hasFlavorClosure) {
+    for (const std::string &suffix : {
+           std::string("_flavormatrix"),
+           std::string("_parallel_flavormatrix")})
+      for (const std::string &variant : variants) {
+        const std::string base = "FlavorMatrix/p3";
+        TProfile3D *m0 = dynamic_cast<TProfile3D*>(file->Get(
+          (base+"m0"+variant+suffix).c_str()));
+        TProfile3D *m2 = dynamic_cast<TProfile3D*>(file->Get(
+          (base+"m2"+variant+suffix).c_str()));
+        TProfile3D *mn = dynamic_cast<TProfile3D*>(file->Get(
+          (base+"mn"+variant+suffix).c_str()));
+        TProfile3D *fu = requireExact<TProfile3D>(
+          file.get(),base+"fuclosure"+variant+suffix,failures);
+        TProfile3D *product = requireExact<TProfile3D>(
+          file.get(),base+"mufuclosure"+variant+suffix,failures);
+        TProfile3D *square = requireExact<TProfile3D>(
+          file.get(),base+"fuclosure2"+variant+suffix,failures);
+        for (TProfile3D *profile : {fu,product,square})
+          checkMatrixGeometry(profile,profile ? profile->GetName() :
+                              "missing closure profile",failures);
+        if (!m0 || !m2 || !mn || !fu || !product || !square) continue;
+        for (int bin=0; bin<m0->GetNcells(); ++bin) {
+          const double entries = m0->GetBinEntries(bin);
+          if (!closeEnough(fu->GetBinEntries(bin),entries) ||
+              !closeEnough(product->GetBinEntries(bin),entries) ||
+              !closeEnough(square->GetBinEntries(bin),entries)) {
+            fail(failures,"R_u closure entries differ from p3m0 for "+
+              variant+suffix+" at global bin "+std::to_string(bin));
+            break;
+          }
+          const double expected = entries-profileNumerator(m2,bin)/
+              ZJetFlavorMatrix::response2-
+            profileNumerator(mn,bin)/ZJetFlavorMatrix::responseN;
+          if (!closeEnough(profileNumerator(fu,bin),expected,1.e-8,2.e-10)) {
+            fail(failures,"fuclosure != 1-m2-mn for "+variant+suffix+
+              " at global bin "+std::to_string(bin));
+            break;
+          }
+        }
+      }
+  }
+
+  if (hasFlavorClosure) {
+    if (!file->GetDirectory("FlavorMatrix/taggerAudit"))
+      fail(failures,"missing FlavorMatrix/taggerAudit in new production");
+    for (const std::string &tagger : {"deepjet","pnet","upart"}) {
+      const std::string countName = "h3counts_"+tagger+"qvg";
+      TH3D *counts = requireExact<TH3D>(
+        file.get(),"FlavorMatrix/taggerAudit/"+countName,failures);
+      if (counts) {
+        checkUnitScoreAxis(counts->GetYaxis(),countName+" score",40,failures);
+        checkFlavorAxis(counts->GetZaxis(),countName+" truth",failures);
+      }
+      for (const std::string &observable : {"m0","m2","mn","mu","fnu"})
+        requireExact<TProfile3D>(
+          file.get(),"FlavorMatrix/taggerAudit/p3"+observable+"_"+
+          tagger+"qvg",failures);
+    }
+    for (const std::string &observable :
+         {"m0","mn","mu","fnu","muef","genmu"})
+      requireExact<TProfile3D>(
+        file.get(),"FlavorMatrix/controls/p3"+observable+
+        "tc_parallel_heavytopology",failures);
+    for (const std::string &observable : {"m0","mn","mu","fnu"})
+      requireExact<TProfile3D>(
+        file.get(),"FlavorMatrix/controls/p3"+observable+
+        "tc_parallel_muef_trueflavor",failures);
+  }
+
   const bool hasFlavorTruthRecoil =
     file->Get("FlavorMatrix/p3genmutc_flavormatrix") ||
     file->Get("FlavorMatrix/p3recogenmutc_flavormatrix");

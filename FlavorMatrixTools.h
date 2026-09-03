@@ -9,6 +9,7 @@
 
 namespace ZJetFlavorMatrix {
 
+constexpr double response2 = 1.00;
 constexpr double responseN = 1.00;
 constexpr double responseU = 0.92;
 

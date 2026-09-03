@@ -173,12 +173,21 @@ void run_zjet_job(const char *inputList, bool isMC, const char *outputFile,
       !check.Get("FlavorMatrix/p3recoumatchedtc_parallel_flavormatrix") ||
       !check.Get("FlavorMatrix/p3recogenmutc_parallel_flavormatrix") ||
       !check.Get("FlavorMatrix/p3genmu2tc_parallel_flavormatrix") ||
+      !check.Get("FlavorMatrix/p3fuclosuretc_parallel_flavormatrix") ||
+      !check.Get("FlavorMatrix/p3mufuclosuretc_parallel_flavormatrix") ||
+      !check.Get("FlavorMatrix/p3fuclosure2tc_parallel_flavormatrix") ||
       !check.Get("FlavorMatrix/h3counts_heavytopology") ||
       !check.Get("FlavorMatrix/controls/h3_cvb_cvl_trueflavor") ||
       !check.Get("FlavorMatrix/controls/h3_cvb_cvl_qvg_true0") ||
       !check.Get("FlavorMatrix/controls/h3_genjet_nc_nb_trueflavor") ||
       !check.Get("FlavorMatrix/controls/h3_upartqvg_pnetqvg_trueflavor") ||
       !check.Get("FlavorMatrix/controls/h3_cvb_cvl_heavytopology") ||
+      !check.Get("FlavorMatrix/controls/p3fnutc_parallel_heavytopology") ||
+      !check.Get("FlavorMatrix/controls/p3fnutc_parallel_muef_trueflavor") ||
+      !check.Get("FlavorMatrix/taggerAudit/h3counts_deepjetqvg") ||
+      !check.Get("FlavorMatrix/taggerAudit/h3counts_pnetqvg") ||
+      !check.Get("FlavorMatrix/taggerAudit/h3counts_upartqvg") ||
+      !check.Get("FlavorMatrix/taggerAudit/p3fnu_deepjetqvg") ||
       !check.Get("zjet_truth_hdm_definition") ||
       !check.Get("zjet_previous_residual_definition") ||
       !check.Get("zjet_synchronized_selection") ||

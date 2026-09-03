@@ -80,6 +80,41 @@ required because the HDM equation is nonlinear.  The raw `m0`, `mn` and `mu`
 components remain authoritative when alternative recoil responses or a full
 covariance treatment are needed.
 
+The analysis also writes a diagnostic HDM variant using the merge-safe
+zero-intercept MC regression
+
+```text
+Ru_slope = <mu_reco * fu_gen> / <fu_gen^2>.
+```
+
+It is evaluated independently in every reference-pT interval and applied to
+both data and MC component means. It does not replace the nominal constant:
+the fitted flavor shifts are written to `response_ru_slope_impact.tsv` and to
+separate ROOT graphs.
+
+For a conditional data constraint, new productions store the event-level
+closure proxy
+
+```text
+fu_closure = 1 - m2/R2 - mn/Rn,
+mu * fu_closure,
+fu_closure^2,
+```
+
+with `R2 = Rn = 1`. The corresponding zero-intercept slope can be formed in
+data, but is not identifiable without these response assumptions. The same
+proxy and the true generator regression are saved in MC so resolution
+dilution and flavor-dependent bias can be measured explicitly.
+
+`FlavorMatrix/taggerAudit` stores counts and response-component profiles as a
+continuous function of the DeepJet, ParticleNet, and UParT QvG scores. This
+allows tagger response sculpting to be compared without committing to a
+single working point. The current NanoAOD reader has no legacy QGL branch, so
+that comparison requires a compatible input production or an optional branch
+extension. Heavy-topology and jet-muon-fraction response profiles provide the
+first separation of the low-pT b-jet feature into double-heavy production,
+semileptonic, and detector/selection components.
+
 ## Data tagging inference
 
 Data reco-category fractions do not uniquely determine every truth-to-reco

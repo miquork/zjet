@@ -19,6 +19,7 @@
 #include "TMatrixDSym.h"
 #include "TObjString.h"
 #include "TParameter.h"
+#include "TProfile.h"
 #include "TProfile3D.h"
 #include "TSystem.h"
 #include "TVectorD.h"
@@ -97,6 +98,8 @@ struct TruthGroup {
 
 struct PtRangeResult {
   FitResult responseFit;
+  FitResult responseFitRuSlope;
+  double ruSlope = std::numeric_limits<double>::quiet_NaN();
   FitResult fsrScaleFit;
   FitResult ueScaleFit;
   FitResult mnuScaleFit;
@@ -124,7 +127,8 @@ struct PtRangeResult {
   std::vector<ProfileSummary> mnuFsrRatio;
 
   PtRangeResult(int nReco, int nTruth)
-      : responseFit(nTruth), fsrScaleFit(nTruth), ueScaleFit(nTruth),
+      : responseFit(nTruth), responseFitRuSlope(nTruth),
+        fsrScaleFit(nTruth), ueScaleFit(nTruth),
         mnuScaleFit(nTruth), fnuScaleFit(nTruth), mnuFsrScaleFit(nTruth),
         dataTagResponse(nReco), mcRawTagResponse(nReco),
         mcCompositionCorrectedTagResponse(nReco), rawTagRatio(nReco),
@@ -263,6 +267,52 @@ ProfileSummary summarizeProfile(const TProfile3D *profile, int recoId,
   return result;
 }
 
+ProfileSummary summarizeProfile(const TProfile *profile, double minimumPt,
+                                double maximumPt) {
+  ProfileSummary result;
+  if (!profile) return result;
+  double weightedSum = 0.;
+  double numeratorVariance = 0.;
+  for (int bin=1; bin<=profile->GetNbinsX(); ++bin) {
+    if (!selectedPtBin(profile->GetXaxis(),bin,minimumPt,maximumPt)) continue;
+    const double entries = profile->GetBinEntries(bin);
+    const double value = profile->GetBinContent(bin);
+    const double error = profile->GetBinError(bin);
+    if (!std::isfinite(entries) || !std::isfinite(value) ||
+        std::fabs(entries)<1.e-15)
+      continue;
+    result.sumWeights += entries;
+    weightedSum += entries*value;
+    if (std::isfinite(error) && error>=0.)
+      numeratorVariance += entries*entries*error*error;
+  }
+  if (std::fabs(result.sumWeights)<1.e-12) return result;
+  result.mean = weightedSum/result.sumWeights;
+  result.error = std::sqrt(std::max(0.,numeratorVariance))/
+                 std::fabs(result.sumWeights);
+  result.valid = std::isfinite(result.mean) && std::isfinite(result.error);
+  return result;
+}
+
+double inclusiveRuSlope(TFile *file, const char *variant,
+                        double minimumPt, double maximumPt) {
+  if (!file) return std::numeric_limits<double>::quiet_NaN();
+  const std::string axis = std::string(variant)=="tc" ? "zmmjet" :
+                           (std::string(variant)=="pf" ? "jetpt" : "ptave");
+  const std::string directory = "truth_hdm/parallel/"+axis+"/";
+  const ProfileSummary product = summarizeProfile(dynamic_cast<TProfile*>(
+    file->Get((directory+"mpfu_reco_gen_product").c_str())),
+    minimumPt,maximumPt);
+  const ProfileSummary square = summarizeProfile(dynamic_cast<TProfile*>(
+    file->Get((directory+"mpfu_gen_squared").c_str())),
+    minimumPt,maximumPt);
+  if (!product.valid || !square.valid || std::fabs(square.mean)<1.e-12)
+    return std::numeric_limits<double>::quiet_NaN();
+  const double slope = product.mean/square.mean;
+  return std::isfinite(slope) && slope>0.05 && slope<2.0
+    ? slope : std::numeric_limits<double>::quiet_NaN();
+}
+
 ProfileSummary scaledSummary(ProfileSummary input, double scale) {
   if (!input.valid || !std::isfinite(scale)) return ProfileSummary();
   input.mean *= scale;
@@ -338,7 +388,8 @@ ProfileSummary readComponentAcrossReco(
 
 ProfileSummary componentHDMFallback(
   TFile *file, int recoId, const std::vector<int> &truthIds,
-  double minimumPt, double maximumPt, const char *variant="tc") {
+  double minimumPt, double maximumPt, const char *variant="tc",
+  double responseU=ZJetFlavorMatrix::responseU) {
   ProfileSummary result;
   if (!file) return result;
   ProfileSummary component[3];
@@ -354,7 +405,7 @@ ProfileSummary componentHDMFallback(
   const double mn = component[1].mean;
   const double mu = component[2].mean;
   const double denominator =
-    1.-mn/ZJetFlavorMatrix::responseN-mu/ZJetFlavorMatrix::responseU;
+    1.-mn/ZJetFlavorMatrix::responseN-mu/responseU;
   if (std::fabs(denominator)<1.e-9) return result;
   result.mean = (m0-mn-mu)/denominator;
   // This propagation omits component covariances. The merged component means
@@ -366,7 +417,7 @@ ProfileSummary componentHDMFallback(
     (-denominator+numerator/ZJetFlavorMatrix::responseN)/
     (denominator*denominator);
   const double dMu =
-    (-denominator+numerator/ZJetFlavorMatrix::responseU)/
+    (-denominator+numerator/responseU)/
                      (denominator*denominator);
   result.error = std::sqrt(
     dM0*dM0*component[0].error*component[0].error+
@@ -380,13 +431,14 @@ ProfileSummary componentHDMFallback(
 ProfileSummary readHDM(TFile *file, int recoId,
                        const std::vector<int> &truthIds,
                        double minimumPt, double maximumPt,
-                       const char *variant="tc") {
+                       const char *variant="tc",
+                       double responseU=ZJetFlavorMatrix::responseU) {
   // HDM is a nonlinear ratio.  Averaging an event-wise HDM profile is not the
   // same as constructing HDM from the merged component means, and individual
   // events can have a nearly singular denominator.  Always use the mergeable
   // m0/mn/mu component profiles here.
   return componentHDMFallback(
-    file,recoId,truthIds,minimumPt,maximumPt,variant);
+    file,recoId,truthIds,minimumPt,maximumPt,variant,responseU);
 }
 
 std::string jsonEscape(const std::string &input) {
@@ -926,6 +978,8 @@ void analyzeFlavorMatrix(
       }
     }
     if (!(rangeTotalMC>0.) || !(rangeTotalData>0.)) return rangeResult;
+    rangeResult.ruSlope = inclusiveRuSlope(
+      mcFile.get(),variant,lowPt,highPt);
 
     TVectorD rangeTruthPrior(nTruth);
     TVectorD rangeRecoFraction(nReco);
@@ -1074,6 +1128,61 @@ void analyzeFlavorMatrix(
     }
     rangeResult.responseFit = fitResponse(
       rangeDesign,rangeObserved,rangeErrors,responsePriorSigma);
+
+    // Diagnostic alternate HDM fit: derive one merge-safe zero-intercept
+    // effective R_u slope from truth-matched MC in this pT interval, then use
+    // that same response in the data and MC HDM definitions.  This is not a
+    // data-only calibration and is intentionally kept alongside, rather than
+    // replacing, the nominal R_u=0.92 result.
+    if (std::isfinite(rangeResult.ruSlope)) {
+      std::vector<ProfileSummary> slopeDataResponse(nReco);
+      std::vector<std::vector<ProfileSummary> > slopeMCResponse(
+        nReco,std::vector<ProfileSummary>(nTruth));
+      for (int reco=0; reco!=nReco; ++reco) {
+        slopeDataResponse[reco] = readHDM(
+          dataFile.get(),recoIds[reco],std::vector<int>{0},lowPt,highPt,
+          variant,rangeResult.ruSlope);
+        for (int flavor=0; flavor!=nTruth; ++flavor)
+          slopeMCResponse[reco][flavor] = readHDM(
+            mcFile.get(),recoIds[reco],truthGroups[flavor].sourceIds,
+            lowPt,highPt,variant,rangeResult.ruSlope);
+      }
+      for (int flavor=0; flavor!=nTruth; ++flavor) {
+        double numerator = 0.;
+        double denominator = 0.;
+        for (int reco=0; reco!=nReco; ++reco) {
+          if (!slopeMCResponse[reco][flavor].valid) continue;
+          numerator += rangeMC(reco,flavor)*
+                       slopeMCResponse[reco][flavor].mean;
+          denominator += rangeMC(reco,flavor);
+        }
+        if (!(denominator>0.)) continue;
+        const double fallback = numerator/denominator;
+        for (int reco=0; reco!=nReco; ++reco)
+          if (!slopeMCResponse[reco][flavor].valid) {
+            slopeMCResponse[reco][flavor].valid = true;
+            slopeMCResponse[reco][flavor].mean = fallback;
+            slopeMCResponse[reco][flavor].error = 0.;
+          }
+      }
+      std::vector<int> slopeFitReco;
+      for (int reco=0; reco!=nReco; ++reco)
+        if (rangeRecoFraction[reco]>0. && slopeDataResponse[reco].valid)
+          slopeFitReco.push_back(reco);
+      TMatrixD slopeDesign(slopeFitReco.size(),nTruth);
+      TVectorD slopeObserved(slopeFitReco.size());
+      TVectorD slopeErrors(slopeFitReco.size());
+      for (int row=0; row!=static_cast<int>(slopeFitReco.size()); ++row) {
+        const int reco = slopeFitReco[row];
+        slopeObserved[row] = slopeDataResponse[reco].mean;
+        slopeErrors[row] = slopeDataResponse[reco].error;
+        for (int flavor=0; flavor!=nTruth; ++flavor)
+          slopeDesign(row,flavor) = rangeComposition(reco,flavor)*
+            slopeMCResponse[reco][flavor].mean;
+      }
+      rangeResult.responseFitRuSlope = fitResponse(
+        slopeDesign,slopeObserved,slopeErrors,responsePriorSigma);
+    }
 
     auto fitRecoilFraction = [&](const char *component, double scale,
                                  FitResult &componentFit,
@@ -1370,13 +1479,31 @@ void analyzeFlavorMatrix(
   for (const auto &variantEntry : variantPtFits) {
     const std::string &variant = variantEntry.first;
     const std::vector<PtRangeResult> &fits = variantEntry.second;
+    TGraphErrors ruSlopeGraph;
+    ruSlopeGraph.SetName(Form("g_ru_slope_used_vs_pt_%s",variant.c_str()));
+    ruSlopeGraph.SetTitle(
+      ";reference p_{T} (GeV);MC-derived effective R_{u} slope");
+    for (size_t bin=0; bin<fits.size(); ++bin) {
+      if (!std::isfinite(fits[bin].ruSlope)) continue;
+      const double low = ptFitEdges[bin];
+      const double high = ptFitEdges[bin+1];
+      const int point = ruSlopeGraph.GetN();
+      ruSlopeGraph.SetPoint(point,std::sqrt(low*high),fits[bin].ruSlope);
+      ruSlopeGraph.SetPointError(point,0.5*(high-low),0.);
+    }
+    ruSlopeGraph.Write();
     for (int flavor=0; flavor!=nTruth; ++flavor) {
       TGraphErrors *graph = new TGraphErrors();
+      TGraphErrors *slopeGraph = new TGraphErrors();
       graph->SetName(Form("g_response_residual_vs_pt_%s_%s",
                           variant.c_str(),truthGroups[flavor].name));
+      slopeGraph->SetName(Form(
+        "g_response_residual_ru_slope_vs_pt_%s_%s",
+        variant.c_str(),truthGroups[flavor].name));
       graph->SetTitle(Form(
         ";reference p_{T} (GeV);R^{data}_{%s}/R^{MC}_{%s}",
         truthGroups[flavor].name,truthGroups[flavor].name));
+      slopeGraph->SetTitle(graph->GetTitle());
       for (size_t bin=0; bin<fits.size(); ++bin) {
         // Keep the graph quantitative: rank-deficient or nearly singular
         // bins remain in the TSV diagnostics but are not drawn.
@@ -1392,8 +1519,21 @@ void analyzeFlavorMatrix(
         const int point = graph->GetN();
         graph->SetPoint(point,std::sqrt(low*high),ptFit.residual[flavor]);
         graph->SetPointError(point,0.5*(high-low),error);
+        const FitResult &slopeFit = fits[bin].responseFitRuSlope;
+        if (slopeFit.solved && slopeFit.rank>=nTruth &&
+            std::isfinite(slopeFit.nonzeroCondition) &&
+            slopeFit.nonzeroCondition<=100.) {
+          const double slopeError = slopeFit.covariance(flavor,flavor)>0.
+            ? std::sqrt(slopeFit.covariance(flavor,flavor)) : 0.;
+          const int slopePoint = slopeGraph->GetN();
+          slopeGraph->SetPoint(
+            slopePoint,std::sqrt(low*high),slopeFit.residual[flavor]);
+          slopeGraph->SetPointError(
+            slopePoint,0.5*(high-low),slopeError);
+        }
       }
       graph->Write();
+      slopeGraph->Write();
       if (variant=="tc")
         graph->Write(Form("g_response_residual_vs_pt_%s",
                           truthGroups[flavor].name));
@@ -1571,6 +1711,49 @@ void analyzeFlavorMatrix(
         }
       }
 
+  // Data-accessible R_u closure slope.  This uses
+  // f_u^closure=1-m_2/R_2-m_n/R_n with R_2=R_n=1 and therefore remains a
+  // conditional estimator.  The MC inclusive and flavor-resolved graphs
+  // expose the leading-jet-resolution and composition bias directly.
+  for (const std::string variant : {"ab","ad","tc","pf"}) {
+    TGraphErrors dataClosure;
+    TGraphErrors mcClosure;
+    dataClosure.SetName(Form(
+      "g_ru_closure_slope_data_vs_pt_%s",variant.c_str()));
+    mcClosure.SetName(Form(
+      "g_ru_closure_slope_mc_vs_pt_%s",variant.c_str()));
+    std::vector<TGraphErrors> mcFlavorClosure(nTruth);
+    for (int flavor=0; flavor!=nTruth; ++flavor)
+      mcFlavorClosure[flavor].SetName(Form(
+        "g_ru_closure_slope_mc_vs_pt_%s_%s",variant.c_str(),
+        truthGroups[flavor].name));
+    for (size_t bin=0; bin+1<ptFitEdges.size(); ++bin) {
+      const double low = ptFitEdges[bin];
+      const double high = ptFitEdges[bin+1];
+      const double x = std::sqrt(low*high);
+      auto appendClosure = [&](TGraphErrors &graph, TFile *file,
+                               const std::vector<int> &truthIds) {
+        const ProfileSummary product = readComponentAcrossReco(
+          file,"mufuclosure",variant.c_str(),truthIds,low,high);
+        const ProfileSummary square = readComponentAcrossReco(
+          file,"fuclosure2",variant.c_str(),truthIds,low,high);
+        const ProfileSummary slope = ratioSummary(product,square);
+        if (!slope.valid) return;
+        const int point = graph.GetN();
+        graph.SetPoint(point,x,slope.mean);
+        graph.SetPointError(point,0.5*(high-low),slope.error);
+      };
+      appendClosure(dataClosure,dataFile.get(),std::vector<int>{0});
+      appendClosure(mcClosure,mcFile.get(),allTruthSourceIds);
+      for (int flavor=0; flavor!=nTruth; ++flavor)
+        appendClosure(mcFlavorClosure[flavor],mcFile.get(),
+                      truthGroups[flavor].sourceIds);
+    }
+    dataClosure.Write();
+    mcClosure.Write();
+    for (TGraphErrors &graph : mcFlavorClosure) graph.Write();
+  }
+
   diagnostics->cd();
   TH1D *hSingular = new TH1D(
     "h1_singular_values",";SVD mode;Singular value",
@@ -1635,7 +1818,11 @@ void analyzeFlavorMatrix(
     "Response fit assumes one multiplicative data/MC residual per true "
     "flavor, common to all reconstructed tags. HDM is constructed after "
     "merging from the m0, mn and mu profile means with Rn=1 and Ru=0.92; "
-    "the event-wise p3hdm profile is deliberately not used. Flavor response "
+    "the event-wise p3hdm profile is deliberately not used. A separate "
+    "diagnostic rebuild uses the zero-intercept truth-matched MC Ru slope in "
+    "each pT interval for both data and MC; it is not a data-only "
+    "calibration. New inputs may also contain a conditional data closure "
+    "proxy with R2=Rn=1 and its MC truth-bias control. Flavor response "
     "uses the pure parallel barrel population; the transverse sideband is "
     "retained elsewhere as a pileup control. The fit uses "
     "cell-specific MC responses and a Gaussian prior centered at one. "
@@ -1735,6 +1922,30 @@ void analyzeFlavorMatrix(
           << ptFit.residual[flavor] << '\t' << error << '\t'
           << (ptFit.solved ? 1 : 0) << '\t' << ptFit.rank << '\t'
           << ptFit.nonzeroCondition << '\n';
+      }
+
+  const std::string ruImpactTable =
+    std::string(outputDirectory)+"/response_ru_slope_impact.tsv";
+  std::ofstream ruImpactStream(ruImpactTable.c_str());
+  ruImpactStream << std::setprecision(10)
+    << "pt_binning\tpt_low\tpt_high\tru_slope_mc\ttrue_flavor"
+       "\tnominal_data_over_mc\tslope_data_over_mc\tshift_per_mille"
+       "\tslope_fit_solved\trank\tcondition\n";
+  for (const auto &variantEntry : variantPtFits)
+    for (size_t ptBin=0; ptBin<variantEntry.second.size(); ++ptBin)
+      for (int flavor=0; flavor!=nTruth; ++flavor) {
+        const PtRangeResult &range = variantEntry.second[ptBin];
+        const FitResult &alternate = range.responseFitRuSlope;
+        ruImpactStream
+          << variantEntry.first << '\t'
+          << ptFitEdges[ptBin] << '\t' << ptFitEdges[ptBin+1] << '\t'
+          << range.ruSlope << '\t' << truthGroups[flavor].name << '\t'
+          << range.responseFit.residual[flavor] << '\t'
+          << alternate.residual[flavor] << '\t'
+          << 1000.*(alternate.residual[flavor]-
+                    range.responseFit.residual[flavor]) << '\t'
+          << (alternate.solved ? 1 : 0) << '\t' << alternate.rank << '\t'
+          << alternate.nonzeroCondition << '\n';
       }
 
   const std::string tagResponseTable =

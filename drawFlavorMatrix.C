@@ -25,6 +25,7 @@
 #include "TSystem.h"
 
 #include "tdrstyle_mod22.C"
+#include "FlavorMatrixTools.h"
 
 #include <algorithm>
 #include <cmath>
@@ -46,6 +47,13 @@ struct FlavorStyle {
   const char *name;
   const char *fileName;
   int color;
+};
+
+struct DrawProfileSummary {
+  bool valid = false;
+  double mean = 0.;
+  double error = 0.;
+  double weight = 0.;
 };
 
 // ID 0 is the truth-unavailable bookkeeping bin (and the only data truth
@@ -212,6 +220,125 @@ void drawScoreDistributions(TFile &mc, const std::string &outputDirectory) {
     gPad->RedrawAxis();
     saveBoth(canvas.get(),outputDirectory,"tagger_"+score+"_trueflavor");
   }
+}
+
+DrawProfileSummary summarizeTaggerScore(TProfile3D *profile, int scoreBin,
+                                        const std::vector<int> &truthIds,
+                                        double minimumPt=30.,
+                                        double maximumPt=600.) {
+  DrawProfileSummary result;
+  if (!profile) return result;
+  double numerator = 0.;
+  double numeratorVariance = 0.;
+  for (int ptBin=1; ptBin<=profile->GetNbinsX(); ++ptBin) {
+    if (profile->GetXaxis()->GetBinUpEdge(ptBin)<=minimumPt ||
+        profile->GetXaxis()->GetBinLowEdge(ptBin)>=maximumPt) continue;
+    for (int truthId : truthIds) {
+      const int truthBin = profile->GetZaxis()->FindFixBin(truthId);
+      const int global = profile->GetBin(ptBin,scoreBin,truthBin);
+      const double weight = profile->GetBinEntries(global);
+      const double value = profile->GetBinContent(global);
+      const double error = profile->GetBinError(global);
+      if (!std::isfinite(weight) || !std::isfinite(value) ||
+          std::fabs(weight)<1.e-12) continue;
+      result.weight += weight;
+      numerator += weight*value;
+      if (std::isfinite(error))
+        numeratorVariance += std::pow(weight*error,2);
+    }
+  }
+  if (std::fabs(result.weight)<1.e-9) return result;
+  result.mean = numerator/result.weight;
+  result.error = std::sqrt(std::max(0.,numeratorVariance)) /
+                 std::fabs(result.weight);
+  result.valid = std::isfinite(result.mean) && std::isfinite(result.error);
+  return result;
+}
+
+DrawProfileSummary taggerScoreHDM(TFile &file, const std::string &tagger,
+                                  int scoreBin,
+                                  const std::vector<int> &truthIds) {
+  const std::string base = "FlavorMatrix/taggerAudit/p3";
+  DrawProfileSummary m0 = summarizeTaggerScore(optionalObject<TProfile3D>(
+    &file,(base+"m0_"+tagger+"qvg").c_str()),scoreBin,truthIds);
+  DrawProfileSummary mn = summarizeTaggerScore(optionalObject<TProfile3D>(
+    &file,(base+"mn_"+tagger+"qvg").c_str()),scoreBin,truthIds);
+  DrawProfileSummary mu = summarizeTaggerScore(optionalObject<TProfile3D>(
+    &file,(base+"mu_"+tagger+"qvg").c_str()),scoreBin,truthIds);
+  DrawProfileSummary result;
+  if (!m0.valid || !mn.valid || !mu.valid) return result;
+  const double numerator = m0.mean-mn.mean-mu.mean;
+  const double denominator = 1.-mn.mean/ZJetFlavorMatrix::responseN-
+                                  mu.mean/ZJetFlavorMatrix::responseU;
+  if (std::fabs(denominator)<1.e-9) return result;
+  result.mean = numerator/denominator;
+  const double d0 = 1./denominator;
+  const double dn = (-denominator+numerator/ZJetFlavorMatrix::responseN)/
+                    (denominator*denominator);
+  const double du = (-denominator+numerator/ZJetFlavorMatrix::responseU)/
+                    (denominator*denominator);
+  result.error = std::sqrt(std::pow(d0*m0.error,2)+std::pow(dn*mn.error,2)+
+                           std::pow(du*mu.error,2));
+  result.weight = m0.weight;
+  result.valid = std::isfinite(result.mean) && std::isfinite(result.error);
+  return result;
+}
+
+void drawTaggerResponseAudit(TFile &mc, TFile &data,
+                             const std::string &outputDirectory) {
+  struct Tagger { const char *name; const char *label; int color; int marker; };
+  const Tagger taggers[] = {
+    {"deepjet","DeepJet QvG",kGreen+2,kFullTriangleUp},
+    {"pnet","ParticleNet QvG",kBlue+1,kFullCircle},
+    {"upart","UParT QvG",kRed+1,kFullSquare},
+  };
+  std::vector<std::unique_ptr<TGraphErrors> > graphs;
+  for (const Tagger &tagger : taggers) {
+    TProfile3D *axis = optionalObject<TProfile3D>(
+      &mc,(std::string("FlavorMatrix/taggerAudit/p3m0_")+tagger.name+
+           "qvg").c_str());
+    std::unique_ptr<TGraphErrors> graph(new TGraphErrors());
+    graph->SetName((std::string("plot_qvg_response_")+tagger.name).c_str());
+    if (axis)
+      for (int bin=1; bin<=axis->GetNbinsY(); ++bin) {
+        const DrawProfileSummary dataHDM = taggerScoreHDM(
+          data,tagger.name,bin,std::vector<int>{0});
+        const DrawProfileSummary mcHDM = taggerScoreHDM(
+          mc,tagger.name,bin,std::vector<int>{0,1,2,3,4,5,6});
+        if (!dataHDM.valid || !mcHDM.valid || std::fabs(mcHDM.mean)<1.e-9 ||
+            std::fabs(dataHDM.weight)<25. || std::fabs(mcHDM.weight)<25.)
+          continue;
+        const int point = graph->GetN();
+        graph->SetPoint(point,axis->GetYaxis()->GetBinCenter(bin),
+                        dataHDM.mean/mcHDM.mean);
+        graph->SetPointError(point,0.5*axis->GetYaxis()->GetBinWidth(bin),
+          std::fabs(std::hypot(dataHDM.error/mcHDM.mean,
+            dataHDM.mean*mcHDM.error/(mcHDM.mean*mcHDM.mean))));
+      }
+    graph->SetLineColor(tagger.color); graph->SetMarkerColor(tagger.color);
+    graph->SetMarkerStyle(tagger.marker); graph->SetLineWidth(2);
+    graphs.push_back(std::move(graph));
+  }
+  bool any = false;
+  for (const auto &graph : graphs) any = any || (graph && graph->GetN()>0);
+  if (!any) return;
+  configureFlavorStyle("Run2024I + Summer24 DY");
+  TH1D frame("frame_qvg_response_audit","",100,0.,1.);
+  frame.SetDirectory(nullptr); frame.SetMinimum(0.94); frame.SetMaximum(1.06);
+  frame.GetXaxis()->SetTitle("QvG score");
+  frame.GetYaxis()->SetTitle("inclusive HDM response data / MC");
+  std::unique_ptr<TCanvas> canvas(tdrCanvas(
+    "c_qvg_response_audit",&frame,8,11,kSquare));
+  TLine unity(0.,1.,1.,1.); unity.SetLineStyle(kDashed);
+  unity.SetLineColor(kGray+2); unity.DrawClone();
+  for (auto &graph : graphs) if (graph) graph->Draw("PZL SAME");
+  TLegend legend(0.54,0.70,0.89,0.88);
+  legend.SetBorderSize(0); legend.SetFillStyle(0);
+  for (size_t index=0; index<graphs.size(); ++index)
+    if (graphs[index] && graphs[index]->GetN()>0)
+      legend.AddEntry(graphs[index].get(),taggers[index].label,"pl");
+  legend.Draw(); gPad->RedrawAxis();
+  saveBoth(canvas.get(),outputDirectory,"qvg_response_sculpting");
 }
 
 struct PairSpec {
@@ -1478,16 +1605,25 @@ void drawNuRunning(TFile &analysis, const std::string &component,
                  "_vs_pt_tc_"+curve.flavor).c_str());
     std::unique_ptr<TGraphErrors> graph(new TGraphErrors());
     if (source && source->GetN()>0) {
-      double x0 = 0.; double y0 = 0.;
-      source->GetPoint(0,x0,y0);
-      if (std::fabs(y0)>1.e-12)
+      const double mZ = 91.1876;
+      double reference = 0.;
+      double closest = std::numeric_limits<double>::infinity();
+      for (int point=0; point<source->GetN(); ++point) {
+        double x = 0.; double y = 0.;
+        source->GetPoint(point,x,y);
+        if (std::isfinite(y) && std::fabs(x-mZ)<closest) {
+          closest = std::fabs(x-mZ);
+          reference = y;
+        }
+      }
+      if (std::fabs(reference)>1.e-12)
         for (int point=0; point<source->GetN(); ++point) {
           double x = 0.; double y = 0.;
           source->GetPoint(point,x,y);
           const int target = graph->GetN();
-          graph->SetPoint(target,x,y/y0);
+          graph->SetPoint(target,x,y/reference);
           graph->SetPointError(target,source->GetErrorX(point),
-            std::fabs(source->GetErrorY(point)/y0));
+            std::fabs(source->GetErrorY(point)/reference));
         }
     }
     graph->SetLineColor(curve.color);
@@ -1502,14 +1638,14 @@ void drawNuRunning(TFile &analysis, const std::string &component,
   frame.SetMinimum(0.45);
   frame.SetMaximum(1.35);
   frame.GetXaxis()->SetTitle("p_{T,Z} (GeV)");
-  frame.GetYaxis()->SetTitle(Form("(%s)(p_{T}) / first bin",axisLabel));
+  frame.GetYaxis()->SetTitle(Form("(%s)(p_{T}) / value near m_{Z}",axisLabel));
   frame.GetXaxis()->SetMoreLogLabels();
   frame.GetXaxis()->SetNoExponent();
   std::unique_ptr<TCanvas> canvas(tdrCanvas(
     ("c_"+component+"_running").c_str(),&frame,8,11,kSquare));
   canvas->SetLogx();
   for (auto &graph : graphs) if (graph) graph->Draw("PZL SAME");
-  // One-loop alpha_s shape, normalized at the geometric center of 30--40 GeV.
+  // One-loop alpha_s shape, normalized exactly at mZ.
   TGraph alphaRunning;
   const double alphaMZ = 0.118;
   const double mZ = 91.1876;
@@ -1517,10 +1653,9 @@ void drawNuRunning(TFile &analysis, const std::string &component,
   auto alphaS = [&](double q) {
     return alphaMZ/(1.+alphaMZ*beta0/(2.*std::acos(-1.))*std::log(q/mZ));
   };
-  const double q0 = std::sqrt(30.*40.);
   for (int point=0; point<=100; ++point) {
     const double q = 30.*std::pow(600./30.,point/100.);
-    alphaRunning.SetPoint(point,q,alphaS(q)/alphaS(q0));
+    alphaRunning.SetPoint(point,q,alphaS(q)/alphaS(mZ));
   }
   alphaRunning.SetLineColor(kGray+2);
   alphaRunning.SetLineStyle(kDashed);
@@ -1535,6 +1670,105 @@ void drawNuRunning(TFile &analysis, const std::string &component,
   legend.Draw();
   gPad->RedrawAxis();
   saveBoth(canvas.get(),outputDirectory,component+"_alphaS_running");
+}
+
+void drawPerturbativeRadiationBenchmarks(
+    const std::string &outputDirectory) {
+  configureFlavorStyle("13.6 TeV theory benchmark");
+  const double alphaMZ = 0.118;
+  const double mZ = 91.1876;
+  const double beta0 = 11.-2.*5./3.;
+  auto alphaS = [&](double q) {
+    return alphaMZ/(1.+alphaMZ*beta0/(2.*std::acos(-1.))*std::log(q/mZ));
+  };
+  auto gamma0 = [&](double q) {
+    return std::sqrt(2.*3.*alphaS(q)/std::acos(-1.));
+  };
+  // nf=5 coefficients of the 3NLO average-multiplicity expansion from
+  // Capella et al., arXiv:hep-ph/9910226, Table 1.  This is deliberately a
+  // cascade benchmark, not a perturbative prediction for the HDM recoil sum.
+  const double r1 = 0.198;
+  const double r2 = 0.510;
+  const double r3 = -0.041;
+  TGraph nlo;
+  TGraph nnlo;
+  TGraph n3lo;
+  for (int point=0; point<=100; ++point) {
+    const double q = 30.*std::pow(600./30.,point/100.);
+    const double gamma = gamma0(q);
+    nlo.SetPoint(point,q,2.25*(1.-r1*gamma));
+    nnlo.SetPoint(point,q,2.25*(1.-r1*gamma-r2*gamma*gamma));
+    n3lo.SetPoint(point,q,2.25*(1.-r1*gamma-r2*gamma*gamma-
+                               r3*gamma*gamma*gamma));
+  }
+  TH1D frame("frame_color_cascade","",100,30.,600.);
+  frame.SetDirectory(nullptr);
+  frame.SetMinimum(1.60);
+  frame.SetMaximum(2.35);
+  frame.GetXaxis()->SetTitle("Q (GeV)");
+  frame.GetYaxis()->SetTitle("effective gluon / quark cascade ratio");
+  frame.GetXaxis()->SetMoreLogLabels();
+  frame.GetXaxis()->SetNoExponent();
+  std::unique_ptr<TCanvas> canvas(tdrCanvas(
+    "c_color_cascade",&frame,8,11,kSquare));
+  canvas->SetLogx();
+  TLine leading(30.,2.25,600.,2.25);
+  leading.SetLineColor(kBlack); leading.SetLineStyle(kDashed);
+  leading.DrawClone();
+  nlo.SetLineColor(kBlue+1); nlo.SetLineWidth(3); nlo.Draw("L SAME");
+  nnlo.SetLineColor(kRed+1); nnlo.SetLineWidth(3); nnlo.Draw("L SAME");
+  n3lo.SetLineColor(kGreen+2); n3lo.SetLineWidth(3);
+  n3lo.SetLineStyle(kDashDotted); n3lo.Draw("L SAME");
+  TLegend legend(0.45,0.64,0.89,0.88);
+  legend.SetBorderSize(0); legend.SetFillStyle(0);
+  legend.AddEntry(&leading,"soft one-emission C_{A}/C_{F}","l");
+  legend.AddEntry(&nlo,"multiplicity-like O(#gamma_{0})","l");
+  legend.AddEntry(&nnlo,"multiplicity-like O(#gamma_{0}^{2})","l");
+  legend.AddEntry(&n3lo,"multiplicity-like O(#gamma_{0}^{3})","l");
+  legend.Draw();
+  gPad->RedrawAxis();
+  saveBoth(canvas.get(),outputDirectory,"color_cascade_benchmark");
+
+  // Energy-weighted one-emission estimate outside an anti-kT R=0.4 cone.
+  // The z integrals include q->qg, g->gg, and n_f=5 g->qqbar splittings,
+  // weighted by min(z,1-z).  It is a benchmark for, not an equality to, fnu.
+  const double iq = 1.34839248;
+  const double ig = 3.17971642;
+  const double radius = 0.4;
+  const double thetaMax = 1.0;
+  const double angularLog = std::log(thetaMax*thetaMax/(radius*radius));
+  TGraph quark;
+  TGraph gluon;
+  for (int point=0; point<=100; ++point) {
+    const double q = 30.*std::pow(600./30.,point/100.);
+    const double common = alphaS(q)/(2.*std::acos(-1.))*angularLog;
+    quark.SetPoint(point,q,common*iq);
+    gluon.SetPoint(point,q,common*ig);
+  }
+  TH1D lossFrame("frame_out_of_cone","",100,30.,600.);
+  lossFrame.SetDirectory(nullptr);
+  lossFrame.SetMinimum(0.);
+  lossFrame.SetMaximum(0.16);
+  lossFrame.GetXaxis()->SetTitle("Q (GeV)");
+  lossFrame.GetYaxis()->SetTitle("LO mean out-of-cone momentum fraction");
+  lossFrame.GetXaxis()->SetMoreLogLabels();
+  lossFrame.GetXaxis()->SetNoExponent();
+  std::unique_ptr<TCanvas> lossCanvas(tdrCanvas(
+    "c_out_of_cone",&lossFrame,8,11,kSquare));
+  lossCanvas->SetLogx();
+  quark.SetLineColor(kBlue+1); quark.SetLineWidth(3); quark.Draw("L SAME");
+  gluon.SetLineColor(kMagenta+1); gluon.SetLineWidth(3);
+  gluon.Draw("L SAME");
+  TLegend lossLegend(0.48,0.72,0.89,0.88);
+  lossLegend.SetBorderSize(0); lossLegend.SetFillStyle(0);
+  lossLegend.AddEntry(&quark,"q#rightarrow qg","l");
+  lossLegend.AddEntry(&gluon,"g#rightarrow gg,q#bar{q}","l");
+  lossLegend.Draw();
+  TLatex note;
+  note.SetNDC(); note.SetTextSize(0.030);
+  note.DrawLatex(0.20,0.20,"R=0.4, #theta_{max}=1, energy-weighted toy LO");
+  gPad->RedrawAxis();
+  saveBoth(lossCanvas.get(),outputDirectory,"lo_out_of_cone_benchmark");
 }
 
 std::unique_ptr<TGraphErrors> graphFromProfileRatio(
@@ -1647,6 +1881,46 @@ void drawFlavorEffectiveResponse(TFile &analysis, const std::string &component,
   gPad->RedrawAxis();
   saveBoth(canvas.get(),outputDirectory,
            "effective_r"+component+"_by_flavor_mc");
+}
+
+void drawClosureRuComparison(TFile &analysis,
+                             const std::string &outputDirectory) {
+  struct Entry { const char *path; const char *label; int color; int marker; };
+  const Entry entries[] = {
+    {"response/g_ru_slope_used_vs_pt_tc","MC true f_{u}",kBlack,kFullCircle},
+    {"response/g_ru_closure_slope_mc_vs_pt_tc","MC closure proxy",kBlue+1,kOpenSquare},
+    {"response/g_ru_closure_slope_data_vs_pt_tc","data closure proxy",kRed+1,kFullTriangleUp},
+  };
+  std::vector<std::unique_ptr<TGraphErrors> > graphs;
+  for (const Entry &entry : entries) {
+    TGraphErrors *source = optionalObject<TGraphErrors>(&analysis,entry.path);
+    if (!source) { graphs.emplace_back(); continue; }
+    std::unique_ptr<TGraphErrors> graph(dynamic_cast<TGraphErrors*>(
+      source->Clone((std::string("plot_")+entry.path).c_str())));
+    graph->SetLineColor(entry.color); graph->SetMarkerColor(entry.color);
+    graph->SetMarkerStyle(entry.marker); graph->SetLineWidth(2);
+    graphs.push_back(std::move(graph));
+  }
+  bool any = false;
+  for (const auto &graph : graphs) any = any || (graph && graph->GetN()>0);
+  if (!any) return;
+  configureFlavorStyle("Run2024I + Summer24 DY");
+  TH1D frame("frame_ru_closure","",100,30.,600.);
+  frame.SetDirectory(nullptr); frame.SetMinimum(-0.1); frame.SetMaximum(1.1);
+  frame.GetXaxis()->SetTitle("p_{T,Z} (GeV)");
+  frame.GetYaxis()->SetTitle("effective R_{u} slope");
+  frame.GetXaxis()->SetMoreLogLabels(); frame.GetXaxis()->SetNoExponent();
+  std::unique_ptr<TCanvas> canvas(tdrCanvas(
+    "c_ru_closure",&frame,8,11,kSquare));
+  canvas->SetLogx();
+  for (auto &graph : graphs) if (graph) graph->Draw("PZL SAME");
+  TLegend legend(0.48,0.69,0.89,0.88);
+  legend.SetBorderSize(0); legend.SetFillStyle(0);
+  for (size_t index=0; index<graphs.size(); ++index)
+    if (graphs[index] && graphs[index]->GetN()>0)
+      legend.AddEntry(graphs[index].get(),entries[index].label,"pl");
+  legend.Draw(); gPad->RedrawAxis();
+  saveBoth(canvas.get(),outputDirectory,"effective_ru_data_closure");
 }
 
 void drawOldFlavorComparison(TFile &analysis, const char *oldFileName,
@@ -1963,6 +2237,96 @@ void drawResponseResidualVsPt(TFile &analysis,
            "flavor_response_residual_vs_pt");
 }
 
+void drawRuSlopeResponseImpact(TFile &analysis,
+                               const std::string &outputDirectory) {
+  std::vector<std::unique_ptr<TGraphErrors> > shifts;
+  for (const PtGraphStyle &style : kPtGraphStyles) {
+    TGraphErrors *nominal = optionalObject<TGraphErrors>(
+      &analysis,(std::string("response/g_response_residual_vs_pt_tc_")+
+                 style.name).c_str());
+    TGraphErrors *alternate = optionalObject<TGraphErrors>(
+      &analysis,(std::string(
+        "response/g_response_residual_ru_slope_vs_pt_tc_")+
+                 style.name).c_str());
+    std::unique_ptr<TGraphErrors> shift(new TGraphErrors());
+    shift->SetName((std::string("plot_ru_slope_shift_")+style.name).c_str());
+    if (nominal && alternate)
+      for (int first=0; first<alternate->GetN(); ++first) {
+        double x = 0.; double varied = 0.;
+        alternate->GetPoint(first,x,varied);
+        for (int second=0; second<nominal->GetN(); ++second) {
+          double xn = 0.; double central = 0.;
+          nominal->GetPoint(second,xn,central);
+          if (std::fabs(x-xn)>=1.e-6*std::max(1.,std::fabs(x))) continue;
+          const int point = shift->GetN();
+          shift->SetPoint(point,x,1000.*(varied-central));
+          shift->SetPointError(point,alternate->GetErrorX(first),0.);
+          break;
+        }
+      }
+    shift->SetLineColor(style.color);
+    shift->SetMarkerColor(style.color);
+    shift->SetMarkerStyle(style.marker);
+    shift->SetLineWidth(2);
+    shifts.push_back(std::move(shift));
+  }
+  bool any = false;
+  double extent = 1.;
+  for (const auto &shift : shifts)
+    if (shift && shift->GetN()>0) {
+      any = true;
+      for (int point=0; point<shift->GetN(); ++point) {
+        double x = 0.; double y = 0.; shift->GetPoint(point,x,y);
+        if (std::isfinite(y)) extent = std::max(extent,std::fabs(y));
+      }
+    }
+  if (!any) return;
+  extent = std::min(100.,1.25*extent);
+  configureFlavorStyle("Run2024I + Summer24 DY");
+  TH1D frame("frame_ru_slope_shift","",100,30.,600.);
+  frame.SetDirectory(nullptr);
+  frame.SetMinimum(-extent); frame.SetMaximum(extent);
+  frame.GetXaxis()->SetTitle("p_{T,Z} (GeV)");
+  frame.GetYaxis()->SetTitle(
+    "10^{3} #times [k_{f}(R_{u}^{slope})-k_{f}(R_{u}=0.92)]");
+  frame.GetXaxis()->SetMoreLogLabels(); frame.GetXaxis()->SetNoExponent();
+  std::unique_ptr<TCanvas> canvas(tdrCanvas(
+    "c_ru_slope_shift",&frame,8,11,kSquare));
+  canvas->SetLogx();
+  TLine zero(30.,0.,600.,0.); zero.SetLineStyle(kDashed);
+  zero.SetLineColor(kGray+2); zero.DrawClone();
+  for (auto &shift : shifts) if (shift) shift->Draw("PZL SAME");
+  TLegend legend(0.58,0.72,0.89,0.88);
+  legend.SetBorderSize(0); legend.SetFillStyle(0); legend.SetNColumns(2);
+  for (size_t index=0; index<shifts.size(); ++index)
+    if (shifts[index] && shifts[index]->GetN()>0)
+      legend.AddEntry(shifts[index].get(),kPtGraphStyles[index].label,"pl");
+  legend.Draw();
+  gPad->RedrawAxis();
+  saveBoth(canvas.get(),outputDirectory,"response_ru_slope_impact");
+
+  TGraphErrors *source = optionalObject<TGraphErrors>(
+    &analysis,"response/g_ru_slope_used_vs_pt_tc");
+  if (!source || source->GetN()==0) return;
+  std::unique_ptr<TGraphErrors> ru(dynamic_cast<TGraphErrors*>(
+    source->Clone("plot_ru_slope_used")));
+  configureFlavorStyle("Summer24 DY");
+  TH1D ruFrame("frame_ru_slope_used","",100,30.,600.);
+  ruFrame.SetDirectory(nullptr); ruFrame.SetMinimum(0.2); ruFrame.SetMaximum(1.1);
+  ruFrame.GetXaxis()->SetTitle("p_{T,Z} (GeV)");
+  ruFrame.GetYaxis()->SetTitle("R_{u}^{slope} used in alternate HDM");
+  ruFrame.GetXaxis()->SetMoreLogLabels(); ruFrame.GetXaxis()->SetNoExponent();
+  std::unique_ptr<TCanvas> ruCanvas(tdrCanvas(
+    "c_ru_slope_used",&ruFrame,8,11,kSquare));
+  ruCanvas->SetLogx();
+  TLine nominal(30.,0.92,600.,0.92); nominal.SetLineStyle(kDashed);
+  nominal.SetLineColor(kGray+2); nominal.DrawClone();
+  ru->SetMarkerStyle(kFullCircle); ru->SetMarkerColor(kRed+1);
+  ru->SetLineColor(kRed+1); ru->Draw("PZL SAME");
+  gPad->RedrawAxis();
+  saveBoth(ruCanvas.get(),outputDirectory,"ru_slope_used_in_hdm");
+}
+
 void drawOptionalAnalysis(TFile &analysis,
                           const std::string &outputDirectory) {
   drawAnalysisMatrix(analysis,"tagging/h2_efficiency_mc",
@@ -1994,6 +2358,7 @@ void drawOptionalAnalysis(TFile &analysis,
     0.97,1.03,outputDirectory,true);
   drawResponseResidual(analysis,outputDirectory);
   drawResponseResidualVsPt(analysis,outputDirectory);
+  drawRuSlopeResponseImpact(analysis,outputDirectory);
   drawTagResponseRatio(analysis,false,outputDirectory);
   drawTagResponseRatio(analysis,true,outputDirectory);
   drawRecoilFraction(analysis,"fsr",false,outputDirectory);
@@ -2012,6 +2377,7 @@ void drawOptionalAnalysis(TFile &analysis,
   drawNuRunning(analysis,"fnu","f_{n}+f_{u}",outputDirectory);
   drawFlavorEffectiveResponse(analysis,"n",outputDirectory);
   drawFlavorEffectiveResponse(analysis,"u",outputDirectory);
+  drawClosureRuComparison(analysis,outputDirectory);
   for (const PtGraphStyle &style : kPtGraphStyles)
     drawResponseBinningComparison(analysis,style,outputDirectory);
   for (const PtGraphStyle &style : kPtGraphStyles)
@@ -2053,6 +2419,8 @@ void drawFlavorMatrix(
   drawFlavorCubes(*mc,outputDirectory);
   drawQvgWorkingPointScan(*mc,outputDirectory);
   drawEffectiveRecoilResponse(*mc,outputDirectory);
+  drawTaggerResponseAudit(*mc,*data,outputDirectory);
+  drawPerturbativeRadiationBenchmarks(outputDirectory);
 
   std::string resolvedAnalysis = (analysisFile ? analysisFile : "");
   if (resolvedAnalysis.empty()) {

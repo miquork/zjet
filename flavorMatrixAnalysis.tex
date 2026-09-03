@@ -360,7 +360,53 @@ event.
 \end{columns}
 \vspace{-0.2em}
 \tiny
-The response-corrected, truth-flavor-unfolded result is the appropriate starting point for the $C_A/C_F$ and $\alpha_s(Q)$ comparisons. UE holes, ISR/FSR mixing, clustering, unfolding covariance, flavor-fraction modeling, and the all-pairs acceptance must still be controlled before a quantitative shower constraint. Raw tagged $m_n+m_u$ plots remain available as closure diagnostics.
+The response-corrected, truth-flavor-unfolded result is the appropriate starting point for the $C_A/C_F$ and $\alpha_s(Q)$ comparisons. UE holes, ISR/FSR mixing, clustering, unfolding covariance, flavor-fraction modeling, and the all-pairs acceptance must still be controlled before a quantitative shower constraint. Raw tagged $m_n+m_u$ plots remain available as closure diagnostics. Each measured curve and the one-loop reference are normalized at, or at the measured point nearest to, $Q=m_Z$.
+\end{frame}
+
+\begin{frame}{A finite-energy cascade need not equal $C_A/C_F$}
+\begin{columns}[c,onlytextwidth]
+\column{0.56\textwidth}\includegraphics[width=0.92\linewidth]{color_cascade_benchmark.pdf}
+\column{0.42\textwidth}
+\scriptsize
+The soft one-emission limit gives $C_A/C_F=2.25$. As a qualitative
+multiplicity-cascade benchmark,
+\[
+r(Q)=\frac{C_A}{C_F}\left[1-r_1\gamma_0-r_2\gamma_0^2+\cdots\right],
+\qquad \gamma_0=\sqrt{2C_A\alpha_s/\pi},
+\]
+gives 2.04, 1.78, and 1.79 through $O(\gamma_0)$, $O(\gamma_0^2)$, and
+$O(\gamma_0^3)$ at $m_Z$ for $n_f=5$. This is not a fixed two- or
+three-emission prediction for our
+$f_n+f_u$: the latter is energy weighted, non-global, clustered, and selected.
+This standard expansion approaches 2.25 from below as $Q$ grows, so a falling
+measured ratio needs observable/selection, UE, or flavor-mixture effects rather
+than ``deeper trees'' alone.
+\par\vspace{0.3em}\tiny 3NLO coefficients: Capella et al.,
+arXiv:hep-ph/9910226; experimental context: DELPHI,
+arXiv:hep-ex/9903073.
+\end{columns}
+\end{frame}
+
+\begin{frame}{One resolved emission gives only a scale benchmark for $f_n+f_u$}
+\begin{columns}[c,onlytextwidth]
+\column{0.56\textwidth}\includegraphics[width=0.92\linewidth]{lo_out_of_cone_benchmark.pdf}
+\column{0.42\textwidth}
+\scriptsize
+For a toy angular interval $R<\theta<1$,
+\[
+\langle f_{out}\rangle_i\simeq
+\frac{\alpha_s(Q)}{2\pi}\ln\!\frac{1}{R^2}
+\sum_{i\to jk}\int_0^1 dz\,\min(z,1-z)P_{i\to jk}(z).
+\]
+At $R=0.4$ the finite-$z$ integrals are 1.35 for a quark and 3.18 for a
+gluon (including $n_f=5$ $g\to q\bar q$), a ratio 2.36. Around $m_Z$ this
+gives roughly 4.6\% and 10.9\%. A quantitative comparison requires at least
+NLO small-$R$ jet functions plus non-global/recoil, hadronization, UE and the
+actual Z+jet cuts; the curve is deliberately labelled a toy LO benchmark.
+\par\vspace{0.3em}\tiny For a controlled NLO small-$R$ framework see
+Kang--Ringer--Vitev, arXiv:1606.06732; recoil and non-global effects in jet
+shape: Cal--Ringer--Waalewijn, arXiv:1901.06389.
+\end{columns}
 \end{frame}
 
 \begin{frame}{Reference-$p_T$ dependence separates migration from radiation}
@@ -387,6 +433,41 @@ R_u^{\rm slope}&=\frac{\langle m_u^{reco}m_u^{gen}\rangle}
 \end{align*}
 The mean ratio is unstable when $\langle m_u^{gen}\rangle$ is small. The zero-intercept slope is stable near 0.5 but includes generator/reconstruction threshold and definition migrations; it must not replace 0.92 blindly.
 \end{columns}
+\end{frame}
+
+\begin{frame}{Using the measured $R_u^{slope}$ is a sizeable HDM variation}
+\begin{columns}[c,onlytextwidth]
+\column{0.50\textwidth}\includegraphics[width=0.92\linewidth]{ru_slope_used_in_hdm.pdf}
+\column{0.50\textwidth}\includegraphics[width=0.92\linewidth]{response_ru_slope_impact.pdf}
+\end{columns}
+\vspace{-0.25em}
+\scriptsize
+The alternate fit rebuilds both data and MC HDM from merged $m_0,m_n,m_u$
+means using the MC-derived slope in every $p_T$ interval. The right panel is
+the correlated central-value displacement in per mille; it must be treated as
+a response-model diagnostic, not as an uncertainty with independent error
+bars. A common $R_u$ does not cancel in data/MC because data and MC have
+different $m_u$ and response mixtures.
+\end{frame}
+
+\begin{frame}{Data can constrain $R_u$ only after a closure assumption}
+\small
+The measured components obey
+\[
+ m_2=R_2f_2,\qquad m_n=R_nf_n,\qquad m_u=R_uf_u,
+ \qquad f_2+f_n+f_u=1.
+\]
+They do not identify $R_2$ and $R_u$ simultaneously. With externally fixed
+$R_2$ and $R_n$ one can form
+\[
+ f_u^{closure}=1-\frac{m_2}{R_2}-\frac{m_n}{R_n},\qquad
+ R_u^{closure}=\frac{\langle m_u f_u^{closure}\rangle}
+                         {\langle(f_u^{closure})^2\rangle}.
+\]
+The next output stores all three event-level moments in data and MC. MC also
+stores the true-$f_u$ regression, so the leading-jet resolution, JER migration,
+and flavor-dependent closure bias can be measured rather than guessed. This
+is a conditional in-situ constraint, not yet an absolute data-only $R_u$.
 \end{frame}
 
 \begin{frame}{The next output makes the UE-hole subtraction explicit}
@@ -425,20 +506,24 @@ The 5\%/10\% rows are deliberately conservative one-at-a-time sensitivity tests.
 \end{columns}
 \end{frame}
 
-\begin{frame}{Semileptonic heavy-flavor decays require a separate truth control}
+\begin{frame}{The low-$p_T$ b feature has several testable mechanisms}
 \begin{columns}[T,onlytextwidth]
 \column{0.48\textwidth}
 \begin{block}{Physical effect}
-Neutrinos from semileptonic c- and b-hadron decays lower the visible DB/MPF-HDM response. Depending on the particle-level jet definition, that loss need not appear in the nominal no-neutrino truth response.
+Neutrinos from semileptonic b-hadron decays lower visible response, but a
+sharp change below 100 GeV is unlikely to be the dead cone alone. Changing
+$g\to b\bar b$ admixture, decay-product migration across $R=0.4$, the Type-I
+threshold, muon overlap removal, tag-response sculpting, and JER migration can
+all make the selected effect strongly $p_T$ dependent.
 \end{block}
 \column{0.50\textwidth}
 \begin{block}{Next-run control}
 \begin{itemize}
-\item identify heavy-hadron descendant neutrinos with GenPart ancestry;
-\item store neutrino $p_T$ fraction and $R_{gen+\nu}/R_{gen}$ by truth/reco cell;
-\item retain an ambiguous ancestry category;
-\item separate decay-neutrino physics from detector response and tagging migrations.
-\item use the newly stored jet PF-muon fraction as a correlated reconstructed-level proxy, not as a replacement for ancestry truth.
+\item response components versus single-b, double-b and other GenJet heavy-hadron topologies;
+\item response versus jet PF-muon fraction as a semileptonic proxy;
+\item $m_u^{gen}$ versus topology to test whether the feature is already particle-level;
+\item continuous response-versus-score profiles for DeepJet, ParticleNet and UParT QvG, avoiding a single working-point comparison;
+\item next: GenPart-ancestry neutrino fraction and $R_{gen+\nu}/R_{gen}$ to separate decay loss from detector response.
 \end{itemize}
 \end{block}
 \end{columns}
