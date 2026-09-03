@@ -99,6 +99,8 @@ struct PtRangeResult {
   FitResult responseFit;
   FitResult fsrScaleFit;
   FitResult ueScaleFit;
+  FitResult mnuScaleFit;
+  FitResult mnuFsrScaleFit;
   std::vector<ProfileSummary> dataTagResponse;
   std::vector<ProfileSummary> mcRawTagResponse;
   std::vector<ProfileSummary> mcCompositionCorrectedTagResponse;
@@ -110,14 +112,24 @@ struct PtRangeResult {
   std::vector<ProfileSummary> mcUeFraction;
   std::vector<ProfileSummary> dataUeFraction;
   std::vector<ProfileSummary> ueRatio;
+  std::vector<ProfileSummary> mcMnuFraction;
+  std::vector<ProfileSummary> dataMnuFraction;
+  std::vector<ProfileSummary> mnuRatio;
+  std::vector<ProfileSummary> mcMnuFsrFraction;
+  std::vector<ProfileSummary> dataMnuFsrFraction;
+  std::vector<ProfileSummary> mnuFsrRatio;
 
   PtRangeResult(int nReco, int nTruth)
       : responseFit(nTruth), fsrScaleFit(nTruth), ueScaleFit(nTruth),
+        mnuScaleFit(nTruth), mnuFsrScaleFit(nTruth),
         dataTagResponse(nReco), mcRawTagResponse(nReco),
         mcCompositionCorrectedTagResponse(nReco), rawTagRatio(nReco),
         compositionCorrectedTagRatio(nReco), mcFsrFraction(nTruth),
         dataFsrFraction(nTruth), fsrRatio(nTruth), mcUeFraction(nTruth),
-        dataUeFraction(nTruth), ueRatio(nTruth) {}
+        dataUeFraction(nTruth), ueRatio(nTruth), mcMnuFraction(nTruth),
+        dataMnuFraction(nTruth), mnuRatio(nTruth),
+        mcMnuFsrFraction(nTruth), dataMnuFsrFraction(nTruth),
+        mnuFsrRatio(nTruth) {}
 };
 
 // The undefined reconstructed tag is intentionally omitted: it is empty for
@@ -281,6 +293,28 @@ ProfileSummary readComponent(
   TProfile3D *profile = dynamic_cast<TProfile3D*>(file->Get(path.c_str()));
   return scaledSummary(summarizeProfile(
     profile,recoId,truthIds,minimumPt,maximumPt),scale);
+}
+
+ProfileSummary readComponentAcrossReco(
+  TFile *file, const char *component, const char *variant,
+  const std::vector<int> &truthIds, double minimumPt, double maximumPt) {
+  ProfileSummary result;
+  double weightedSum = 0.;
+  double numeratorVariance = 0.;
+  for (int recoId : recoIds) {
+    const ProfileSummary cell = readComponent(
+      file,component,variant,recoId,truthIds,minimumPt,maximumPt);
+    if (!cell.valid || std::fabs(cell.sumWeights)<1.e-15) continue;
+    result.sumWeights += cell.sumWeights;
+    weightedSum += cell.sumWeights*cell.mean;
+    numeratorVariance += std::pow(cell.sumWeights*cell.error,2);
+  }
+  if (std::fabs(result.sumWeights)<1.e-12) return result;
+  result.mean = weightedSum/result.sumWeights;
+  result.error = std::sqrt(std::max(0.,numeratorVariance))/
+                 std::fabs(result.sumWeights);
+  result.valid = std::isfinite(result.mean) && std::isfinite(result.error);
+  return result;
 }
 
 ProfileSummary componentHDMFallback(
@@ -487,7 +521,7 @@ void analyzeFlavorMatrix(
 
   const int nReco = recoIds.size();
   const int nTruth = truthGroups.size();
-  const double maximumPt = std::numeric_limits<double>::infinity();
+  const double maximumPt = 600.;
   TMatrixD mcRaw(nReco,nTruth);
   TVectorD dataRaw(nReco);
   mcRaw.Zero();
@@ -1108,12 +1142,24 @@ void analyzeFlavorMatrix(
       "mu",1./ZJetFlavorMatrix::responseU,rangeResult.ueScaleFit,
       rangeResult.mcUeFraction,rangeResult.dataUeFraction,
       rangeResult.ueRatio);
+    // m_n+m_u is independent of the arbitrary 15 GeV Type-I boundary.  Keep
+    // it unscaled so a later UE-hole subtraction and effective R_u model can
+    // be applied transparently.
+    fitRecoilFraction(
+      "mnu",1.,rangeResult.mnuScaleFit,
+      rangeResult.mcMnuFraction,rangeResult.dataMnuFraction,
+      rangeResult.mnuRatio);
+    // Available from productions made after the projected-area control was
+    // introduced. Older files simply leave this optional fit unsolved.
+    fitRecoilFraction(
+      "mnufsr",1.,rangeResult.mnuFsrScaleFit,
+      rangeResult.mcMnuFsrFraction,rangeResult.dataMnuFsrFraction,
+      rangeResult.mnuFsrRatio);
     return rangeResult;
   };
 
   const std::vector<double> ptFitEdges = {
-    15.,20.,25.,30.,40.,60.,85.,125.,180.,250.,400.,600.,800.,1000.,
-    1500.,
+    30.,40.,60.,85.,125.,180.,250.,400.,600.,
   };
   std::map<std::string,std::vector<PtRangeResult> > variantPtFits;
   for (const std::string variant : {"ab","ad","tc","pf"})
@@ -1364,41 +1410,130 @@ void analyzeFlavorMatrix(
     correctedRatioGraph->Write();
   }
 
-  for (int flavor=0; flavor!=nTruth; ++flavor) {
-    const std::string name = truthGroups[flavor].name;
-    for (const std::string component : {"fsr","ue"}) {
-      TGraphErrors *mcGraph = new TGraphErrors();
-      TGraphErrors *dataGraph = new TGraphErrors();
-      TGraphErrors *ratioGraph = new TGraphErrors();
-      mcGraph->SetName(Form(
-        "g_%s_fraction_mc_vs_pt_%s",component.c_str(),name.c_str()));
-      dataGraph->SetName(Form(
-        "g_%s_fraction_data_vs_pt_%s",component.c_str(),name.c_str()));
-      ratioGraph->SetName(Form(
-        "g_%s_fraction_ratio_data_over_mc_vs_pt_%s",
-        component.c_str(),name.c_str()));
-      for (size_t bin=0; bin<ptFits.size(); ++bin) {
-        const FitResult &componentFit = component=="fsr"
-          ? ptFits[bin].fsrScaleFit : ptFits[bin].ueScaleFit;
-        if (!componentFit.solved || componentFit.rank<nTruth ||
-            !std::isfinite(componentFit.nonzeroCondition) ||
-            componentFit.nonzeroCondition>100.)
-          continue;
-        const std::vector<ProfileSummary> &mcValues = component=="fsr"
-          ? ptFits[bin].mcFsrFraction : ptFits[bin].mcUeFraction;
-        const std::vector<ProfileSummary> &dataValues = component=="fsr"
-          ? ptFits[bin].dataFsrFraction : ptFits[bin].dataUeFraction;
-        const std::vector<ProfileSummary> &ratios = component=="fsr"
-          ? ptFits[bin].fsrRatio : ptFits[bin].ueRatio;
-        addSummaryPoint(mcGraph,bin,mcValues[flavor]);
-        addSummaryPoint(dataGraph,bin,dataValues[flavor]);
-        addSummaryPoint(ratioGraph,bin,ratios[flavor]);
+  auto componentFit = [](const PtRangeResult &range,
+                         const std::string &component) -> const FitResult& {
+    if (component=="fsr") return range.fsrScaleFit;
+    if (component=="ue") return range.ueScaleFit;
+    if (component=="mnu") return range.mnuScaleFit;
+    return range.mnuFsrScaleFit;
+  };
+  auto componentValues = [](const PtRangeResult &range,
+                            const std::string &component, int kind)
+      -> const std::vector<ProfileSummary>& {
+    if (component=="fsr")
+      return kind==0 ? range.mcFsrFraction
+                     : (kind==1 ? range.dataFsrFraction : range.fsrRatio);
+    if (component=="ue")
+      return kind==0 ? range.mcUeFraction
+                     : (kind==1 ? range.dataUeFraction : range.ueRatio);
+    if (component=="mnu")
+      return kind==0 ? range.mcMnuFraction
+                     : (kind==1 ? range.dataMnuFraction : range.mnuRatio);
+    return kind==0 ? range.mcMnuFsrFraction
+                   : (kind==1 ? range.dataMnuFsrFraction
+                              : range.mnuFsrRatio);
+  };
+  for (const auto &variantEntry : variantPtFits) {
+    const std::string &variant = variantEntry.first;
+    const std::vector<PtRangeResult> &fits = variantEntry.second;
+    for (int flavor=0; flavor!=nTruth; ++flavor) {
+      const std::string name = truthGroups[flavor].name;
+      for (const std::string component : {"fsr","ue","mnu","mnufsr"}) {
+        TGraphErrors *mcGraph = new TGraphErrors();
+        TGraphErrors *dataGraph = new TGraphErrors();
+        TGraphErrors *ratioGraph = new TGraphErrors();
+        const std::string variantSuffix = "_"+variant+"_"+name;
+        mcGraph->SetName(Form(
+          "g_%s_fraction_mc_vs_pt%s",component.c_str(),
+          variantSuffix.c_str()));
+        dataGraph->SetName(Form(
+          "g_%s_fraction_data_vs_pt%s",component.c_str(),
+          variantSuffix.c_str()));
+        ratioGraph->SetName(Form(
+          "g_%s_fraction_ratio_data_over_mc_vs_pt%s",
+          component.c_str(),variantSuffix.c_str()));
+        for (size_t bin=0; bin<fits.size(); ++bin) {
+          const FitResult &fitComponent = componentFit(fits[bin],component);
+          if (!fitComponent.solved || fitComponent.rank<nTruth ||
+              !std::isfinite(fitComponent.nonzeroCondition) ||
+              fitComponent.nonzeroCondition>100.)
+            continue;
+          addSummaryPoint(mcGraph,bin,
+                          componentValues(fits[bin],component,0)[flavor]);
+          addSummaryPoint(dataGraph,bin,
+                          componentValues(fits[bin],component,1)[flavor]);
+          addSummaryPoint(ratioGraph,bin,
+                          componentValues(fits[bin],component,2)[flavor]);
+        }
+        mcGraph->Write();
+        dataGraph->Write();
+        ratioGraph->Write();
+        if (variant=="tc") {
+          mcGraph->Write(Form("g_%s_fraction_mc_vs_pt_%s",
+                              component.c_str(),name.c_str()));
+          dataGraph->Write(Form("g_%s_fraction_data_vs_pt_%s",
+                                component.c_str(),name.c_str()));
+          ratioGraph->Write(Form(
+            "g_%s_fraction_ratio_data_over_mc_vs_pt_%s",
+            component.c_str(),name.c_str()));
+        }
       }
-      mcGraph->Write();
-      dataGraph->Write();
-      ratioGraph->Write();
     }
   }
+
+  // Flavor-resolved effective recoil responses for the next production.
+  // The ratio of means becomes unstable when the generator component is
+  // close to zero, so write both it and the zero-intercept regression slope.
+  for (const std::string variant : {"ab","ad","tc","pf"})
+    for (int flavor=0; flavor!=nTruth; ++flavor)
+      for (const std::string component : {"n","u"}) {
+        TGraphErrors meanRatio;
+        TGraphErrors slope;
+        meanRatio.SetName(Form(
+          "g_r%s_mean_ratio_mc_vs_pt_%s_%s",component.c_str(),
+          variant.c_str(),truthGroups[flavor].name));
+        slope.SetName(Form(
+          "g_r%s_slope_mc_vs_pt_%s_%s",component.c_str(),
+          variant.c_str(),truthGroups[flavor].name));
+        for (size_t bin=0; bin+1<ptFitEdges.size(); ++bin) {
+          const double low = ptFitEdges[bin];
+          const double high = ptFitEdges[bin+1];
+          const std::vector<int> &truthIds = truthGroups[flavor].sourceIds;
+          const ProfileSummary reco = readComponentAcrossReco(
+            mcFile.get(),component=="n" ? "recomnmatched" : "recoumatched",
+            variant.c_str(),truthIds,low,high);
+          const ProfileSummary gen = readComponentAcrossReco(
+            mcFile.get(),component=="n" ? "genmn" : "genmu",
+            variant.c_str(),truthIds,low,high);
+          const ProfileSummary product = readComponentAcrossReco(
+            mcFile.get(),component=="n" ? "recogenmn" : "recogenmu",
+            variant.c_str(),truthIds,low,high);
+          const ProfileSummary square = readComponentAcrossReco(
+            mcFile.get(),component=="n" ? "genmn2" : "genmu2",
+            variant.c_str(),truthIds,low,high);
+          const ProfileSummary mean = ratioSummary(reco,gen);
+          const ProfileSummary fitSlope = ratioSummary(product,square);
+          const double x = std::sqrt(low*high);
+          if (mean.valid) {
+            const int point = meanRatio.GetN();
+            meanRatio.SetPoint(point,x,mean.mean);
+            meanRatio.SetPointError(point,0.5*(high-low),mean.error);
+          }
+          if (fitSlope.valid) {
+            const int point = slope.GetN();
+            slope.SetPoint(point,x,fitSlope.mean);
+            slope.SetPointError(point,0.5*(high-low),fitSlope.error);
+          }
+        }
+        meanRatio.Write();
+        slope.Write();
+        if (variant=="tc") {
+          meanRatio.Write(Form("g_r%s_mean_ratio_mc_vs_pt_%s",
+                               component.c_str(),truthGroups[flavor].name));
+          slope.Write(Form("g_r%s_slope_mc_vs_pt_%s",
+                           component.c_str(),truthGroups[flavor].name));
+        }
+      }
 
   diagnostics->cd();
   TH1D *hSingular = new TH1D(
@@ -1421,6 +1556,7 @@ void analyzeFlavorMatrix(
   TParameter<double>("response_chi2",fit.chi2).Write();
   TParameter<double>("response_prior_sigma",responsePriorSigma).Write();
   TParameter<double>("minimum_pt",minimumPt).Write();
+  TParameter<double>("maximum_pt",maximumPt).Write();
   TParameter<int>("hdm_constructed_from_component_means",1).Write();
   TParameter<int>("sparse_cell_response_fallbacks",cellFallbacks).Write();
   TParameter<int>("zero_profile_error_fallbacks",fit.zeroErrorFallbacks).Write();
@@ -1598,33 +1734,35 @@ void analyzeFlavorMatrix(
     std::string(outputDirectory)+"/recoil_fractions_vs_pt.tsv";
   std::ofstream recoilFractionStream(recoilFractionTable.c_str());
   recoilFractionStream << std::setprecision(10)
-    << "pt_low\tpt_high\ttrue_id\ttrue_flavor\tcomponent"
+    << "pt_binning\tpt_low\tpt_high\ttrue_id\ttrue_flavor\tcomponent"
        "\tmc_fraction\tmc_fraction_error\tdata_fraction_inferred"
        "\tdata_fraction_error\tdata_over_mc\tdata_over_mc_error"
        "\tfit_rank\tfit_condition\n";
-  for (size_t ptBin=0; ptBin<ptFits.size(); ++ptBin)
-    for (int flavor=0; flavor!=nTruth; ++flavor)
-      for (const std::string component : {"fsr","ue"}) {
-        const bool isFsr = component=="fsr";
-        const std::vector<ProfileSummary> &mcValues = isFsr
-          ? ptFits[ptBin].mcFsrFraction : ptFits[ptBin].mcUeFraction;
-        const std::vector<ProfileSummary> &dataValues = isFsr
-          ? ptFits[ptBin].dataFsrFraction : ptFits[ptBin].dataUeFraction;
-        const std::vector<ProfileSummary> &ratios = isFsr
-          ? ptFits[ptBin].fsrRatio : ptFits[ptBin].ueRatio;
-        const FitResult &componentFit = isFsr
-          ? ptFits[ptBin].fsrScaleFit : ptFits[ptBin].ueScaleFit;
-        recoilFractionStream
-          << ptFitEdges[ptBin] << '\t' << ptFitEdges[ptBin+1] << '\t'
-          << truthGroups[flavor].outputId << '\t'
-          << truthGroups[flavor].name << '\t' << component << '\t'
-          << mcValues[flavor].mean << '\t' << mcValues[flavor].error << '\t'
-          << dataValues[flavor].mean << '\t'
-          << dataValues[flavor].error << '\t'
-          << ratios[flavor].mean << '\t' << ratios[flavor].error << '\t'
-          << componentFit.rank << '\t'
-          << componentFit.nonzeroCondition << '\n';
-      }
+  for (const auto &variantEntry : variantPtFits)
+    for (size_t ptBin=0; ptBin<variantEntry.second.size(); ++ptBin)
+      for (int flavor=0; flavor!=nTruth; ++flavor)
+        for (const std::string component : {"fsr","ue","mnu","mnufsr"}) {
+          const PtRangeResult &range = variantEntry.second[ptBin];
+          const std::vector<ProfileSummary> &mcValues =
+            componentValues(range,component,0);
+          const std::vector<ProfileSummary> &dataValues =
+            componentValues(range,component,1);
+          const std::vector<ProfileSummary> &ratios =
+            componentValues(range,component,2);
+          const FitResult &fitComponent = componentFit(range,component);
+          recoilFractionStream
+            << variantEntry.first << '\t'
+            << ptFitEdges[ptBin] << '\t' << ptFitEdges[ptBin+1] << '\t'
+            << truthGroups[flavor].outputId << '\t'
+            << truthGroups[flavor].name << '\t' << component << '\t'
+            << mcValues[flavor].mean << '\t'
+            << mcValues[flavor].error << '\t'
+            << dataValues[flavor].mean << '\t'
+            << dataValues[flavor].error << '\t'
+            << ratios[flavor].mean << '\t' << ratios[flavor].error << '\t'
+            << fitComponent.rank << '\t'
+            << fitComponent.nonzeroCondition << '\n';
+        }
 
   const std::string uncertaintyTable =
     std::string(outputDirectory)+"/response_uncertainties.tsv";

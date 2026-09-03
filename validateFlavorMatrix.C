@@ -339,9 +339,10 @@ void validateFlavorMatrix(const char *fileName, bool isMC) {
     }
   }
 
-  // rho and jet PF-muon fraction were added after the first FlavorMatrix
-  // production.  Keep old merged files readable, but once either new control
-  // is present require the complete variant/suffix set and matching entries.
+  // Environmental and jet-area controls were added after the first
+  // FlavorMatrix production. Keep old merged files readable, but once any
+  // member of a generation is present require its complete variant/suffix
+  // set and matching entries.
   const bool hasFlavorEnvironmentControls =
     file->Get("FlavorMatrix/p3rhotc_flavormatrix") ||
     file->Get("FlavorMatrix/p3mueftc_flavormatrix");
@@ -367,6 +368,55 @@ void validateFlavorMatrix(const char *fileName, bool isMC) {
             }
         }
       }
+  }
+
+  const bool hasFlavorAreaControls =
+    file->Get("FlavorMatrix/p3areasumtc_flavormatrix") ||
+    file->Get("FlavorMatrix/p3areaprojtc_flavormatrix") ||
+    file->Get("FlavorMatrix/p3ueholetc_flavormatrix") ||
+    file->Get("FlavorMatrix/p3mnufsrtc_flavormatrix");
+  if (hasFlavorAreaControls) {
+    for (const std::string &suffix : {
+           std::string("_flavormatrix"),
+           std::string("_parallel_flavormatrix")})
+      for (const std::string &variant : variants) {
+        TProfile3D *reference = dynamic_cast<TProfile3D*>(file->Get(
+          ("FlavorMatrix/p3m0"+variant+suffix).c_str()));
+        for (const std::string &observable : {
+               "areasum","areaproj","uehole","mnufsr"}) {
+          const std::string name = "p3"+observable+variant+suffix;
+          TProfile3D *profile = requireExact<TProfile3D>(
+            file.get(),"FlavorMatrix/"+name,failures);
+          checkMatrixGeometry(profile,"FlavorMatrix/"+name,failures);
+          if (!reference || !profile) continue;
+          for (int bin=0; bin<reference->GetNcells(); ++bin)
+            if (!closeEnough(profile->GetBinEntries(bin),
+                             reference->GetBinEntries(bin))) {
+              fail(failures,name+" entries differ from p3m0 at global bin "+
+                std::to_string(bin));
+              break;
+            }
+        }
+      }
+  }
+
+  const bool hasFlavorTruthRecoil =
+    file->Get("FlavorMatrix/p3genmutc_flavormatrix") ||
+    file->Get("FlavorMatrix/p3recogenmutc_flavormatrix");
+  if (hasFlavorTruthRecoil) {
+    for (const std::string &suffix : {
+           std::string("_flavormatrix"),
+           std::string("_parallel_flavormatrix")})
+      for (const std::string &variant : variants)
+        for (const std::string &observable : {
+               "recomnmatched","recoumatched","genmn","genmu",
+               "recogenmn","recogenmu",
+               "genmn2","genmu2"}) {
+          const std::string name = "p3"+observable+variant+suffix;
+          TProfile3D *profile = requireExact<TProfile3D>(
+            file.get(),"FlavorMatrix/"+name,failures);
+          checkMatrixGeometry(profile,"FlavorMatrix/"+name,failures);
+        }
   }
 
   const std::vector<std::string> pairControls = {

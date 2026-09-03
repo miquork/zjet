@@ -1,17 +1,104 @@
 #include "TFile.h"
+#include "TGraphErrors.h"
 #include "TKey.h"
 #include "TObjString.h"
+#include "TProfile.h"
 #include "TProfile3D.h"
 
 #include "FlavorMatrixTools.h"
 
 #include <cassert>
+#include <cmath>
 #include <fstream>
 #include <iterator>
 #include <map>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <tuple>
+#include <vector>
+
+namespace {
+
+void rebuildTruthGraph(TFile &output, const std::string &directoryPath,
+                       const char *name, const char *numeratorName,
+                       const char *denominatorName, bool slope) {
+  TDirectory *directory = output.GetDirectory(directoryPath.c_str());
+  if (!directory) return;
+  TProfile *numerator = dynamic_cast<TProfile*>(
+    directory->Get(numeratorName));
+  TProfile *denominator = dynamic_cast<TProfile*>(
+    directory->Get(denominatorName));
+  if (!numerator || !denominator) return;
+  std::unique_ptr<TGraphErrors> graph(new TGraphErrors());
+  graph->SetName(name);
+  graph->SetTitle(slope
+    ? ";p_{T} (GeV);Zero-intercept reco-versus-gen slope"
+    : ";p_{T} (GeV);Ratio of reco and generator component means");
+  for (int bin=1; bin<=numerator->GetNbinsX(); ++bin) {
+    const double n = numerator->GetBinContent(bin);
+    const double d = denominator->GetBinContent(bin);
+    const double minimum = slope ? 1.e-12 : 1.e-9;
+    if (numerator->GetBinEntries(bin)==0. ||
+        denominator->GetBinEntries(bin)==0. ||
+        !std::isfinite(n) || !std::isfinite(d) ||
+        std::fabs(d)<minimum)
+      continue;
+    const double value = n/d;
+    const double error = std::hypot(
+      numerator->GetBinError(bin)/d,
+      n*denominator->GetBinError(bin)/(d*d));
+    const int point = graph->GetN();
+    graph->SetPoint(point,numerator->GetBinCenter(bin),value);
+    graph->SetPointError(
+      point,0.5*numerator->GetBinWidth(bin),std::fabs(error));
+  }
+  directory->cd();
+  directory->Delete((std::string(name)+";*").c_str());
+  graph->Write(name,TObject::kOverwrite);
+  output.cd();
+}
+
+void finalizeTruthGraphs(TFile &output) {
+  const std::vector<std::string> bases = {
+    "truth_hdm/parallel", "truth_hdm/transverse", "truth_hdm/subtracted",
+    "legacy/truth_hdm/parallel",
+  };
+  for (const std::string &base : bases)
+    for (const char *axis : {"zmmjet","jetpt","ptave"}) {
+      const std::string directory = base+"/"+axis;
+      for (const auto &definition : std::vector<
+             std::tuple<const char*,const char*,const char*> >{
+             {"response_r1_reco_axis","reco_mpf1_matched",
+              "gen_mpf1_reco_axis"},
+             {"response_rn_reco_axis","reco_mpfn_matched",
+              "gen_mpfn_reco_axis"},
+             {"response_ru_reco_axis","reco_mpfu_matched",
+              "gen_mpfu_reco_axis"},
+             {"closure_r1_gen_axis","reco_mpf1_matched",
+              "gen_mpf1_gen_axis"},
+             {"closure_rn_gen_axis","reco_mpfn_matched",
+              "gen_mpfn_gen_axis"},
+             {"closure_ru_gen_axis","reco_mpfu_matched",
+              "gen_mpfu_gen_axis"}})
+        rebuildTruthGraph(output,directory,std::get<0>(definition),
+                          std::get<1>(definition),std::get<2>(definition),
+                          false);
+      for (const auto &definition : std::vector<
+             std::tuple<const char*,const char*,const char*> >{
+             {"slope_r1_reco_axis","mpf1_reco_gen_product",
+              "mpf1_gen_squared"},
+             {"slope_rn_reco_axis","mpfn_reco_gen_product",
+              "mpfn_gen_squared"},
+             {"slope_ru_reco_axis","mpfu_reco_gen_product",
+              "mpfu_gen_squared"}})
+        rebuildTruthGraph(output,directory,std::get<0>(definition),
+                          std::get<1>(definition),std::get<2>(definition),
+                          true);
+    }
+}
+
+} // namespace
 
 // Store the exact campaign provenance alongside the histograms in a ROOT file.
 void embedCampaignMetadata(const char *rootFile, const char *metadataFile) {
@@ -46,6 +133,11 @@ void embedCampaignMetadata(const char *rootFile, const char *metadataFile) {
       output.cd();
     }
   }
+
+  // TGraphErrors are not hadd-mergeable: hadd concatenates the points from
+  // every worker. Rebuild all truth-derived ratio and slope graphs from the
+  // already merged TProfiles so every pT bin occurs exactly once.
+  finalizeTruthGraphs(output);
 
   // hadd keeps one key cycle per worker for non-mergeable TObjString
   // metadata. Require every worker value to agree, remove every old cycle,

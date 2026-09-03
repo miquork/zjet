@@ -239,6 +239,9 @@ FlavorMatrixHistograms bookFlavorMatrix(TDirectory *parent) {
 
   const std::vector<std::string> observables = {
     "m0", "m2", "mn", "mu", "mnu", "hdm", "rho", "muef",
+    "areasum", "areaproj", "uehole", "mnufsr",
+    "recomnmatched", "recoumatched", "genmn", "genmu",
+    "recogenmn", "recogenmu", "genmn2", "genmu2",
   };
   const std::vector<std::string> variants = {"ab","ad","tc","pf"};
   for (const std::string &observable : observables) {
@@ -370,8 +373,10 @@ void fillFlavorMatrix(
   int recoFlavor, int trueFlavor, int heavyTopology,
   int charmHadronCount, int bottomHadronCount,
   double cvb, double cvl, double pnetQvg, double upartQvg,
-  double muonEnergyFraction, double rho,
+  double muonEnergyFraction, double rho, double jetAreaSum,
+  double projectedJetArea, double ueHoleEstimate,
   const std::map<std::string,FlavorMatrixVariant> &variants,
+  const GeneratorPairComponents *generatorPair,
   double weight, bool transverse) {
   histograms.counts->Fill(ptz,recoFlavor,trueFlavor,weight);
   histograms.heavyTopologyCounts->Fill(ptz,recoFlavor,heavyTopology,weight);
@@ -382,7 +387,9 @@ void fillFlavorMatrix(
     const std::map<std::string,double> observables = {
       {"m0",value.m0}, {"m2",value.m2}, {"mn",value.mn},
       {"mu",value.mu}, {"mnu",value.mnu}, {"rho",rho},
-      {"muef",muonEnergyFraction},
+      {"muef",muonEnergyFraction}, {"areasum",jetAreaSum},
+      {"areaproj",projectedJetArea}, {"uehole",ueHoleEstimate},
+      {"mnufsr",value.mnu-ueHoleEstimate},
     };
     for (const auto &observable : observables) {
       const std::string name =
@@ -394,6 +401,32 @@ void fillFlavorMatrix(
         if (!transverse) {
           const std::string parallelName =
             "p3"+observable.first+variant.first+"_parallel_flavormatrix";
+          histograms.parallelProfiles.at(parallelName)->Fill(
+            variant.second.x,recoFlavor,trueFlavor,observable.second,weight);
+        }
+      }
+    }
+    if (generatorPair) {
+      const std::map<std::string,double> truthObservables = {
+        {"recomnmatched",value.mn}, {"recoumatched",value.mu},
+        {"genmn",generatorPair->genMpfnRecoAxis},
+        {"genmu",generatorPair->genMpfuRecoAxis},
+        {"recogenmn",value.mn*generatorPair->genMpfnRecoAxis},
+        {"recogenmu",value.mu*generatorPair->genMpfuRecoAxis},
+        {"genmn2",std::pow(generatorPair->genMpfnRecoAxis,2)},
+        {"genmu2",std::pow(generatorPair->genMpfuRecoAxis,2)},
+      };
+      for (const auto &observable : truthObservables) {
+        if (!std::isfinite(observable.second) ||
+            !std::isfinite(variant.second.x)) continue;
+        const std::string name =
+          "p3"+observable.first+variant.first+"_flavormatrix";
+        histograms.profiles.at(name)->Fill(
+          variant.second.x,recoFlavor,trueFlavor,observable.second,weight);
+        if (!transverse) {
+          const std::string parallelName =
+            "p3"+observable.first+variant.first+
+            "_parallel_flavormatrix";
           histograms.parallelProfiles.at(parallelName)->Fill(
             variant.second.x,recoFlavor,trueFlavor,observable.second,weight);
         }
@@ -1091,7 +1124,7 @@ void zjet::Loop()
    TObjString flavorDefinition(
      "Bettina/Sami DeepJet: B>0.7527; C=0.5*(CvB+CvL)>0.3985 after B veto; QG split at 0.5 after B/C veto");
    TObjString flavorMatrixDefinition(
-     "FlavorMatrix uses |eta(jet)|<1.3 and stores both the signed all-pairs signal-minus-two-half-weight-sidebands estimator and pure-parallel response profiles; hybrid tag IDs use UParTAK4 CvB/CvL at 0.5 and ParticleNet QvG at 0.3: undefined=0, uds=1, c=4, b=5, g=6; true IDs: undefined=0, d+u=1, s=3, c=4, b=5, g=6; data uses true ID 0 because truth is unavailable; heavy-hadron topology controls use GenJet_nCHadrons and GenJet_nBHadrons with bottom precedence: none=0, single-c=1, c-pair=2, other=3, single-b=4, b-pair=5, no-match=6, where double-heavy categories are gluon-splitting-enriched rather than exclusive production labels; HDM is derived from component means and re-finalized after hadd with Rn=1.00 and Ru=0.92; rho and jet PF-muon energy fraction are stored by flavor cell and reference-pT variant as UE/pileup and semileptonic heavy-flavor controls; category axes remain numerically unlabelled until plotting so ROOT merges them without extension");
+     "FlavorMatrix uses |eta(jet)|<1.3 and stores both the signed all-pairs signal-minus-two-half-weight-sidebands estimator and pure-parallel response profiles; hybrid tag IDs use UParTAK4 CvB/CvL at 0.5 and ParticleNet QvG at 0.3: undefined=0, uds=1, c=4, b=5, g=6; true IDs: undefined=0, d+u=1, s=3, c=4, b=5, g=6; data uses true ID 0 because truth is unavailable; heavy-hadron topology controls use GenJet_nCHadrons and GenJet_nBHadrons with bottom precedence: none=0, single-c=1, c-pair=2, other=3, single-b=4, b-pair=5, no-match=6, where double-heavy categories are gluon-splitting-enriched rather than exclusive production labels; HDM is derived from component means and re-finalized after hadd with Rn=1.00 and Ru=0.92; rho, jet PF-muon energy fraction, scalar jet-area sum, Z-axis projected jet-hole area, rho times projected area over pT,Z, and m_n+m_u after subtracting that UE-hole estimate are stored by flavor cell and reference-pT variant; jet-area sums use the same lepton-cleaned pT>15 GeV jets as reconstructed HT; category axes remain numerically unlabelled until plotting so ROOT merges them without extension");
 
    
    // Object pT plots
@@ -2430,6 +2463,9 @@ void zjet::Loop()
         met.SetPtEtaPhiM(RawPuppiMET_pt,0.,RawPuppiMET_phi,0.);
       else
         met.SetPtEtaPhiM(PuppiMET_pt,0.,PuppiMET_phi,0.);
+      double jetAreaSum = 0.;
+      double jetAreaVectorX = 0.;
+      double jetAreaVectorY = 0.;
       ht += p4z;
       for (int ijet = 0; ijet != nJet; ++ijet) {
 	p4jet.SetPtEtaPhiM(Jet_pt[ijet], Jet_eta[ijet], Jet_phi[ijet],
@@ -2437,6 +2473,11 @@ void zjet::Loop()
 	//if (p4jet.DeltaR(p4lplus)>0.4 && p4jet.DeltaR(p4lminus)>0.4 &&
 	if (separatedFromSynchronizedMuons(p4jet) && p4jet.Pt()>15.) {
 	  ht += p4jet;
+	  if (std::isfinite(Jet_area[ijet]) && Jet_area[ijet]>=0.) {
+	    jetAreaSum += Jet_area[ijet];
+	    jetAreaVectorX += Jet_area[ijet]*std::cos(Jet_phi[ijet]);
+	    jetAreaVectorY += Jet_area[ijet]*std::sin(Jet_phi[ijet]);
+	  }
 	  if (recalculatePuppiMet) {
 	    rawjet.SetPtEtaPhiM(jetRawPt[ijet],Jet_eta[ijet],Jet_phi[ijet],
 	                         jetRawMass[ijet]);
@@ -2449,6 +2490,20 @@ void zjet::Loop()
       if (recalculatePuppiMet) met += rawjets-corrjets;
       met.SetPtEtaPhiM(met.Pt(),0,met.Phi(),0.);
       metu = met + ht;
+
+      // Isotropic UE has zero net transverse momentum before clustering.
+      // Removing rho*A from the unclustered term in each jet direction leaves
+      // a recoil (a "hole") opposite to the vector sum of clustered areas.
+      // Store geometry and rho separately enough that alternative rho or
+      // response models can be applied without another event-level pass.
+      auto projectedJetHoleArea = [&](const TLorentzVector &projectionAxis) {
+        return -(jetAreaVectorX*projectionAxis.Px()+
+                 jetAreaVectorY*projectionAxis.Py())/p4z.Pt();
+      };
+      auto ueHoleContribution = [&](const TLorentzVector &projectionAxis) {
+        return Rho_fixedGridRhoFastjetAll*
+               projectedJetHoleArea(projectionAxis)/p4z.Pt();
+      };
 
       auto fillPileupResponse = [&](const char *region, double db,
                                     double mpfValue, double weight) {
@@ -2750,20 +2805,23 @@ void zjet::Loop()
 		                  ? GenJet_partonFlavour[genJetIndex] : 0),
 		               hasGenResponse,genBalance,db,mpf,mpf1,mpfn,mpfu,wt);
 		    if (abseta<1.305) {
-		      if (abseta<1.3)
-		        fillFlavorMatrix(
-		          flavorMatrix,ptz,ptj,recoHybridFlavor,truePartonFlavor,
-		          heavyTopology,charmHadronCount,bottomHadronCount,
-		          upartCvB,upartCvL,pnetQvG,upartQvG,
-		          Jet_muEF[ijet],Rho_fixedGridRhoFastjetAll,
-		          flavorMatrixVariants(
-		            p4z,p4jet,mpf,mpf1,mpfn,mpfu,mpfnu,false),
-		          wt,false);
 		      const TLorentzVector &generatorAxis =
 		        generatorRecoil.hasGeneratorZ ? generatorRecoil.z : p4z;
 		      const GeneratorPairComponents generatorPair =
 		        generatorPairComponents(
 		          genJetIndex,p4jet,p4z,generatorAxis,false);
+		      if (abseta<1.3)
+		        fillFlavorMatrix(
+		          flavorMatrix,ptz,ptj,recoHybridFlavor,truePartonFlavor,
+		          heavyTopology,charmHadronCount,bottomHadronCount,
+		          upartCvB,upartCvL,pnetQvG,upartQvG,
+		          Jet_muEF[ijet],Rho_fixedGridRhoFastjetAll,jetAreaSum,
+		          projectedJetHoleArea(p4z),ueHoleContribution(p4z),
+		          flavorMatrixVariants(
+		            p4z,p4jet,mpf,mpf1,mpfn,mpfu,mpfnu,false),
+		          (generatorRecoil.hasGeneratorZ && generatorPair.valid
+		             ? &generatorPair : nullptr),
+		          wt,false);
 		      fillTruthHDMProfiles1D(
 		        allPairsTruthProfiles,"parallel",ptz,ptj,pta,truthMatched,
 		        generatorRecoil,generatorPair,mpf1,mpfn,mpfu,
@@ -2887,15 +2945,6 @@ void zjet::Loop()
 		               hasGenResponse,genBalance,db,mpfT,mpf1T,mpfnT,
 		               mpfuT,wt);
 		    if (abseta<1.305) {
-		      if (abseta<1.3)
-		        fillFlavorMatrix(
-		          flavorMatrix,ptz,ptj,recoHybridFlavor,truePartonFlavor,
-		          heavyTopology,charmHadronCount,bottomHadronCount,
-		          upartCvB,upartCvL,pnetQvG,upartQvG,
-		          Jet_muEF[ijet],Rho_fixedGridRhoFastjetAll,
-		          flavorMatrixVariants(
-		            p4z,p4jet,mpfT,mpf1T,mpfnT,mpfuT,mpfnuT,true),
-		          wt,true);
 		      TLorentzVector generatorTransverseAxis = axis;
 		      if (generatorRecoil.hasGeneratorZ)
 		        generatorTransverseAxis.SetPtEtaPhiM(
@@ -2906,6 +2955,19 @@ void zjet::Loop()
 		      const GeneratorPairComponents generatorPair =
 		        generatorPairComponents(
 		          genJetIndex,p4jet,axis,generatorTransverseAxis,true);
+		      if (abseta<1.3)
+		        fillFlavorMatrix(
+		          flavorMatrix,ptz,ptj,recoHybridFlavor,truePartonFlavor,
+		          heavyTopology,charmHadronCount,bottomHadronCount,
+		          upartCvB,upartCvL,pnetQvG,upartQvG,
+		          Jet_muEF[ijet],Rho_fixedGridRhoFastjetAll,jetAreaSum,
+		          projectedJetHoleArea(p4z+axis),
+		          ueHoleContribution(p4z+axis),
+		          flavorMatrixVariants(
+		            p4z,p4jet,mpfT,mpf1T,mpfnT,mpfuT,mpfnuT,true),
+		          (generatorRecoil.hasGeneratorZ && generatorPair.valid
+		             ? &generatorPair : nullptr),
+		          wt,true);
 		      fillTruthHDMProfiles1D(
 		        allPairsTruthProfiles,"transverse",ptz,ptj,pta,truthMatched,
 		        generatorRecoil,generatorPair,mpf1T,mpfnT,mpfuT,

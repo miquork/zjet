@@ -238,7 +238,7 @@ The full 2024I sample resolves percent-level central shifts. The quoted errors a
 \end{columns}
 \end{frame}
 
-\begin{frame}{The stable $p_{T,Z}$ fit now spans 15--800 GeV}
+\begin{frame}{The reported flavor fit is restricted to 30--600 GeV}
 \begin{columns}[c,onlytextwidth]
 \column{0.57\textwidth}
 \centering
@@ -249,9 +249,6 @@ The full 2024I sample resolves percent-level central shifts. The quoted errors a
 \toprule
 $p_T$ (GeV) & rank & condition & plot\\
 \midrule
-15--20  & 4 & 12.15 & shown\\
-20--25  & 4 & 9.19 & shown\\
-25--30  & 4 & 7.26 & shown\\
 30--40  & 4 & 6.00 & shown\\
 40--60  & 4 & 5.17 & shown\\
 60--85  & 4 & 4.86 & shown\\
@@ -260,12 +257,52 @@ $p_T$ (GeV) & rank & condition & plot\\
 180--250& 4 & 5.59 & shown\\
 250--400& 4 & 6.29 & shown\\
 400--600& 4 & 5.95 & shown\\
-600--800& 4 & 9.05 & shown\\
-800--1000& 3 & 4.22 & omitted\\
 \bottomrule
 \end{tabular}
 \par\vspace{0.5em}
-The TSV output retains every bin. The figure requires rank 4 and condition number below 100; the low-$p_T$ inversion is algebraically stable but statistically broad.
+The figure and TSV now stop at 600 GeV. The figure additionally requires rank 4 and condition number below 100; the 30--40 GeV component fits can still be statistically ill-conditioned.
+\end{columns}
+\end{frame}
+
+\begin{frame}{The old and current gluon results are not the same estimator}
+\begin{columns}[c,onlytextwidth]
+\column{0.58\textwidth}
+\includegraphics[width=0.90\linewidth]{gluon_response_old_vs_current.pdf}
+\column{0.40\textwidth}
+\scriptsize
+\textcolor{cmsblue}{\textbf{Old Zflavor}}\par
+DeepJet b/c/QG tags; data-solved flavor fractions; ad hoc tag SFs
+$g=0.97$, $c=1.35$, $b=0.96$; legacy leading jet; reprocessed HDM;
+smoothed matrices.
+\par\vspace{0.5em}
+\textcolor{cmsblue}{\textbf{Current matrix}}\par
+UParT b/c + PNet QvG; fixed MC truth marginals in IPF; all accepted
+parallel pairs; component-mean HDM; 20\% response prior.
+\par\vspace{0.5em}
+The sign change is \alert{not yet evidence for changed gluon calorimeter
+response}. The raw current $g$ tag is already positive; the final inversion
+adds a smaller shift.
+\end{columns}
+\end{frame}
+
+\begin{frame}{The gluon sign change occurs before flavor inversion}
+\begin{columns}[c,onlytextwidth]
+\column{0.59\textwidth}
+\includegraphics[width=0.91\linewidth]{raw_g_tag_old_vs_current.pdf}
+\column{0.39\textwidth}
+\scriptsize
+At reconstructed-tag level the old DeepJet category is already about
+$-2.1\%$ at 47.5 GeV, whereas the current hybrid category is about
+$+1.9\%$ in 40--60 GeV.
+\par\vspace{0.5em}
+The current truth-flavor inversion adds only about $+0.7$ percentage points
+in that bin. Disabling the old ad hoc tag corrections or replacing its
+data-solved fractions by MC fractions changes the old gluon result by only
+about $0.4$ percentage points; neither test flips its sign.
+\par\vspace{0.5em}
+\alert{Therefore the dominant difference is upstream of the inversion:}
+tag definition and/or legacy-leading-jet versus all-pairs parallel selection.
+A crossed $2\times2$ tag--selection test is the decisive next separation.
 \end{columns}
 \end{frame}
 
@@ -299,6 +336,68 @@ We define $f_n=\langle m_n\rangle/R_n$ with $R_n=1$. Above 40 GeV the MC ratio $
 \vspace{-0.2em}
 \tiny
 We define $f_u=\langle m_u\rangle/R_u$ with $R_u=0.92$. It falls rapidly with $p_T$ and is larger in the gluon-enriched category, as expected for broader soft activity. It still mixes UE, unclustered recoil, acceptance, pileup, and response. Flavor-resolved $\rho$ was not stored in this production; the next output adds $\rho$ and jet PF-muon fraction profiles for each reco--truth cell and all four reference-$p_T$ choices.
+\end{frame}
+
+\begin{frame}{$m_n+m_u$ removes the arbitrary Type-I partition}
+\begin{columns}[c,onlytextwidth]
+\column{0.50\textwidth}\includegraphics[width=0.92\linewidth]{mnu_fraction_data_mc_vs_pt.pdf}
+\column{0.50\textwidth}\includegraphics[width=0.92\linewidth]{mnu_fraction_data_over_mc_vs_pt.pdf}
+\end{columns}
+\vspace{-0.25em}
+\tiny
+$m_n$ and $m_u$ exchange contributions when the Type-I jet threshold is changed; their sum does not. In MC the gluon component is about twice the uds component and both fall with scale. The data/MC inversion remains statistically correlated and should not be interpreted as four independent measurements.
+\end{frame}
+
+\begin{frame}{The color-factor and running tests are suggestive, not closed}
+\begin{columns}[c,onlytextwidth]
+\column{0.50\textwidth}\includegraphics[width=0.92\linewidth]{mnu_gluon_over_quark.pdf}
+\column{0.50\textwidth}\includegraphics[width=0.92\linewidth]{mnu_alphaS_running.pdf}
+\end{columns}
+\vspace{-0.2em}
+\tiny
+The MC $g/uds$ ratio is near 2.1 at low $p_T$ and decreases toward 1.7, below the leading $C_A/C_F=2.25$ expectation. Normalized $m_n+m_u$ falls broadly like $\alpha_s(Q)$, but faster for gluons. UE holes, ISR/FSR mixing, clustering, flavor migration, and the all-pairs acceptance must be removed before a quantitative shower constraint.
+\end{frame}
+
+\begin{frame}{Reference-$p_T$ dependence separates migration from radiation}
+\begin{columns}[c,onlytextwidth]
+\column{0.25\textwidth}\includegraphics[width=\linewidth]{mnu_binning_comparison_uds.pdf}
+\column{0.25\textwidth}\includegraphics[width=\linewidth]{mnu_binning_comparison_c.pdf}
+\column{0.25\textwidth}\includegraphics[width=\linewidth]{mnu_binning_comparison_b.pdf}
+\column{0.25\textwidth}\includegraphics[width=\linewidth]{mnu_binning_comparison_g.pdf}
+\end{columns}
+\vspace{0.1em}
+\tiny
+Data/MC is shown for $p_{T,Z}$, $p_{T,ave}$, projected $p_{T,ave}$, and $p_{T,jet}$. The large excursions in heavy-flavor bins are a warning that response migration and flavor inversion must be included in the covariance; the gluon result is more stable except around 200--400 GeV.
+\end{frame}
+
+\begin{frame}{The MC truth control does not support a constant $R_u=0.92$ yet}
+\begin{columns}[c,onlytextwidth]
+\column{0.58\textwidth}\includegraphics[width=0.90\linewidth]{effective_ru_mc.pdf}
+\column{0.40\textwidth}
+\tiny
+\begin{align*}
+R_u^{\rm mean}&=\frac{\langle m_u^{reco}\rangle}{\langle m_u^{gen}\rangle},\\
+R_u^{\rm slope}&=\frac{\langle m_u^{reco}m_u^{gen}\rangle}
+{\langle(m_u^{gen})^2\rangle}.
+\end{align*}
+The mean ratio is unstable when $\langle m_u^{gen}\rangle$ is small. The zero-intercept slope is stable near 0.5 but includes generator/reconstruction threshold and definition migrations; it must not replace 0.92 blindly.
+\end{columns}
+\end{frame}
+
+\begin{frame}{The next output makes the UE-hole subtraction explicit}
+\small
+For the same lepton-cleaned jets with $p_T>15$ GeV that enter reconstructed $H_T$, store
+\begin{align*}
+A_{\parallel} &=-\sum_j A_j\cos\Delta\phi(j,Z),\\
+u_{\rm hole} &= \frac{\rho A_{\parallel}}{p_{T,Z}},\\
+m_{nu}^{\rm FSR-like} &= m_n+m_u-u_{\rm hole}.
+\end{align*}
+\begin{itemize}
+\item The scalar $\sum A_j$, $A_\parallel$, $u_{\rm hole}$, and corrected sum are stored separately for every reference-$p_T$/flavor cell.
+\item Transverse pairs use the same combined $Z+$sideband projection as their $m_u$ estimator.
+\item Matched MC also stores $m_{n,u}^{reco}$, $m_{n,u}^{gen}$, their products, and generator squares, enabling flavor-resolved mean-ratio and regression-slope $R_n,R_u$ estimates.
+\item This preserves freedom to replace $\rho$ or model a $p_T$-dependent effective response after production.
+\end{itemize}
 \end{frame}
 
 \begin{frame}{Absolute response uncertainties identify the bottleneck}
@@ -342,11 +441,11 @@ Neutrinos from semileptonic c- and b-hadron decays lower the visible DB/MPF-HDM 
 
 \begin{frame}{Recommended path before the full 2024 campaign}
 \begin{enumerate}
-\item Keep PNet QvG at 0.3; the full 2024I purity scan confirms the expected trade-off.
-\item Use pure-parallel barrel response as the current central flavor fit; retain transverse profiles as a pileup systematic and forward control.
-\item Use the new flavor-cell $\rho$ and jet PF-muon-fraction profiles in the next production; add heavy-decay-neutrino and direct-versus-splitting ancestry controls before interpreting c/b residuals physically.
-\item Require full rank and a bounded condition number separately in every reported pT bin.
-\item Add JER, parton-shower/PSWeight, UE, and correlated tagging/fraction variations, then require closure with injected flavor-response shifts before the full 2024 sample.
+\item Run a crossed 2-by-2 closure: old/new tags times legacy/all-pairs response on the same selected events. This is the shortest path to localizing the gluon sign change.
+\item Replace fixed flavor fractions only after a data-constrained model exists; until then show the current IPF result as conditional on MC truth marginals.
+\item Validate the new projected-area UE subtraction and flavor-resolved $R_n,R_u$ slopes before changing nominal HDM constants.
+\item Fit $m_n+m_u-u_{\rm hole}$ jointly across the four reference-$p_T$ choices and propagate their migration covariance.
+\item Add PSWeight, JER, tagger, heavy-neutrino, direct-versus-splitting, and flavor-fraction variations; later combine Z+jet, gamma+jet, and dijet data for a Jet-Topics flavor-fraction constraint.
 \end{enumerate}
 \vfill
 \begin{center}
