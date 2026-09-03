@@ -112,6 +112,28 @@ struct FlavorMatrixVariant {
   FlavorMatrixComponents response;
 };
 
+// Jet-axis activity used to enrich FSR-like radiation without assigning a
+// generator-history label to individual emissions.  "Near" is the annulus
+// 0.4 <= DeltaR(jet,probe) < 1.0 and "wide" is DeltaR >= 1.0.  "Hard"
+// follows the pT>15 GeV Type-I/HT definition; all positive-pT stored jets
+// below that boundary enter "soft".  Each projected recoil is normalized to
+// pT,Z and the rho*A estimate is retained separately so it is never silently
+// double-subtracted from PUPPI jets.
+struct RadiationFlowComponents {
+  double nearHardRaw = 0.;
+  double nearHardUe = 0.;
+  double nearSoftRaw = 0.;
+  double nearSoftUe = 0.;
+  double wideHardRaw = 0.;
+  double wideHardUe = 0.;
+  double wideSoftRaw = 0.;
+  double wideSoftUe = 0.;
+  double nearHardCount = 0.;
+  double nearSoftCount = 0.;
+  double wideHardCount = 0.;
+  double wideSoftCount = 0.;
+};
+
 struct FlavorMatrixHistograms {
   TH3D *counts = nullptr;
   TH3D *parallelCounts = nullptr;
@@ -149,6 +171,7 @@ struct GeneratorPairComponents {
   double genMpfuGenAxis = 0.;
   TLorentzVector met1;
   TLorentzVector metn;
+  RadiationFlowComponents radiation;
 };
 
 const double responseBins[] = {
@@ -247,6 +270,16 @@ FlavorMatrixHistograms bookFlavorMatrix(TDirectory *parent) {
     "fuclosure", "mufuclosure", "fuclosure2",
     "recomnmatched", "recoumatched", "genmn", "genmu",
     "recogenmn", "recogenmu", "genmn2", "genmu2",
+    "radnearhardraw", "radnearhardue", "radnearhard",
+    "radnearsoftraw", "radnearsoftue", "radnearsoft",
+    "radnearraw", "radnearue", "radnear",
+    "radwidehardraw", "radwidehardue", "radwidehard",
+    "radwidesoftraw", "radwidesoftue", "radwidesoft",
+    "radwideraw", "radwideue", "radwide",
+    "radnearhardcount", "radnearsoftcount",
+    "radwidehardcount", "radwidesoftcount",
+    "genradnearhard", "genradnearsoft", "genradnear",
+    "genradwidehard", "genradwidesoft", "genradwide",
   };
   const std::vector<std::string> variants = {"ab","ad","tc","pf"};
   for (const std::string &observable : observables) {
@@ -425,6 +458,7 @@ void fillFlavorMatrix(
   double deepjetQvg,
   double muonEnergyFraction, double rho, double jetAreaSum,
   double projectedJetArea, double ueHoleEstimate,
+  const RadiationFlowComponents *radiation,
   const std::map<std::string,FlavorMatrixVariant> &variants,
   const GeneratorPairComponents *generatorPair,
   double weight, bool transverse) {
@@ -440,7 +474,7 @@ void fillFlavorMatrix(
     // merge-safe.  The MC truth profiles quantify its resolution bias.
     const double fuClosure = 1.-value.m2/ZJetFlavorMatrix::response2-
                                   value.mn/ZJetFlavorMatrix::responseN;
-    const std::map<std::string,double> observables = {
+    std::map<std::string,double> observables = {
       {"m0",value.m0}, {"m2",value.m2}, {"mn",value.mn},
       {"mu",value.mu}, {"mnu",value.mnu}, {"rho",rho},
       {"fnu",value.mn/ZJetFlavorMatrix::responseN+
@@ -451,6 +485,33 @@ void fillFlavorMatrix(
       {"fuclosure",fuClosure}, {"mufuclosure",value.mu*fuClosure},
       {"fuclosure2",fuClosure*fuClosure},
     };
+    if (radiation) {
+      const RadiationFlowComponents &flow = *radiation;
+      const double nearHard = flow.nearHardRaw-flow.nearHardUe;
+      const double nearSoft = flow.nearSoftRaw-flow.nearSoftUe;
+      const double wideHard = flow.wideHardRaw-flow.wideHardUe;
+      const double wideSoft = flow.wideSoftRaw-flow.wideSoftUe;
+      observables.insert({
+        {"radnearhardraw",flow.nearHardRaw},
+        {"radnearhardue",flow.nearHardUe}, {"radnearhard",nearHard},
+        {"radnearsoftraw",flow.nearSoftRaw},
+        {"radnearsoftue",flow.nearSoftUe}, {"radnearsoft",nearSoft},
+        {"radnearraw",flow.nearHardRaw+flow.nearSoftRaw},
+        {"radnearue",flow.nearHardUe+flow.nearSoftUe},
+        {"radnear",nearHard+nearSoft},
+        {"radwidehardraw",flow.wideHardRaw},
+        {"radwidehardue",flow.wideHardUe}, {"radwidehard",wideHard},
+        {"radwidesoftraw",flow.wideSoftRaw},
+        {"radwidesoftue",flow.wideSoftUe}, {"radwidesoft",wideSoft},
+        {"radwideraw",flow.wideHardRaw+flow.wideSoftRaw},
+        {"radwideue",flow.wideHardUe+flow.wideSoftUe},
+        {"radwide",wideHard+wideSoft},
+        {"radnearhardcount",flow.nearHardCount},
+        {"radnearsoftcount",flow.nearSoftCount},
+        {"radwidehardcount",flow.wideHardCount},
+        {"radwidesoftcount",flow.wideSoftCount},
+      });
+    }
     for (const auto &observable : observables) {
       const std::string name =
         "p3"+observable.first+variant.first+"_flavormatrix";
@@ -475,6 +536,14 @@ void fillFlavorMatrix(
         {"recogenmu",value.mu*generatorPair->genMpfuRecoAxis},
         {"genmn2",std::pow(generatorPair->genMpfnRecoAxis,2)},
         {"genmu2",std::pow(generatorPair->genMpfuRecoAxis,2)},
+        {"genradnearhard",generatorPair->radiation.nearHardRaw},
+        {"genradnearsoft",generatorPair->radiation.nearSoftRaw},
+        {"genradnear",generatorPair->radiation.nearHardRaw+
+                      generatorPair->radiation.nearSoftRaw},
+        {"genradwidehard",generatorPair->radiation.wideHardRaw},
+        {"genradwidesoft",generatorPair->radiation.wideSoftRaw},
+        {"genradwide",generatorPair->radiation.wideHardRaw+
+                      generatorPair->radiation.wideSoftRaw},
       };
       for (const auto &observable : truthObservables) {
         if (!std::isfinite(observable.second) ||
@@ -1234,7 +1303,7 @@ void zjet::Loop()
    TObjString flavorDefinition(
      "Bettina/Sami DeepJet: B>0.7527; C=0.5*(CvB+CvL)>0.3985 after B veto; QG split at 0.5 after B/C veto");
    TObjString flavorMatrixDefinition(
-     "FlavorMatrix uses |eta(jet)|<1.3 and stores both the signed all-pairs signal-minus-two-half-weight-sidebands estimator and pure-parallel response profiles; hybrid tag IDs use UParTAK4 CvB/CvL at 0.5 and ParticleNet QvG at 0.3: undefined=0, uds=1, c=4, b=5, g=6; true IDs: undefined=0, d+u=1, s=3, c=4, b=5, g=6; data uses true ID 0 because truth is unavailable; heavy-hadron topology controls use GenJet_nCHadrons and GenJet_nBHadrons with bottom precedence: none=0, single-c=1, c-pair=2, other=3, single-b=4, b-pair=5, no-match=6, where double-heavy categories are gluon-splitting-enriched rather than exclusive production labels; HDM is derived from component means and re-finalized after hadd with Rn=1.00 and Ru=0.92; rho, jet PF-muon energy fraction, scalar jet-area sum, Z-axis projected jet-hole area, rho times projected area over pT,Z, and m_n+m_u after subtracting that UE-hole estimate are stored by flavor cell and reference-pT variant; the data-accessible f_u closure proxy assumes R2=Rn=1 and stores f_u, m_u*f_u, and f_u^2 event by event for merge-safe R_u regression, with MC truth profiles retained to measure its bias; jet-area sums use the same lepton-cleaned pT>15 GeV jets as reconstructed HT; category axes remain numerically unlabelled until plotting so ROOT merges them without extension");
+     "FlavorMatrix uses |eta(jet)|<1.3 and stores both the signed all-pairs signal-minus-two-half-weight-sidebands estimator and pure-parallel response profiles; hybrid tag IDs use UParTAK4 CvB/CvL at 0.5 and ParticleNet QvG at 0.3: undefined=0, uds=1, c=4, b=5, g=6; true IDs: undefined=0, d+u=1, s=3, c=4, b=5, g=6; data uses true ID 0 because truth is unavailable; heavy-hadron topology controls use GenJet_nCHadrons and GenJet_nBHadrons with bottom precedence: none=0, single-c=1, c-pair=2, other=3, single-b=4, b-pair=5, no-match=6, where double-heavy categories are gluon-splitting-enriched rather than exclusive production labels; HDM is derived from component means and re-finalized after hadd with Rn=1.00 and Ru=0.92; rho, jet PF-muon energy fraction, scalar jet-area sum, Z-axis projected jet-hole area, rho times projected area over pT,Z, and m_n+m_u after subtracting that UE-hole estimate are stored by flavor cell and reference-pT variant; the data-accessible f_u closure proxy assumes R2=Rn=1 and stores f_u, m_u*f_u, and f_u^2 event by event for merge-safe R_u regression, with MC truth profiles retained to measure its bias; jet-area sums use the same lepton-cleaned pT>15 GeV jets as reconstructed HT; radiation-flow controls exclude the selected probe, use all positive-pT lepton-cleaned stored jets, split 0.4<=DeltaR(probe,jet)<1.0 from DeltaR>=1.0 and pT<=15 from pT>15 GeV, and store raw projected recoil, rho*A estimate, their difference, counts, and generator-jet analogues; these are FSR- and wide-angle-enriched controls rather than generator-history ISR/FSR labels; category axes remain numerically unlabelled until plotting so ROOT merges them without extension");
 
    
    // Object pT plots
@@ -2340,6 +2409,36 @@ void zjet::Loop()
             generatorRecoil.metu,genProjectionAxis,genDenominator,0.)+
             baseMpfuGen;
         }
+
+        // Generator jets in this JMENANO start at 3 GeV.  Reproduce the
+        // reconstructed hard/soft and near/wide partition without a UE term;
+        // the selected generator jet and jets overlapping either selected
+        // generator muon are excluded.  Use the generator Z axis and
+        // normalization so this remains a particle-level physics control.
+        const TLorentzVector flowAxis = transverse
+          ? generatorRecoil.z+genProjectionAxis : generatorRecoil.z;
+        for (int igen=0; igen<nGenJet; ++igen) {
+          if (igen==generatorJetIndex || GenJet_pt[igen]<=0.) continue;
+          TLorentzVector other;
+          other.SetPtEtaPhiM(
+            GenJet_pt[igen],GenJet_eta[igen],GenJet_phi[igen],
+            GenJet_mass[igen]);
+          if (generatorRecoil.hasGeneratorZ &&
+              (other.DeltaR(generatorMuonPlus)<0.3 ||
+               other.DeltaR(generatorMuonMinus)<0.3))
+            continue;
+          const double deltaR = other.DeltaR(generatorJet);
+          if (deltaR<0.4) continue;
+          const double projected =
+            -(other.Px()*flowAxis.Px()+other.Py()*flowAxis.Py())/
+             genDenominator;
+          const bool near = deltaR<1.0;
+          const bool hard = other.Pt()>15.;
+          if (near && hard) result.radiation.nearHardRaw += projected;
+          else if (near) result.radiation.nearSoftRaw += projected;
+          else if (hard) result.radiation.wideHardRaw += projected;
+          else result.radiation.wideSoftRaw += projected;
+        }
         return result;
       };
 
@@ -2613,6 +2712,62 @@ void zjet::Loop()
       auto ueHoleContribution = [&](const TLorentzVector &projectionAxis) {
         return Rho_fixedGridRhoFastjetAll*
                projectedJetHoleArea(projectionAxis)/p4z.Pt();
+      };
+
+      auto reconstructedRadiationFlow = [&]
+        (int probeIndex, const TLorentzVector &probe,
+         const TLorentzVector &projectionAxis) {
+        RadiationFlowComponents result;
+        const double denominator = p4z.Pt()*p4z.Pt();
+        if (!(denominator>0.)) return result;
+        for (int otherIndex=0; otherIndex<nJet; ++otherIndex) {
+          if (otherIndex==probeIndex || Jet_pt[otherIndex]<=0.) continue;
+          TLorentzVector other;
+          other.SetPtEtaPhiM(
+            Jet_pt[otherIndex],Jet_eta[otherIndex],Jet_phi[otherIndex],
+            Jet_mass[otherIndex]);
+          if (!separatedFromSynchronizedMuons(other)) continue;
+          const double deltaR = other.DeltaR(probe);
+          // Separate anti-kT R=0.4 jets should not overlap.  Excluding this
+          // small region also prevents split/duplicate axes from masquerading
+          // as resolved out-of-cone radiation.
+          if (deltaR<0.4) continue;
+          const double raw =
+            -(other.Px()*projectionAxis.Px()+
+              other.Py()*projectionAxis.Py())/denominator;
+          double ue = 0.;
+          if (std::isfinite(Jet_area[otherIndex]) &&
+              Jet_area[otherIndex]>=0. &&
+              std::isfinite(Rho_fixedGridRhoFastjetAll)) {
+            ue = -Rho_fixedGridRhoFastjetAll*Jet_area[otherIndex]*
+              (std::cos(Jet_phi[otherIndex])*projectionAxis.Px()+
+               std::sin(Jet_phi[otherIndex])*projectionAxis.Py())/
+              denominator;
+          }
+          const bool near = deltaR<1.0;
+          const bool hard = other.Pt()>15.;
+          if (near && hard) {
+            result.nearHardRaw += raw;
+            result.nearHardUe += ue;
+            result.nearHardCount += 1.;
+          }
+          else if (near) {
+            result.nearSoftRaw += raw;
+            result.nearSoftUe += ue;
+            result.nearSoftCount += 1.;
+          }
+          else if (hard) {
+            result.wideHardRaw += raw;
+            result.wideHardUe += ue;
+            result.wideHardCount += 1.;
+          }
+          else {
+            result.wideSoftRaw += raw;
+            result.wideSoftUe += ue;
+            result.wideSoftCount += 1.;
+          }
+        }
+        return result;
       };
 
       auto fillPileupResponse = [&](const char *region, double db,
@@ -2922,7 +3077,9 @@ void zjet::Loop()
 		      const GeneratorPairComponents generatorPair =
 		        generatorPairComponents(
 		          genJetIndex,p4jet,p4z,generatorAxis,false);
-		      if (abseta<1.3)
+		      if (abseta<1.3) {
+		        const RadiationFlowComponents radiation =
+		          reconstructedRadiationFlow(ijet,p4jet,p4z);
 		        fillFlavorMatrix(
 		          flavorMatrix,ptz,ptj,recoHybridFlavor,truePartonFlavor,
 		          heavyTopology,charmHadronCount,bottomHadronCount,
@@ -2930,11 +3087,13 @@ void zjet::Loop()
 		          Jet_btagDeepFlavQG[ijet],
 		          Jet_muEF[ijet],Rho_fixedGridRhoFastjetAll,jetAreaSum,
 		          projectedJetHoleArea(p4z),ueHoleContribution(p4z),
+		          &radiation,
 		          flavorMatrixVariants(
 		            p4z,p4jet,mpf,mpf1,mpfn,mpfu,mpfnu,false),
 		          (generatorRecoil.hasGeneratorZ && generatorPair.valid
 		             ? &generatorPair : nullptr),
 		          wt,false);
+		      }
 		      fillTruthHDMProfiles1D(
 		        allPairsTruthProfiles,"parallel",ptz,ptj,pta,truthMatched,
 		        generatorRecoil,generatorPair,mpf1,mpfn,mpfu,
@@ -3068,7 +3227,10 @@ void zjet::Loop()
 		      const GeneratorPairComponents generatorPair =
 		        generatorPairComponents(
 		          genJetIndex,p4jet,axis,generatorTransverseAxis,true);
-		      if (abseta<1.3)
+		      if (abseta<1.3) {
+		        const TLorentzVector flowAxis = p4z+axis;
+		        const RadiationFlowComponents radiation =
+		          reconstructedRadiationFlow(ijet,p4jet,flowAxis);
 		        fillFlavorMatrix(
 		          flavorMatrix,ptz,ptj,recoHybridFlavor,truePartonFlavor,
 		          heavyTopology,charmHadronCount,bottomHadronCount,
@@ -3077,11 +3239,13 @@ void zjet::Loop()
 		          Jet_muEF[ijet],Rho_fixedGridRhoFastjetAll,jetAreaSum,
 		          projectedJetHoleArea(p4z+axis),
 		          ueHoleContribution(p4z+axis),
+		          &radiation,
 		          flavorMatrixVariants(
 		            p4z,p4jet,mpfT,mpf1T,mpfnT,mpfuT,mpfnuT,true),
 		          (generatorRecoil.hasGeneratorZ && generatorPair.valid
 		             ? &generatorPair : nullptr),
 		          wt,true);
+		      }
 		      fillTruthHDMProfiles1D(
 		        allPairsTruthProfiles,"transverse",ptz,ptj,pta,truthMatched,
 		        generatorRecoil,generatorPair,mpf1T,mpfnT,mpfuT,

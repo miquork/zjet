@@ -1404,6 +1404,26 @@ void drawRecoilFraction(TFile &analysis, const std::string &component,
     if (component=="fnu") title = "response-corrected recoil f_{n}+f_{u}";
     if (component=="mnufsr")
       title = "UE-hole-corrected m_{n}+m_{u}";
+    if (component=="radnearhard")
+      title = "near-cone hard-jet recoil (UE subtracted)";
+    if (component=="radnearsoft")
+      title = "near-cone soft-jet recoil (UE subtracted)";
+    if (component=="radnear")
+      title = "near-cone jet recoil (UE subtracted)";
+    if (component=="radnearraw")
+      title = "near-cone raw jet-axis recoil";
+    if (component=="radnearue")
+      title = "near-cone projected #rhoA estimate";
+    if (component=="radwidehard")
+      title = "wide-angle hard-jet recoil (UE subtracted)";
+    if (component=="radwidesoft")
+      title = "wide-angle soft-jet recoil (UE subtracted)";
+    if (component=="radwide")
+      title = "wide-angle jet recoil (UE subtracted)";
+    if (component=="radwideraw")
+      title = "wide-angle raw jet-axis recoil";
+    if (component=="radwideue")
+      title = "wide-angle projected #rhoA estimate";
     frame.GetYaxis()->SetTitle(title);
   }
   frame.GetXaxis()->SetTitle("p_{T,Z} (GeV)");
@@ -1432,6 +1452,69 @@ void drawRecoilFraction(TFile &analysis, const std::string &component,
   gPad->RedrawAxis();
   saveBoth(canvas.get(),outputDirectory,component+"_fraction_"+
     (ratio ? "data_over_mc_vs_pt" : "data_mc_vs_pt"));
+}
+
+void drawRadiationRecoGen(TFile &analysis, const std::string &region,
+                          const std::string &outputDirectory) {
+  std::vector<std::unique_ptr<TGraphErrors> > graphs;
+  std::vector<std::string> labels;
+  for (const PtGraphStyle &style : kPtGraphStyles) {
+    if (std::string(style.name)!="uds" && std::string(style.name)!="g")
+      continue;
+    const std::string recoComponent = "rad"+region;
+    graphs.push_back(clonePtGraph(
+      analysis,"response/g_"+recoComponent+
+        "raw_fraction_mc_vs_pt_"+style.name,
+      "plot_"+region+"_raw_"+style.name,style,true));
+    if (graphs.back()) graphs.back()->SetLineStyle(kDashed);
+    labels.push_back(std::string("reco raw ")+style.label);
+    graphs.push_back(clonePtGraph(
+      analysis,"response/g_"+recoComponent+
+        "_fraction_mc_vs_pt_"+style.name,
+      "plot_"+region+"_subtracted_"+style.name,style));
+    labels.push_back(std::string("reco - #rhoA ")+style.label);
+    graphs.push_back(clonePtGraph(
+      analysis,"response/g_genrad"+region+"_mc_vs_pt_"+style.name,
+      "plot_"+region+"_gen_"+style.name,style,true));
+    if (graphs.back()) {
+      graphs.back()->SetLineStyle(kDotted);
+      graphs.back()->SetMarkerStyle(0);
+    }
+    labels.push_back(std::string("GenJet ")+style.label);
+  }
+  double xmin, xmax, ymin, ymax;
+  graphBounds(graphs,xmin,xmax,ymin,ymax);
+  if (!std::isfinite(xmin) || !(xmax>xmin)) return;
+  xmin = std::max(30.,xmin);
+  xmax = std::min(600.,xmax);
+  const double span = std::max(0.02,ymax-ymin);
+  configureFlavorStyle("Summer24 DY");
+  TH1D frame(("frame_radiation_"+region+"_reco_gen").c_str(),"",
+             100,xmin,xmax);
+  frame.SetDirectory(nullptr);
+  frame.SetMinimum(std::min(0.,ymin-0.15*span));
+  frame.SetMaximum(ymax+0.38*span);
+  frame.GetXaxis()->SetTitle("p_{T,Z} (GeV)");
+  frame.GetYaxis()->SetTitle(
+    region=="near" ? "0.4 #leq #DeltaR < 1 recoil" :
+                     "#DeltaR #geq 1 recoil");
+  frame.GetXaxis()->SetMoreLogLabels();
+  frame.GetXaxis()->SetNoExponent();
+  std::unique_ptr<TCanvas> canvas(tdrCanvas(
+    ("c_radiation_"+region+"_reco_gen").c_str(),&frame,8,11,kSquare));
+  canvas->SetLogx();
+  TLine zero(xmin,0.,xmax,0.);
+  zero.SetLineColor(kGray+2); zero.SetLineStyle(kDashed); zero.DrawClone();
+  for (auto &graph : graphs) if (graph) graph->Draw("PZL SAME");
+  TLegend legend(0.47,0.67,0.89,0.88);
+  legend.SetBorderSize(0); legend.SetFillStyle(0); legend.SetNColumns(2);
+  for (size_t index=0; index<graphs.size(); ++index)
+    if (graphs[index]) legend.AddEntry(
+      graphs[index].get(),labels[index].c_str(),"pl");
+  legend.Draw();
+  gPad->RedrawAxis();
+  saveBoth(canvas.get(),outputDirectory,
+           "radiation_"+region+"_reco_gen");
 }
 
 std::unique_ptr<TGraphErrors> divideGraphs(
@@ -2172,16 +2255,20 @@ void drawResponseResidual(TFile &analysis,
 }
 
 void drawResponseResidualVsPt(TFile &analysis,
-                              const std::string &outputDirectory) {
+                              const std::string &outputDirectory,
+                              bool useRuSlope=false) {
   std::vector<std::unique_ptr<TGraphErrors> > graphs;
   std::vector<const PtGraphStyle*> graphStyles;
   double extent = 0.03;
   double xmin = std::numeric_limits<double>::infinity();
   double xmax = 0.;
   for (const PtGraphStyle &style : kPtGraphStyles) {
+    const std::string path = useRuSlope
+      ? std::string("response/g_response_residual_ru_slope_vs_pt_tc_")+
+          style.name
+      : std::string("response/g_response_residual_vs_pt_")+style.name;
     TGraphErrors *source = optionalObject<TGraphErrors>(
-      &analysis,(std::string("response/g_response_residual_vs_pt_")+
-                 style.name).c_str());
+      &analysis,path.c_str());
     if (!source) continue;
     std::unique_ptr<TGraphErrors> graph(dynamic_cast<TGraphErrors*>(
       source->Clone((std::string("plot_response_vs_pt_")+
@@ -2209,16 +2296,22 @@ void drawResponseResidualVsPt(TFile &analysis,
   xmax = std::min(600.,xmax);
   extent = std::min(0.45,std::max(0.05,1.15*extent));
   configureFlavorStyle("Run2024I + Summer24 DY");
-  TH1D frame("frame_response_residual_vs_pt","",100,xmin,xmax);
+  TH1D frame(useRuSlope ? "frame_response_residual_ru_slope_vs_pt" :
+                         "frame_response_residual_vs_pt",
+             "",100,xmin,xmax);
   frame.SetDirectory(nullptr);
   frame.SetMinimum(1.-extent);
   frame.SetMaximum(1.+extent);
   frame.GetXaxis()->SetTitle("p_{T,Z} (GeV)");
-  frame.GetYaxis()->SetTitle("fitted data / MC flavor response");
+  frame.GetYaxis()->SetTitle(useRuSlope
+    ? "fitted data / MC response (R_{u}^{slope})"
+    : "fitted data / MC flavor response");
   frame.GetXaxis()->SetMoreLogLabels();
   frame.GetXaxis()->SetNoExponent();
   std::unique_ptr<TCanvas> canvas(tdrCanvas(
-    "c_flavor_response_residual_vs_pt",&frame,8,11,kSquare));
+    useRuSlope ? "c_flavor_response_residual_ru_slope_vs_pt" :
+                 "c_flavor_response_residual_vs_pt",
+    &frame,8,11,kSquare));
   canvas->SetLogx();
   TLine unity(xmin,1.,xmax,1.);
   unity.SetLineStyle(kDashed);
@@ -2234,7 +2327,8 @@ void drawResponseResidualVsPt(TFile &analysis,
   legend.Draw();
   gPad->RedrawAxis();
   saveBoth(canvas.get(),outputDirectory,
-           "flavor_response_residual_vs_pt");
+           useRuSlope ? "flavor_response_residual_ru_slope_vs_pt" :
+                        "flavor_response_residual_vs_pt");
 }
 
 void drawRuSlopeResponseImpact(TFile &analysis,
@@ -2358,6 +2452,7 @@ void drawOptionalAnalysis(TFile &analysis,
     0.97,1.03,outputDirectory,true);
   drawResponseResidual(analysis,outputDirectory);
   drawResponseResidualVsPt(analysis,outputDirectory);
+  drawResponseResidualVsPt(analysis,outputDirectory,true);
   drawRuSlopeResponseImpact(analysis,outputDirectory);
   drawTagResponseRatio(analysis,false,outputDirectory);
   drawTagResponseRatio(analysis,true,outputDirectory);
@@ -2371,10 +2466,26 @@ void drawOptionalAnalysis(TFile &analysis,
   drawRecoilFraction(analysis,"fnu",true,outputDirectory);
   drawRecoilFraction(analysis,"mnufsr",false,outputDirectory);
   drawRecoilFraction(analysis,"mnufsr",true,outputDirectory);
+  for (const std::string &component : {
+         "radnearhard", "radnearsoft", "radnear",
+         "radnearraw", "radnearue",
+         "radwidehard", "radwidesoft", "radwide",
+         "radwideraw", "radwideue"}) {
+    drawRecoilFraction(analysis,component,false,outputDirectory);
+    drawRecoilFraction(analysis,component,true,outputDirectory);
+  }
   drawNuColorFactor(analysis,"mnu","m_{n}+m_{u}",outputDirectory);
   drawNuRunning(analysis,"mnu","m_{n}+m_{u}",outputDirectory);
   drawNuColorFactor(analysis,"fnu","f_{n}+f_{u}",outputDirectory);
   drawNuRunning(analysis,"fnu","f_{n}+f_{u}",outputDirectory);
+  drawNuColorFactor(
+    analysis,"radnear","near-cone recoil",outputDirectory);
+  drawNuRunning(
+    analysis,"radnear","near-cone recoil",outputDirectory);
+  drawNuColorFactor(
+    analysis,"radwide","wide-angle recoil",outputDirectory);
+  drawRadiationRecoGen(analysis,"near",outputDirectory);
+  drawRadiationRecoGen(analysis,"wide",outputDirectory);
   drawFlavorEffectiveResponse(analysis,"n",outputDirectory);
   drawFlavorEffectiveResponse(analysis,"u",outputDirectory);
   drawClosureRuComparison(analysis,outputDirectory);

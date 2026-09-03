@@ -238,11 +238,11 @@ The full 2024I sample resolves percent-level central shifts. The quoted errors a
 \end{columns}
 \end{frame}
 
-\begin{frame}{The reported flavor fit is restricted to 30--600 GeV}
+\begin{frame}{Flavor response with the measured $R_u^{slope}$ variant}
 \begin{columns}[c,onlytextwidth]
 \column{0.57\textwidth}
 \centering
-\includegraphics[width=0.92\linewidth]{flavor_response_residual_vs_pt.pdf}
+\includegraphics[width=0.92\linewidth]{flavor_response_residual_ru_slope_vs_pt.pdf}
 \column{0.41\textwidth}
 \scriptsize
 \begin{tabular}{lrrl}
@@ -260,9 +260,53 @@ $p_T$ (GeV) & rank & condition & plot\\
 \bottomrule
 \end{tabular}
 \par\vspace{0.5em}
-The figure and TSV now stop at 600 GeV. The figure additionally requires rank 4 and condition number below 100; the 30--40 GeV component fits can still be statistically ill-conditioned.
+The figure rebuilds data and MC HDM with the MC-derived $R_u^{slope}$ in each
+$p_T$ interval (roughly 0.5 over most of this range). It is a response-model
+variant, not yet the nominal calibration. The fit stops at 600 GeV and requires
+rank 4 with condition number below 100.
 \end{columns}
 \end{frame}
+
+\IfFileExists{radnear_fraction_data_mc_vs_pt.pdf}{
+\begin{frame}{Near-cone recoil is an FSR-enriched, not FSR-labelled, observable}
+\begin{columns}[c,onlytextwidth]
+\column{0.50\textwidth}\includegraphics[width=0.92\linewidth]{radnear_fraction_data_mc_vs_pt.pdf}
+\column{0.50\textwidth}\includegraphics[width=0.92\linewidth]{radnear_gluon_over_quark.pdf}
+\end{columns}
+\vspace{-0.25em}\tiny
+For every selected probe, additional lepton-cleaned jets are summed in
+$0.4\leq\Delta R(j,\mathrm{probe})<1.0$. The projected $\rho A$ estimate is
+stored separately and subtracted only in this displayed control. The annulus
+enriches out-of-cone FSR, but color-dipole interference and ISR contamination
+remain; it is therefore not assigned a generator-history label.
+\end{frame}
+
+\begin{frame}{The 15 GeV Type-I boundary is exposed explicitly}
+\begin{columns}[c,onlytextwidth]
+\column{0.50\textwidth}\includegraphics[width=0.92\linewidth]{radnearhard_fraction_data_mc_vs_pt.pdf}
+\column{0.50\textwidth}\includegraphics[width=0.92\linewidth]{radnearsoft_fraction_data_mc_vs_pt.pdf}
+\end{columns}
+\vspace{-0.25em}\tiny
+Left: $p_T>15$ GeV jets, which contribute to the nominal $m_n$ term. Right:
+positive-$p_T$ stored jets below 15 GeV, which provide a jet-axis proxy for the
+part of $m_u$ carried by resolved soft jets. Their sum is independent of this
+bookkeeping boundary, while diffuse unclustered PF energy remains outside the
+jet-axis proxy. Generator jets are stored down to 3 GeV in this JMENANO.
+\end{frame}
+
+\begin{frame}{Wide-angle activity is the ISR-enriched control region}
+\begin{columns}[c,onlytextwidth]
+\column{0.50\textwidth}\includegraphics[width=0.92\linewidth]{radwide_fraction_data_mc_vs_pt.pdf}
+\column{0.50\textwidth}\includegraphics[width=0.92\linewidth]{radwide_gluon_over_quark.pdf}
+\end{columns}
+\vspace{-0.25em}\tiny
+The complementary $\Delta R\geq1$ region is ISR enriched. Comparing its
+absolute scale and $p_T$ running with the near annulus tests whether the falling
+effective gluon/quark ratio is caused by an increasingly important,
+approximately flavor-independent wide-angle pedestal. Channel fractions,
+PDFs, acceptance and dipole geometry prevent treating it as universal ISR.
+\end{frame}
+}{}
 
 \begin{frame}{The old and current gluon results are not the same estimator}
 \begin{columns}[c,onlytextwidth]

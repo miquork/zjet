@@ -529,6 +529,99 @@ void validateFlavorMatrix(const char *fileName, bool isMC) {
         }
   }
 
+  // Jet-axis radiation controls were added for an FSR/wide-angle closure
+  // study.  Require the complete mergeable family once one member is found
+  // and verify the stored rho*A subtraction algebra.  Generator analogues
+  // have matched-event entries only and therefore are checked for geometry,
+  // not against the inclusive m0 entries.
+  const bool hasRadiationFlow =
+    file->Get("FlavorMatrix/p3radneartc_flavormatrix");
+  if (hasRadiationFlow) {
+    const std::vector<std::string> recoObservables = {
+      "radnearhardraw", "radnearhardue", "radnearhard",
+      "radnearsoftraw", "radnearsoftue", "radnearsoft",
+      "radnearraw", "radnearue", "radnear",
+      "radwidehardraw", "radwidehardue", "radwidehard",
+      "radwidesoftraw", "radwidesoftue", "radwidesoft",
+      "radwideraw", "radwideue", "radwide",
+      "radnearhardcount", "radnearsoftcount",
+      "radwidehardcount", "radwidesoftcount",
+    };
+    const std::vector<std::string> genObservables = {
+      "genradnearhard", "genradnearsoft", "genradnear",
+      "genradwidehard", "genradwidesoft", "genradwide",
+    };
+    for (const std::string &suffix : {
+           std::string("_flavormatrix"),
+           std::string("_parallel_flavormatrix")})
+      for (const std::string &variant : variants) {
+        const std::string base = "FlavorMatrix/p3";
+        TProfile3D *reference = dynamic_cast<TProfile3D*>(file->Get(
+          (base+"m0"+variant+suffix).c_str()));
+        std::map<std::string,TProfile3D*> profiles;
+        for (const std::string &observable : recoObservables) {
+          TProfile3D *profile = requireExact<TProfile3D>(
+            file.get(),base+observable+variant+suffix,failures);
+          profiles[observable] = profile;
+          checkMatrixGeometry(profile,base+observable+variant+suffix,
+                              failures);
+          if (!reference || !profile) continue;
+          for (int bin=0; bin<reference->GetNcells(); ++bin)
+            if (!closeEnough(profile->GetBinEntries(bin),
+                             reference->GetBinEntries(bin))) {
+              fail(failures,observable+" entries differ from p3m0 for "+
+                variant+suffix+" at global bin "+std::to_string(bin));
+              break;
+            }
+        }
+        for (const std::string &observable : genObservables) {
+          TProfile3D *profile = requireExact<TProfile3D>(
+            file.get(),base+observable+variant+suffix,failures);
+          checkMatrixGeometry(profile,base+observable+variant+suffix,
+                              failures);
+        }
+        for (const std::string &region : {"near","wide"}) {
+          for (const std::string &part : {"hard","soft"}) {
+            const std::string stem = "rad"+region+part;
+            TProfile3D *raw = profiles[stem+"raw"];
+            TProfile3D *ue = profiles[stem+"ue"];
+            TProfile3D *subtracted = profiles[stem];
+            if (!raw || !ue || !subtracted) continue;
+            for (int bin=0; bin<raw->GetNcells(); ++bin)
+              if (!closeEnough(profileNumerator(subtracted,bin),
+                    profileNumerator(raw,bin)-profileNumerator(ue,bin),
+                    1.e-8,2.e-10)) {
+                fail(failures,stem+" != raw-ue for "+variant+suffix+
+                  " at global bin "+std::to_string(bin));
+                break;
+              }
+          }
+          TProfile3D *hard = profiles["rad"+region+"hard"];
+          TProfile3D *soft = profiles["rad"+region+"soft"];
+          TProfile3D *total = profiles["rad"+region];
+          TProfile3D *raw = profiles["rad"+region+"raw"];
+          TProfile3D *ue = profiles["rad"+region+"ue"];
+          if (hard && soft && total && raw && ue)
+            for (int bin=0; bin<total->GetNcells(); ++bin) {
+              if (!closeEnough(profileNumerator(total,bin),
+                    profileNumerator(hard,bin)+profileNumerator(soft,bin),
+                    1.e-8,2.e-10)) {
+                fail(failures,"rad"+region+" != hard+soft for "+
+                  variant+suffix+" at global bin "+std::to_string(bin));
+                break;
+              }
+              if (!closeEnough(profileNumerator(total,bin),
+                    profileNumerator(raw,bin)-profileNumerator(ue,bin),
+                    1.e-8,2.e-10)) {
+                fail(failures,"rad"+region+" != raw-ue for "+
+                  variant+suffix+" at global bin "+std::to_string(bin));
+                break;
+              }
+            }
+        }
+      }
+  }
+
   const std::vector<std::string> pairControls = {
     "h3_cvb_cvl_trueflavor", "h3_cvb_qvg_trueflavor",
     "h3_cvl_qvg_trueflavor", "h3_upartqvg_pnetqvg_trueflavor",

@@ -96,6 +96,16 @@ struct TruthGroup {
   std::vector<int> sourceIds;
 };
 
+struct RecoilComponentResult {
+  FitResult fit;
+  std::vector<ProfileSummary> mcTruth;
+  std::vector<ProfileSummary> dataTruth;
+  std::vector<ProfileSummary> ratio;
+
+  explicit RecoilComponentResult(int nTruth)
+      : fit(nTruth), mcTruth(nTruth), dataTruth(nTruth), ratio(nTruth) {}
+};
+
 struct PtRangeResult {
   FitResult responseFit;
   FitResult responseFitRuSlope;
@@ -125,6 +135,7 @@ struct PtRangeResult {
   std::vector<ProfileSummary> mcMnuFsrFraction;
   std::vector<ProfileSummary> dataMnuFsrFraction;
   std::vector<ProfileSummary> mnuFsrRatio;
+  std::map<std::string,std::shared_ptr<RecoilComponentResult> > radiation;
 
   PtRangeResult(int nReco, int nTruth)
       : responseFit(nTruth), responseFitRuSlope(nTruth),
@@ -138,7 +149,15 @@ struct PtRangeResult {
         dataMnuFraction(nTruth), mnuRatio(nTruth),
         mcFnuFraction(nTruth), dataFnuFraction(nTruth), fnuRatio(nTruth),
         mcMnuFsrFraction(nTruth), dataMnuFsrFraction(nTruth),
-        mnuFsrRatio(nTruth) {}
+        mnuFsrRatio(nTruth) {
+    for (const std::string &component : {
+           "radnearhard", "radnearsoft", "radnear",
+           "radnearraw", "radnearue",
+           "radwidehard", "radwidesoft", "radwide",
+           "radwideraw", "radwideue"})
+      radiation[component] =
+        std::make_shared<RecoilComponentResult>(nTruth);
+  }
 };
 
 // The undefined reconstructed tag is intentionally omitted: it is empty for
@@ -1296,6 +1315,16 @@ void analyzeFlavorMatrix(
       "mnufsr",1.,rangeResult.mnuFsrScaleFit,
       rangeResult.mcMnuFsrFraction,rangeResult.dataMnuFsrFraction,
       rangeResult.mnuFsrRatio);
+    // FSR-enriched (0.4<=DeltaR<1) and wide-angle (DeltaR>=1)
+    // reconstructed-jet activity.  The hard/soft split follows the 15 GeV
+    // Type-I boundary, while each stored component already has rho*A removed.
+    // They remain operational regions, not generator-history ISR/FSR labels.
+    for (auto &entry : rangeResult.radiation) {
+      RecoilComponentResult &component = *entry.second;
+      fitRecoilFraction(
+        entry.first.c_str(),1.,component.fit,component.mcTruth,
+        component.dataTruth,component.ratio);
+    }
     return rangeResult;
   };
 
@@ -1656,6 +1685,86 @@ void analyzeFlavorMatrix(
       }
     }
   }
+
+  const std::vector<std::string> radiationComponents = {
+    "radnearhard", "radnearsoft", "radnear",
+    "radnearraw", "radnearue",
+    "radwidehard", "radwidesoft", "radwide",
+    "radwideraw", "radwideue",
+  };
+  for (const auto &variantEntry : variantPtFits) {
+    const std::string &variant = variantEntry.first;
+    const std::vector<PtRangeResult> &fits = variantEntry.second;
+    for (int flavor=0; flavor!=nTruth; ++flavor) {
+      const std::string flavorName = truthGroups[flavor].name;
+      for (const std::string &componentName : radiationComponents) {
+        TGraphErrors mcGraph;
+        TGraphErrors dataGraph;
+        TGraphErrors ratioGraph;
+        const std::string suffix = "_"+variant+"_"+flavorName;
+        mcGraph.SetName(Form("g_%s_fraction_mc_vs_pt%s",
+                             componentName.c_str(),suffix.c_str()));
+        dataGraph.SetName(Form("g_%s_fraction_data_vs_pt%s",
+                               componentName.c_str(),suffix.c_str()));
+        ratioGraph.SetName(Form(
+          "g_%s_fraction_ratio_data_over_mc_vs_pt%s",
+          componentName.c_str(),suffix.c_str()));
+        for (size_t bin=0; bin<fits.size(); ++bin) {
+          const auto found = fits[bin].radiation.find(componentName);
+          if (found==fits[bin].radiation.end() || !found->second) continue;
+          const RecoilComponentResult &component = *found->second;
+          if (!component.fit.solved || component.fit.rank<nTruth ||
+              !std::isfinite(component.fit.nonzeroCondition) ||
+              component.fit.nonzeroCondition>100.)
+            continue;
+          addSummaryPoint(&mcGraph,bin,component.mcTruth[flavor]);
+          addSummaryPoint(&dataGraph,bin,component.dataTruth[flavor]);
+          addSummaryPoint(&ratioGraph,bin,component.ratio[flavor]);
+        }
+        mcGraph.Write();
+        dataGraph.Write();
+        ratioGraph.Write();
+        if (variant=="tc") {
+          mcGraph.Write(Form("g_%s_fraction_mc_vs_pt_%s",
+                             componentName.c_str(),flavorName.c_str()));
+          dataGraph.Write(Form("g_%s_fraction_data_vs_pt_%s",
+                               componentName.c_str(),flavorName.c_str()));
+          ratioGraph.Write(Form(
+            "g_%s_fraction_ratio_data_over_mc_vs_pt_%s",
+            componentName.c_str(),flavorName.c_str()));
+        }
+      }
+    }
+  }
+
+  // Direct particle-level jet-axis controls.  These do not depend on the
+  // data inversion and therefore provide the cleanest check of how much of
+  // the reconstructed near/wide energy trend is already present in the
+  // shower and in the 3/15 GeV generator-jet partition.
+  for (const std::string variant : {"ab","ad","tc","pf"})
+    for (int flavor=0; flavor!=nTruth; ++flavor)
+      for (const std::string component : {
+             "genradnearhard", "genradnearsoft", "genradnear",
+             "genradwidehard", "genradwidesoft", "genradwide"}) {
+        TGraphErrors graph;
+        graph.SetName(Form("g_%s_mc_vs_pt_%s_%s",component.c_str(),
+                           variant.c_str(),truthGroups[flavor].name));
+        for (size_t bin=0; bin+1<ptFitEdges.size(); ++bin) {
+          const ProfileSummary value = readComponentAcrossReco(
+            mcFile.get(),component.c_str(),variant.c_str(),
+            truthGroups[flavor].sourceIds,ptFitEdges[bin],ptFitEdges[bin+1]);
+          if (!value.valid) continue;
+          const int point = graph.GetN();
+          graph.SetPoint(point,std::sqrt(ptFitEdges[bin]*ptFitEdges[bin+1]),
+                         value.mean);
+          graph.SetPointError(point,
+            0.5*(ptFitEdges[bin+1]-ptFitEdges[bin]),value.error);
+        }
+        graph.Write();
+        if (variant=="tc")
+          graph.Write(Form("g_%s_mc_vs_pt_%s",component.c_str(),
+                           truthGroups[flavor].name));
+      }
 
   // Flavor-resolved effective recoil responses for the next production.
   // The ratio of means becomes unstable when the generator component is

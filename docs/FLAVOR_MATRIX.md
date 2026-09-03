@@ -92,6 +92,61 @@ both data and MC component means. It does not replace the nominal constant:
 the fitted flavor shifts are written to `response_ru_slope_impact.tsv` and to
 separate ROOT graphs.
 
+## Near-cone and wide-angle radiation controls
+
+New productions retain a jet-axis decomposition intended to test whether the
+apparent pT dependence of the gluon-to-quark recoil ratio contains a growing
+wide-angle ISR contribution. For each accepted probe jet, every other stored
+jet with positive pT is lepton cleaned and assigned by its distance from the
+probe axis:
+
+- `near`: `0.4 <= DeltaR(other jet, probe) < 1.0`, an out-of-cone-FSR-enriched
+  annulus;
+- `wide`: `DeltaR(other jet, probe) >= 1.0`, a wide-angle/ISR-enriched control;
+- `hard`: `pT > 15 GeV`, matching the reconstructed Type-I/HT boundary;
+- `soft`: `0 < pT <= 15 GeV`, a resolved-jet proxy for the part of the
+  unclustered recoil below that boundary.
+
+The selected probe is excluded. Each other-jet momentum is projected onto the
+same axis used by the parallel or transverse response estimator and normalized
+to pT,Z. The following profiles are stored for every reference-pT convention:
+
+```text
+p3rad{near,wide}{hard,soft}{raw,ue}<variant>_flavormatrix
+p3rad{near,wide}{hard,soft}<variant>_flavormatrix
+p3rad{near,wide}{raw,ue}<variant>_flavormatrix
+p3rad{near,wide}<variant>_flavormatrix
+p3rad{near,wide}{hard,soft}count<variant>_flavormatrix
+```
+
+`raw` is the measured projected jet-axis recoil, `ue` is the corresponding
+projected `rho * Jet_area` estimate, and the name without a suffix is
+`raw - ue`. The combined near/wide quantities are the sums of their hard and
+soft parts. Keeping all three forms is deliberate: PUPPI already suppresses
+pileup and a global FastJet rho need not be an unbiased estimate of the UE
+inside a selected jet population. The subtraction must therefore be tested
+against data and particle-level closure rather than assumed.
+
+For MC, matching particle-level profiles are written as
+
+```text
+p3genrad{near,wide}{hard,soft}<variant>_flavormatrix
+p3genrad{near,wide}<variant>_flavormatrix
+```
+
+using the generator Z projection, excluding the selected GenJet and generator
+jets overlapping the selected generator muons. The current custom JMENANO
+stores GenJets down to 3 GeV. These objects expose the 3--15 GeV resolved
+component but cannot recover truly diffuse particles below the GenJet
+threshold.
+
+The near and wide regions are operational enrichments, not truth-level ISR and
+FSR labels. Initial--final color interference, Born-channel composition,
+acceptance, and the finite jet threshold all remain. A useful closure sequence
+is therefore raw reconstructed activity, rho-area-subtracted activity, and the
+direct GenJet analogue, followed by the near/wide pT dependence and their
+gluon-to-quark ratios.
+
 For a conditional data constraint, new productions store the event-level
 closure proxy
 
