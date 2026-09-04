@@ -267,18 +267,19 @@ rank 4 with condition number below 100.
 \end{columns}
 \end{frame}
 
-\IfFileExists{radnear_fraction_data_mc_vs_pt.pdf}{
+\IfFileExists{output/flavorMatrix/radnear_fraction_data_mc_vs_pt.pdf}{
 \begin{frame}{Near-cone recoil is an FSR-enriched, not FSR-labelled, observable}
 \begin{columns}[c,onlytextwidth]
 \column{0.50\textwidth}\includegraphics[width=0.92\linewidth]{radnear_fraction_data_mc_vs_pt.pdf}
-\column{0.50\textwidth}\includegraphics[width=0.92\linewidth]{radnear_gluon_over_quark.pdf}
+\column{0.50\textwidth}\includegraphics[width=0.92\linewidth]{radiation_near_reco_gen.pdf}
 \end{columns}
 \vspace{-0.25em}\tiny
 For every selected probe, additional lepton-cleaned jets are summed in
 $0.4\leq\Delta R(j,\mathrm{probe})<1.0$. The projected $\rho A$ estimate is
-stored separately and subtracted only in this displayed control. The annulus
-enriches out-of-cone FSR, but color-dipole interference and ISR contamination
-remain; it is therefore not assigned a generator-history label.
+stored separately. The right panel shows that subtracting the full global
+$\rho A$ estimate overshoots the direct GenJet control at low $p_T$; raw,
+subtracted and particle-level quantities must therefore remain separate. The
+annulus enriches out-of-cone FSR but is not a generator-history label.
 \end{frame}
 
 \begin{frame}{The 15 GeV Type-I boundary is exposed explicitly}
@@ -297,14 +298,14 @@ jet-axis proxy. Generator jets are stored down to 3 GeV in this JMENANO.
 \begin{frame}{Wide-angle activity is the ISR-enriched control region}
 \begin{columns}[c,onlytextwidth]
 \column{0.50\textwidth}\includegraphics[width=0.92\linewidth]{radwide_fraction_data_mc_vs_pt.pdf}
-\column{0.50\textwidth}\includegraphics[width=0.92\linewidth]{radwide_gluon_over_quark.pdf}
+\column{0.50\textwidth}\includegraphics[width=0.92\linewidth]{radiation_wide_reco_gen.pdf}
 \end{columns}
 \vspace{-0.25em}\tiny
 The complementary $\Delta R\geq1$ region is ISR enriched. Comparing its
-absolute scale and $p_T$ running with the near annulus tests whether the falling
-effective gluon/quark ratio is caused by an increasingly important,
-approximately flavor-independent wide-angle pedestal. Channel fractions,
-PDFs, acceptance and dipole geometry prevent treating it as universal ISR.
+absolute scale and $p_T$ running with the near annulus tests the proposed
+wide-angle pedestal. The signed projected sum crosses zero for some flavors,
+so a direct gluon/quark quotient is singular there. Channel fractions, PDFs,
+acceptance and dipole geometry also prevent treating it as universal ISR.
 \end{frame}
 }{}
 

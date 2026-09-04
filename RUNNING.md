@@ -459,10 +459,14 @@ lookup header was generated from the committed JSON. It then prepares the full
 campaign only after the smoke test has completed and passed
 `status_condor.py`.
 
-Submission, merging, and replacement of the compatibility ROOT file each
-require a separate `y` answer. Answering `n` stops at a recorded checkpoint;
-submitted jobs continue independently. Resume later with the command printed
-by the driver, for example:
+Submission, merging, local download of the two merged ROOT files, and
+replacement of the compatibility ROOT file each require a separate `y`
+answer. After the EOS merge, the driver downloads `zjet_DATA.root` and
+`zjet_MC.root` atomically to `rootfiles/` by default. Use
+`--merged-local-dir` to choose another directory. Existing local files are
+replaced only after a complete non-empty `.part` download succeeds. Answering
+`n` stops at a recorded checkpoint; submitted jobs continue independently.
+Resume later with the command printed by the driver, for example:
 
 ```bash
 python3 runCondorAnalysis.py --resume run2024i_v11m_20260811

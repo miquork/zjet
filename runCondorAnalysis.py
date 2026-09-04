@@ -22,7 +22,7 @@ WORKFLOW_DIR = REPOSITORY / "condor" / "jobs" / "_workflows"
 STAGES = [
     "created", "preflight_complete", "smoke_prepared", "smoke_submitted",
     "smoke_ready", "full_prepared", "full_submitted", "full_ready",
-    "merged", "compatibility_written",
+    "merged", "merged_downloaded", "compatibility_written",
 ]
 PRESETS = {
     "run2024i": {
@@ -149,6 +149,7 @@ def create_state(args: argparse.Namespace, preset_name: str) -> Dict[str, object
         "files_per_job": args.files_per_job,
         "poll_seconds": args.poll_seconds,
         "compatibility_output": str(args.compatibility_output),
+        "merged_local_directory": str(args.merged_local_dir),
         "flavor_placeholders": args.flavor_placeholders,
         **storage,
         "clusters": {},
@@ -460,6 +461,41 @@ def merge(state_path_value: Path, state: Dict[str, object]) -> None:
     advance(state_path_value, state, "merged")
 
 
+def download_merged(state_path_value: Path,
+                    state: Dict[str, object]) -> None:
+    destination = Path(str(state.get(
+        "merged_local_directory", "rootfiles"))).expanduser()
+    if not destination.is_absolute():
+        destination = REPOSITORY / destination
+    merged = str(state["merged_directory"]).rstrip("/")
+    if not confirm(
+            f"Copy merged data and MC ROOT files to {destination}?",
+            default=True):
+        state["merged_files_local"] = False
+        advance(state_path_value, state, "merged_downloaded")
+        return
+
+    destination.mkdir(parents=True, exist_ok=True)
+    for sample in ("DATA", "MC"):
+        source = f"{merged}/zjet_{sample}.root"
+        output = destination / f"zjet_{sample}.root"
+        temporary = output.with_name(output.name + ".part")
+        if temporary.exists():
+            temporary.unlink()
+        try:
+            run(["xrdcp", "-f", source, str(temporary)])
+            if not temporary.is_file() or temporary.stat().st_size == 0:
+                raise RuntimeError(
+                    f"downloaded merged file is missing or empty: {source}")
+            temporary.replace(output)
+        finally:
+            if temporary.exists():
+                temporary.unlink()
+    state["merged_files_local"] = True
+    state["merged_local_directory"] = str(destination)
+    advance(state_path_value, state, "merged_downloaded")
+
+
 def write_compatibility(state_path_value: Path,
                         state: Dict[str, object]) -> None:
     output = Path(str(state["compatibility_output"]))
@@ -520,6 +556,10 @@ def main() -> None:
     parser.add_argument("--eos-root")
     parser.add_argument("--compatibility-output", type=Path,
                         default=Path("rootfiles/zjet_JMENANO_compat.root"))
+    parser.add_argument(
+        "--merged-local-dir", type=Path, default=Path("rootfiles"),
+        help=("directory receiving atomic local copies of the merged data "
+              "and MC ROOT files after the EOS merge"))
     parser.add_argument("--flavor-placeholders", action="store_true",
                         help="write explicitly marked empty Z+flavor objects")
     parser.add_argument("--skip-pull", action="store_true")
@@ -583,6 +623,8 @@ def main() -> None:
             elif stage == "full_ready":
                 merge(path, state)
             elif stage == "merged":
+                download_merged(path, state)
+            elif stage == "merged_downloaded":
                 write_compatibility(path, state)
             else:
                 raise RuntimeError(f"unknown workflow stage: {stage}")
@@ -600,6 +642,8 @@ def main() -> None:
         raise SystemExit(1)
 
     print("Workflow complete.")
+    if state.get("merged_files_local"):
+        print(f"Merged ROOT files: {state['merged_local_directory']}")
     print(f"Compatibility file: {state['compatibility_output']}")
 
 
