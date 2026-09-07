@@ -139,6 +139,30 @@ void embedCampaignMetadata(const char *rootFile, const char *metadataFile) {
   // already merged TProfiles so every pT bin occurs exactly once.
   finalizeTruthGraphs(output);
 
+  // The audit schema is nested, whereas the historical metadata pass below
+  // operates at the file root. Do not accumulate one definition cycle/job.
+  if (TDirectory *audit = output.GetDirectory("ResponseAudit")) {
+    std::string definition;
+    bool found = false;
+    TIter nextAudit(audit->GetListOfKeys());
+    while (TKey *key=dynamic_cast<TKey*>(nextAudit())) {
+      if (std::string(key->GetName())!="definition") continue;
+      std::unique_ptr<TObject> object(key->ReadObj());
+      auto *value=dynamic_cast<TObjString*>(object.get());
+      if (!value) throw std::runtime_error("Invalid ResponseAudit definition");
+      const std::string text=value->GetString().Data();
+      if (found && text!=definition)
+        throw std::runtime_error("Cannot merge different ResponseAudit schemas");
+      definition=text; found=true;
+    }
+    if (found) {
+      audit->cd(); audit->Delete("definition;*");
+      TObjString value(definition.c_str());
+      value.Write("definition",TObject::kOverwrite);
+    }
+    output.cd();
+  }
+
   // hadd keeps one key cycle per worker for non-mergeable TObjString
   // metadata. Require every worker value to agree, remove every old cycle,
   // and rewrite each item once so TBrowser shows a clean ;1 key instead of

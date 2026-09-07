@@ -1,4 +1,5 @@
 #include "zjet.h"
+#include "validateResponseAudit.C"
 
 #include <TChain.h>
 #include <TFile.h>
@@ -73,6 +74,7 @@ void run_zjet_job(const char *inputList, bool isMC, const char *outputFile,
                 jecL2,jecResidual,jerResolution,jerScaleFactor,
                 muonCorrections,jetVetoMap);
   analysis.Loop();
+  validateResponseAudit(outputFile);
 
   TFile check(outputFile,"READ");
   TH2 *inclusiveCounts =
@@ -194,6 +196,10 @@ void run_zjet_job(const char *inputList, bool isMC, const char *outputFile,
       !check.Get("FlavorMatrix/taggerAudit/h3counts_pnetqvg") ||
       !check.Get("FlavorMatrix/taggerAudit/h3counts_upartqvg") ||
       !check.Get("FlavorMatrix/taggerAudit/p3fnu_deepjetqvg") ||
+      !check.Get("ResponseAudit/definition") ||
+      !check.Get("ResponseAudit/new/hybrid_pnet030/counts") ||
+      !check.Get("ResponseAudit/common_legacy/deepjet/mu") ||
+      !check.Get("ResponseAudit/Ru/native_truth_blocks") ||
       !check.Get("zjet_truth_hdm_definition") ||
       !check.Get("zjet_previous_residual_definition") ||
       !check.Get("zjet_synchronized_selection") ||

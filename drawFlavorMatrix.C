@@ -309,12 +309,15 @@ void drawTaggerResponseAudit(TFile &mc, TFile &data,
             std::fabs(dataHDM.weight)<25. || std::fabs(mcHDM.weight)<25.)
           continue;
         const int point = graph->GetN();
-        graph->SetPoint(point,axis->GetYaxis()->GetBinCenter(bin),
+        const double rawScore=axis->GetYaxis()->GetBinCenter(bin);
+        // NanoAOD DeepFlavQG is GvsQ, unlike PNet/UParT QvsG.
+        graph->SetPoint(point,std::string(tagger.name)=="deepjet" ? 1.-rawScore : rawScore,
                         dataHDM.mean/mcHDM.mean);
         graph->SetPointError(point,0.5*axis->GetYaxis()->GetBinWidth(bin),
           std::fabs(std::hypot(dataHDM.error/mcHDM.mean,
             dataHDM.mean*mcHDM.error/(mcHDM.mean*mcHDM.mean))));
       }
+    graph->Sort();
     graph->SetLineColor(tagger.color); graph->SetMarkerColor(tagger.color);
     graph->SetMarkerStyle(tagger.marker); graph->SetLineWidth(2);
     graphs.push_back(std::move(graph));

@@ -62,10 +62,10 @@ echo "Compiler cache disabled; temporary files are local to ${PWD}."
 
 if command -v sha256sum >/dev/null 2>&1; then
   echo "Transferred analysis source SHA256 values:"
-  sha256sum zjet.C zjet.h FlavorMatrixTools.h ZJetJerResolution.h \
+  sha256sum zjet.C zjet.h FlavorMatrixTools.h ZJetResponseAudit.h ZJetJerResolution.h \
     ZJetMuonCorrections.h \
     data/MuonCorrections/2024_Summer24_generated.h \
-    mk_compile.C run_zjet_job.C validateFlavorMatrix.C
+    mk_compile.C run_zjet_job.C validateFlavorMatrix.C validateResponseAudit.C
 fi
 
 if [[ -z "${X509_USER_PROXY:-}" || ! -r "${X509_USER_PROXY}" ]]; then

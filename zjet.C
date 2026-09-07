@@ -18,6 +18,7 @@
 #include "ZJetJerResolution.h"
 #include "ZJetMuonCorrections.h"
 #include "FlavorMatrixTools.h"
+#include "ZJetResponseAudit.h"
 #include "CondFormats/JetMETObjects/interface/FactorizedJetCorrector.h"
 #include "CondFormats/JetMETObjects/interface/JetCorrectorParameters.h"
 
@@ -1643,6 +1644,8 @@ void zjet::Loop()
    }
 
    FlavorMatrixHistograms flavorMatrix = bookFlavorMatrix(fout);
+   auto responseAudit = ZJetResponseAudit::book(
+     fout,flavorMatrixPtBinCount,flavorMatrixPtBins);
 
    fout->mkdir("l2res1");
    fout->cd("l2res1");
@@ -2442,6 +2445,15 @@ void zjet::Loop()
         return result;
       };
 
+      int auditLegacyIndex = -1;
+      ZJetResponseAudit::Response auditLegacyResponse;
+      const unsigned auditBlock = ZJetResponseAudit::block(event,run,luminosityBlock);
+      auto auditScores = [&](int j) {
+        return ZJetResponseAudit::Scores{Jet_btagDeepFlavB[j],
+          Jet_btagDeepFlavCvB[j],Jet_btagDeepFlavCvL[j],Jet_btagDeepFlavQG[j],
+          Jet_btagUParTAK4CvB[j],Jet_btagUParTAK4CvL[j],
+          Jet_btagPNetQvG[j],Jet_btagUParTAK4QvG[j]};
+      };
       // Legacy leading-jet reference. It shares the synchronized event and
       // dimuon selection above but retains the reference analysis choices,
       // including its alpha definition and JetID setting.
@@ -2602,6 +2614,17 @@ void zjet::Loop()
                 absLegacyEta,ptz,jetInverseResidual[legacyJetIndex],
                 legacyEventWeight);
               if (absLegacyEta>0. && absLegacyEta<1.3) {
+                auditLegacyIndex = legacyJetIndex;
+                auditLegacyResponse = {mpf,mpf1,mpfn,mpfu,db,
+                                       jetInverseResidual[legacyJetIndex]};
+                const double auditRecoGen = isMC && legacyGeneratorJetIndex>=0 &&
+                  legacyGeneratorJetIndex<nGenJet && GenJet_pt[legacyGeneratorJetIndex]>0.
+                  ? ptj/GenJet_pt[legacyGeneratorJetIndex]
+                  : std::numeric_limits<double>::quiet_NaN();
+                ZJetResponseAudit::fill(responseAudit,"legacy",ptz,
+                  isMC ? generatorFlavorId(Jet_partonFlavour[legacyJetIndex]) : 0,
+                  auditScores(legacyJetIndex),auditLegacyResponse,auditRecoGen,
+                  legacyEventWeight);
                 const TLorentzVector &generatorAxis =
                   generatorRecoil.hasGeneratorZ ? generatorRecoil.z : p4z;
                 const GeneratorPairComponents generatorPair =
@@ -2675,6 +2698,12 @@ void zjet::Loop()
       double jetAreaSum = 0.;
       double jetAreaVectorX = 0.;
       double jetAreaVectorY = 0.;
+      // Common-partition generator recoil: use exactly the reco HT membership,
+      // replace each uniquely matched jet by its GenJet, and compensate in U.
+      // This is a migration diagnostic, not a new particle-level definition.
+      TLorentzVector auditGenHt = generatorRecoil.z;
+      std::vector<bool> auditUsedGen(isMC ? nGenJet : 0,false);
+      bool auditCompleteMatch = isMC && generatorRecoil.hasGeneratorZ;
       ht += p4z;
       for (int ijet = 0; ijet != nJet; ++ijet) {
 	p4jet.SetPtEtaPhiM(Jet_pt[ijet], Jet_eta[ijet], Jet_phi[ijet],
@@ -2682,6 +2711,16 @@ void zjet::Loop()
 	//if (p4jet.DeltaR(p4lplus)>0.4 && p4jet.DeltaR(p4lminus)>0.4 &&
 	if (separatedFromSynchronizedMuons(p4jet) && p4jet.Pt()>15.) {
 	  ht += p4jet;
+          if (isMC) {
+            const int gj=Jet_genJetIdx[ijet];
+            if (gj<0 || gj>=nGenJet || auditUsedGen[gj]) auditCompleteMatch=false;
+            else {
+              auditUsedGen[gj]=true;
+              TLorentzVector g;
+              g.SetPtEtaPhiM(GenJet_pt[gj],GenJet_eta[gj],GenJet_phi[gj],GenJet_mass[gj]);
+              auditGenHt += g;
+            }
+          }
 	  if (std::isfinite(Jet_area[ijet]) && Jet_area[ijet]>=0.) {
 	    jetAreaSum += Jet_area[ijet];
 	    jetAreaVectorX += Jet_area[ijet]*std::cos(Jet_phi[ijet]);
@@ -3078,6 +3117,52 @@ void zjet::Loop()
 		        generatorPairComponents(
 		          genJetIndex,p4jet,p4z,generatorAxis,false);
 		      if (abseta<1.3) {
+		        const ZJetResponseAudit::Response auditValue =
+		          {mpf,mpf1,mpfn,mpfu,db,jetInverseResidual[ijet]};
+		        const double auditRecoGen = generatorPair.valid
+		          ? ptj/generatorPair.genJetPt : std::numeric_limits<double>::quiet_NaN();
+		        ZJetResponseAudit::fill(responseAudit,"new",ptz,truePartonFlavor,
+		          auditScores(ijet),auditValue,auditRecoGen,wt);
+		        responseAudit.selection->Fill(ptz,truePartonFlavor,
+		          auditLegacyIndex<0 ? 0 : (auditLegacyIndex==ijet ? 1 : 2),wt);
+		        if (isMC) responseAudit.truthLabels->Fill(ptz,truePartonFlavor,
+		          genJetIndex>=0 && genJetIndex<nGenJet
+		            ? generatorFlavorId(GenJet_partonFlavour[genJetIndex]) : 0,wt);
+		        if (auditLegacyIndex==ijet) {
+		          ZJetResponseAudit::fill(responseAudit,"common_new",ptz,truePartonFlavor,
+		            auditScores(ijet),auditValue,auditRecoGen,wt);
+		          ZJetResponseAudit::fill(responseAudit,"common_legacy",ptz,truePartonFlavor,
+		            auditScores(ijet),auditLegacyResponse,auditRecoGen,wt);
+		        }
+		        ZJetResponseAudit::fillRu(responseAudit,"closure",ptz,truePartonFlavor,
+		          recoHybridFlavor,1.-mpf1-mpfn,mpfu,mpfn,wt,auditBlock);
+		        if (generatorRecoil.hasGeneratorZ && generatorPair.valid) {
+		          // Test the data proxy on exactly the truth-regression population.
+		          ZJetResponseAudit::fillRu(responseAudit,"closure_matched",ptz,truePartonFlavor,
+		            recoHybridFlavor,1.-mpf1-mpfn,mpfu,mpfn,wt,auditBlock);
+		          ZJetResponseAudit::fillRu(responseAudit,"closure_truth",ptz,truePartonFlavor,
+		            recoHybridFlavor,generatorPair.genMpfuRecoAxis,1.-mpf1-mpfn,
+		            generatorPair.genMpfnRecoAxis,wt,auditBlock);
+		          ZJetResponseAudit::fillRu(responseAudit,"native",ptz,truePartonFlavor,
+		            recoHybridFlavor,generatorPair.genMpfuRecoAxis,mpfu,
+		            generatorPair.genMpfnRecoAxis,wt,auditBlock);
+		          ZJetResponseAudit::fillRu(responseAudit,
+		            Rho_fixedGridRhoFastjetAll<25. ? "native_lowrho" : "native_highrho",
+		            ptz,truePartonFlavor,recoHybridFlavor,generatorPair.genMpfuRecoAxis,
+		            mpfu,generatorPair.genMpfnRecoAxis,wt,auditBlock);
+		          if (auditCompleteMatch && genJetIndex>=0 && auditUsedGen[genJetIndex]) {
+		            ZJetResponseAudit::fillRu(responseAudit,"native_complete",ptz,truePartonFlavor,
+		              recoHybridFlavor,generatorPair.genMpfuRecoAxis,mpfu,
+		              generatorPair.genMpfnRecoAxis,wt,auditBlock);
+		            const TLorentzVector commonU=generatorRecoil.met+auditGenHt;
+		            const double genU=(commonU.Px()*p4z.Px()+commonU.Py()*p4z.Py())/(ptz*ptz);
+		            // Preserve N+U exactly under the partition change.
+		            const double genN=generatorPair.genMpfnRecoAxis+
+		              generatorPair.genMpfuRecoAxis-genU;
+		            ZJetResponseAudit::fillRu(responseAudit,"common",ptz,truePartonFlavor,
+		              recoHybridFlavor,genU,mpfu,genN,wt,auditBlock);
+		          }
+		        }
 		        const RadiationFlowComponents radiation =
 		          reconstructedRadiationFlow(ijet,p4jet,p4z);
 		        fillFlavorMatrix(

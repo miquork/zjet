@@ -181,6 +181,10 @@ def main() -> None:
             )
             subprocess.run(["root", "-l", "-b", "-q", validation_macro],
                            cwd=REPOSITORY, check=True)
+            audit_macro = (f'validateResponseAudit.C('
+                           f'"{root_macro_argument(temporary)}",false)')
+            subprocess.run(["root", "-l", "-b", "-q", audit_macro],
+                           cwd=REPOSITORY, check=True)
             if remote_destination:
                 output = destination + output_name
                 upload(temporary,output,args.force)

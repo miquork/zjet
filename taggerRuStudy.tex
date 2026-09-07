@@ -1,0 +1,158 @@
+\documentclass[aspectratio=169,10pt]{beamer}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern,amsmath,booktabs,graphicx,array}
+\definecolor{cmsblue}{RGB}{0,92,170}
+\setbeamercolor{structure}{fg=cmsblue}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}{\hfill\scriptsize CMS Work in progress\quad
+  \insertframenumber/\inserttotalframenumber\hspace{1em}\vspace{2mm}}
+\setbeamersize{text margin left=7mm,text margin right=7mm}
+\graphicspath{{output/taggerRu/}}
+\title{Separating tagger, purity and recoil-response effects}
+\subtitle{A controlled path from DeepJet to hybrid ParticleNet}
+\date{Run 2024I + Summer24 DY; parallel barrel probes}
+\begin{document}
+\begin{frame}
+\titlepage
+\small\centering Existing full production: central-value diagnostics.\\
+New crossed controls: locally smoke-tested; full Condor production still required.
+\end{frame}
+\begin{frame}{First fix the discriminator direction, not the fitted answer}
+\small
+\begin{align*}
+\texttt{DeepFlavQG}&=P(g)/[P(g)+P(uds)],\\
+\texttt{PNetQvG},\ \texttt{UParTQvG}&:\quad\text{large score selects quarks}.
+\end{align*}
+Verified in the actual NanoAOD branch descriptions and the
+\href{https://github.com/cms-sw/cmssw/blob/master/PhysicsTools/NanoAOD/python/jetsAK4_Puppi_cff.py}{CMSSW NanoAOD definition}.
+\begin{itemize}
+\item Compare $1-\texttt{DeepFlavQG}$ with QvG. Historical q/g names were reversed.
+\item A consistent row permutation of counts, purities and responses cannot
+change a correctly performed inversion. This is not yet the full explanation.
+\item Retain both historical and corrected DeepJet policies in the new audit.
+\end{itemize}
+\end{frame}
+\begin{frame}{Equal gluon efficiency exposes response sculpting}
+\begin{columns}[c,onlytextwidth]
+\column{.53\textwidth}\includegraphics[width=\linewidth]{score_sculpting.pdf}
+\column{.45\textwidth}\small
+Pure truth-$g$ MC, same existing parallel sample. Thresholds approximate the
+PNet $QvG<0.3$ gluon efficiency in each $p_{T,Z}$ bin (score grid 0.025).
+\medskip
+
+Vertical axis: change of mean MPF1, in percentage points; \emph{not} an
+unfolded data/MC JES residual.
+\medskip
+
+No common heavy-flavor veto is available in these marginal profiles.
+The next production applies one and records $p_T^{reco}/p_T^{gen}$ versus score.
+\end{columns}
+\end{frame}
+\begin{frame}{The slope and the mean answer different questions}
+\small With $x=f_u^{gen}$ and $y=m_u^{reco}$, on the same matched population:
+\[
+R_0=\frac{\langle xy\rangle}{\langle x^2\rangle},\qquad
+R_{\rm mean}=\frac{\langle y\rangle}{\langle x\rangle},\qquad
+b=\frac{\operatorname{Cov}(x,y)}{\operatorname{Var}(x)},\quad a=\langle y\rangle-b\langle x\rangle.
+\]
+\begin{center}\input{output/taggerRu/summary_table.tex}\end{center}
+\centering $50<p_{T,Z}<70$ GeV; existing full MC, truth 0 kept separate.
+\medskip
+
+\raggedright $R_0$ minimizes $\langle(y-Rx)^2\rangle$. It does not guarantee
+$\langle y/R\rangle=\langle x\rangle$. These are central values without
+joint-moment uncertainties; no significance claim is made.
+\end{frame}
+\begin{frame}{Do not identify $R_u\simeq0.5$ with a universal mean response}
+\begin{columns}[c,onlytextwidth]
+\column{.5\textwidth}\centering\includegraphics[width=.93\linewidth]{ru_slope.pdf}
+\column{.5\textwidth}\centering\includegraphics[width=.93\linewidth]{ru_mean.pdf}
+\end{columns}
+\small Same populations and definitions in both panels. Large mean ratios
+at high $p_T$ can arise from a small signed denominator; not a calorimeter gain.
+\end{frame}
+\begin{frame}{A direct closure diagnostic before changing HDM}
+\begin{columns}[c,onlytextwidth]
+\column{.53\textwidth}\includegraphics[width=\linewidth]{ru_bias.pdf}
+\column{.45\textwidth}\small
+The plotted quantity is the bias in the inferred mean $f_u$ after division
+by the flavor-specific zero-intercept slope. It is not an HDM response shift.
+\medskip
+
+Priorities: separate threshold migration, allow an intercept, test dependence
+on flavor and $\rho$, then propagate the validated model into HDM.
+\medskip
+
+No central $R_u$, JER, or JEC constant has been changed by this audit.
+\end{columns}
+\end{frame}
+\begin{frame}{A data closure proxy is not an independent measurement of $R_u$}
+\begin{columns}[c,onlytextwidth]
+\column{.53\textwidth}\includegraphics[width=\linewidth]{closure_proxy.pdf}
+\column{.45\textwidth}\small
+For $R_2=R_n=1$,
+\[
+x_c=1-m_2-m_n=1-m_0+m_u.
+\]
+Regressing $m_u$ on $x_c$ reuses the same recoil fluctuations. The shared noise
+and leading-jet resolution can bias the slope.
+\medskip
+
+Compare this proxy with truth in MC first. A data/MC proxy difference is a
+control discrepancy, not automatically $R_{u,data}/R_{u,MC}$.
+Do not tune $R_u$ to force $C_A/C_F$ or $\alpha_s$ agreement.
+\end{columns}
+\end{frame}
+\begin{frame}{Next production: crossed taggers and identical probes}
+\small
+\begin{tabular}{>{\raggedright\arraybackslash}p{.29\textwidth}p{.63\textwidth}}
+\toprule Control & What it isolates\\\midrule
+Historical / corrected DeepJet & Pure category-name permutation check\\
+UParT HF + DeepJet/PNet/UParT QvG & QvG choice at fixed heavy-flavor selection\\
+Common-valid light-score profiles & Equal MC gluon efficiency; identical support\\
+New / legacy / common-new / common-legacy & Jet choice, event selection and response definition\\
+Jet vs GenJet truth labels & Flavor-label migration without changing labels silently\\
+$p_T^{reco}/p_T^{gen}$, MPF components & MC JES sculpting vs recoil/selection effects\\\bottomrule
+\end{tabular}
+\medskip
+
+Threshold scans: PNet 0.2/0.3/0.4; aligned DeepJet 0.3/0.5/0.7;
+UParT 0.5/0.8/0.95. These are study thresholds, not certified SF working points.
+\end{frame}
+\begin{frame}{Purity and HDM: test the inversion rather than hiding it}
+\small
+Data tag fractions do not determine every truth-to-reco transition.
+Compare an unmodified MC purity model with the existing minimum-KL/IPF
+construction at fixed MC truth fractions; report rank/condition without a unity prior.
+\medskip
+
+For a reco category with truth purities $P_f$, define
+\[
+N_f=m_{0f}-m_{nf}-m_{uf},\qquad D_f=1-m_{nf}/R_n-m_{uf}/R_u.
+\]
+HDM is $\sum_f P_fN_f/\sum_fP_fD_f$, not $\sum_fP_fN_f/D_f$.
+The crossed fit uses the former, with flavor scales multiplying $N_f$ while
+holding the MC $D_f$ fixed. This is an explicit model, not a model-free unfolding.
+\medskip
+
+MC-as-data closure and the historical/corrected row-permutation test are required.
+Conditional fit errors omit MC/template and model uncertainties.
+\end{frame}
+\begin{frame}{Next production: diagnose the origin of the recoil slope}
+\small
+\begin{itemize}
+\item Native generator HT threshold vs the reco-selected, uniquely matched
+GenJet partition. Compare both on the same complete-match subset.
+\item Preserve $f_n+f_u$ under partition migration; unmatched jets remain an
+explicit acceptance limitation, not an assumed zero-energy contribution.
+\item Store joint $u$/$n$ moments: zero-intercept, affine, and partial regression
+can distinguish unclustered response from $n\leftrightarrow u$ mixing.
+\item Separate truth/reco flavor and low/high $\rho$ (25 GeV boundary).
+\item Twenty deterministic event-hash blocks retain correlated probes and
+allow merge-safe delete-group uncertainty estimates for the slope.
+\end{itemize}
+\medskip
+Recommended order: tagger/MC closure $\to$ partition/affine closure $\to$
+data proxy validation $\to$ calibrated HDM $\to$ an independent FSR interpretation.
+\end{frame}
+\end{document}
