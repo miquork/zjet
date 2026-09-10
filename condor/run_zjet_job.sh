@@ -13,6 +13,8 @@ jer_resolution="${9:-}"
 jer_scale_factor="${10:-}"
 muon_corrections="${11:-}"
 jet_veto_map="${12:-}"
+export ZJET_ANALYSIS_MODE="${13:-both}"
+case "$ZJET_ANALYSIS_MODE" in both|legacy) ;; *) echo 'Invalid analysis mode' >&2; exit 2;; esac
 
 [[ "${golden_json}" == "-" ]] && golden_json=""
 [[ "${lumi_pileup}" == "-" ]] && lumi_pileup=""
@@ -40,14 +42,15 @@ preserve_failed_status() {
 trap preserve_failed_status EXIT
 
 case "${sample}" in
-  mc) is_mc=true ;;
+  mc|tt) is_mc=true ;;
   data) is_mc=false ;;
-  *) echo "ERROR: sample must be mc or data, got ${sample}" >&2; exit 2 ;;
+  *) echo "ERROR: sample must be mc, tt or data, got ${sample}" >&2; exit 2 ;;
 esac
 
 echo "Job started at $(date -u '+%Y-%m-%dT%H:%M:%SZ') on $(hostname)."
 echo "Working directory: $(pwd)"
 echo "Sample: ${sample}; input list: ${input_list}; output: ${output_file}"
+echo "Analysis mode: ${ZJET_ANALYSIS_MODE}"
 
 # getenv=True is needed for the lxplus ROOT runtime, but it can also inherit a
 # ccache directory below the user's small AFS home quota.  Keep every compiler
@@ -62,8 +65,8 @@ echo "Compiler cache disabled; temporary files are local to ${PWD}."
 
 if command -v sha256sum >/dev/null 2>&1; then
   echo "Transferred analysis source SHA256 values:"
-  sha256sum zjet.C zjet.h FlavorMatrixTools.h ZJetResponseAudit.h ZJetJerResolution.h \
-    ZJetMuonCorrections.h \
+  sha256sum zjet.C zjet.h FlavorMatrixTools.h ZJetResponseAudit.h ZJetTaggingControls.h ZJetInputCounters.h ZJetJerResolution.h \
+    ZJetMuonCorrections.h ZJetLegacyReplay.h \
     data/MuonCorrections/2024_Summer24_generated.h \
     mk_compile.C run_zjet_job.C validateFlavorMatrix.C validateResponseAudit.C
 fi

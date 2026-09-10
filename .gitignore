@@ -74,6 +74,8 @@ rootfiles/*
 !rootfiles/.gitkeep
 pdf/
 output/
+/private/
+/data/Tagging/official_2024.txt
 tmp/
 textfiles/generated/
 condor/jobs/

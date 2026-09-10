@@ -58,6 +58,13 @@ PRESETS = {
 }
 
 
+PRESETS['run2024i_tt'] = dict(PRESETS['run2024i'],
+    label='Run 2024I data + separate DY and TT MC, official UParT WP controls',
+    tt_list='textfiles/generated/summer24_tt.txt')
+PRESETS['run2024i_legacy_tt'] = dict(PRESETS['run2024i_tt'],
+    label='Legacy leading-jet flavor baseline: UParT B, DATA + DY + TT, offline retagging',
+    analysis_mode='legacy', compatibility_mode='none')
+
 def run(command: List[str], *, capture: bool = False, check: bool = True,
         environment: Optional[Dict[str, str]] = None
         ) -> subprocess.CompletedProcess:
@@ -310,6 +317,9 @@ def preflight(state: Dict[str, object], preset: Dict[str, object],
     generated_header = (
         REPOSITORY / "data/MuonCorrections/2024_Summer24_generated.h"
     )
+    if preset.get('tt_list'):
+        for value in [preset['tt_list'],'data/Tagging/official_2024.txt']:
+            if not (REPOSITORY/value).is_file():raise FileNotFoundError(value)
     temporary_header = (
         REPOSITORY / ".cache/condor-preflight/2024_Summer24_generated.h"
     )
@@ -326,7 +336,7 @@ def preflight(state: Dict[str, object], preset: Dict[str, object],
         )
     run(["root", "-l", "-b", "-q", "mk_compile.C"],
         environment=local_compiler_environment())
-    for key in ("mc_list", "data_list"):
+    for key in ("mc_list", "data_list") + (("tt_list",) if preset.get('tt_list') else ()):
         path = REPOSITORY / str(preset[key])
         first = next(line.strip() for line in path.read_text(
             encoding="utf-8").splitlines() if line.strip() and
@@ -357,6 +367,10 @@ def prepare_command(state: Dict[str, object], preset: Dict[str, object],
     ]
     if smoke:
         command.extend(["--max-mc-files", "1", "--max-data-files", "1"])
+    if preset.get('tt_list'):
+        command.extend(['--tt-list',str(preset['tt_list'])])
+        if smoke:command.extend(['--max-tt-files','1'])
+    command.extend(['--analysis-mode',str(preset.get('analysis_mode','both'))])
     return command
 
 
@@ -441,6 +455,10 @@ def resource_summary(state: Dict[str, object], preset: Dict[str, object]) -> Non
     jobs = math.ceil(mc_files / chunk) + math.ceil(data_files / chunk)
     cpu_minutes = (mc_files * float(preset["mc_cpu_minutes_per_file"]) +
                    data_files * float(preset["data_cpu_minutes_per_file"]))
+    if preset.get('tt_list'):
+        tt_files=nonempty_lines(REPOSITORY/str(preset['tt_list']))
+        jobs+=math.ceil(tt_files/chunk);cpu_minutes+=tt_files*float(preset['mc_cpu_minutes_per_file'])
+        print(f'  Additional TT MC: {tt_files} files; separate normalized combination required')
     print("Full-campaign planning estimate:")
     print(f"  {mc_files} MC files and {data_files} data files")
     print(f"  {jobs} HTCondor jobs at {chunk} files/job")
@@ -469,14 +487,15 @@ def download_merged(state_path_value: Path,
         destination = REPOSITORY / destination
     merged = str(state["merged_directory"]).rstrip("/")
     if not confirm(
-            f"Copy merged data and MC ROOT files to {destination}?",
+            f"Copy all merged sample ROOT files to {destination}?",
             default=True):
         state["merged_files_local"] = False
         advance(state_path_value, state, "merged_downloaded")
         return
 
     destination.mkdir(parents=True, exist_ok=True)
-    for sample in ("DATA", "MC"):
+    samples=("DATA","MC","TT") if PRESETS[str(state['preset'])].get('tt_list') else ("DATA","MC")
+    for sample in samples:
         source = f"{merged}/zjet_{sample}.root"
         output = destination / f"zjet_{sample}.root"
         temporary = output.with_name(output.name + ".part")
@@ -498,6 +517,17 @@ def download_merged(state_path_value: Path,
 
 def write_compatibility(state_path_value: Path,
                         state: Dict[str, object]) -> None:
+    if PRESETS[str(state['preset'])].get('compatibility_mode')=='none':
+        print('Legacy flavor production completed. No all-pairs/DY-only compatibility file is written.')
+        state['compatibility_skipped']=True
+        advance(state_path_value,state,'compatibility_written')
+        return
+    if PRESETS[str(state['preset'])].get('tt_list'):
+        print('TT was produced separately. The compatibility writer still uses DY ONLY.')
+        print('Do not hadd raw DY and TT: cross sections and generator-weight normalizations differ.')
+        if not confirm('Continue with an explicitly DY-only compatibility file?', default=False):
+            print('Merged DATA, DY and TT are retained; no compatibility file was replaced.')
+            raise SystemExit(0)
     output = Path(str(state["compatibility_output"]))
     if not output.is_absolute():
         output = REPOSITORY / output
@@ -644,7 +674,8 @@ def main() -> None:
     print("Workflow complete.")
     if state.get("merged_files_local"):
         print(f"Merged ROOT files: {state['merged_local_directory']}")
-    print(f"Compatibility file: {state['compatibility_output']}")
+    if not state.get('compatibility_skipped'):
+        print(f"Compatibility file: {state['compatibility_output']}")
 
 
 if __name__ == "__main__":

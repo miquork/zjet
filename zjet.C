@@ -19,6 +19,9 @@
 #include "ZJetMuonCorrections.h"
 #include "FlavorMatrixTools.h"
 #include "ZJetResponseAudit.h"
+#include "ZJetTaggingControls.h"
+#include "ZJetInputCounters.h"
+#include "ZJetLegacyReplay.h"
 #include "CondFormats/JetMETObjects/interface/FactorizedJetCorrector.h"
 #include "CondFormats/JetMETObjects/interface/JetCorrectorParameters.h"
 
@@ -1075,6 +1078,7 @@ void zjet::Loop()
    fChain->SetBranchStatus("Jet_btagDeepFlavCvL",1);
    fChain->SetBranchStatus("Jet_btagDeepFlavQG",1);
    fChain->SetBranchStatus("Jet_btagUParTAK4CvB",1);
+   fChain->SetBranchStatus("Jet_btagUParTAK4B",1);
    fChain->SetBranchStatus("Jet_btagUParTAK4CvL",1);
    fChain->SetBranchStatus("Jet_btagUParTAK4QvG",1);
    fChain->SetBranchStatus("Jet_btagPNetQvG",1);
@@ -1108,6 +1112,7 @@ void zjet::Loop()
      fChain->SetBranchStatus("GenJet_eta",1);
      fChain->SetBranchStatus("GenJet_phi",1);
      fChain->SetBranchStatus("GenJet_mass",1);
+     fChain->SetBranchStatus("Jet_hadronFlavour",1);
      fChain->SetBranchStatus("GenJet_partonFlavour",1);
      fChain->SetBranchStatus("GenJet_nBHadrons",1);
      fChain->SetBranchStatus("GenJet_nCHadrons",1);
@@ -1646,6 +1651,16 @@ void zjet::Loop()
    FlavorMatrixHistograms flavorMatrix = bookFlavorMatrix(fout);
    auto responseAudit = ZJetResponseAudit::book(
      fout,flavorMatrixPtBinCount,flavorMatrixPtBins);
+   auto taggingControls=ZJetTaggingControls::book(fout,flavorMatrixPtBinCount,flavorMatrixPtBins);
+   ZJetInputCounters inputCounters(fout);
+   ZJetLegacyReplay legacyReplay(fout);
+   const std::string analysisMode=gSystem->Getenv("ZJET_ANALYSIS_MODE")?gSystem->Getenv("ZJET_ANALYSIS_MODE"):"both";
+   if(analysisMode!="both"&&analysisMode!="legacy")throw std::runtime_error("Invalid ZJET_ANALYSIS_MODE");
+   const bool legacyOnly=analysisMode=="legacy";
+   if(legacyOnly&&!taggingControls.config.enabled)throw std::runtime_error("Legacy flavor production requires official WP configuration");
+   fout->cd();TObjString(analysisMode.c_str()).Write("zjet_analysis_mode");
+   int counterTreeNumber=-1;
+   cout << "Official UParT WP controls: " << (taggingControls.config.enabled ? "enabled" : "disabled (configuration absent)") << endl;
 
    fout->mkdir("l2res1");
    fout->cd("l2res1");
@@ -1862,6 +1877,16 @@ void zjet::Loop()
         break;
       }
       nb = fChain->GetEntry(jentry);   nbytes += nb;
+      if(fChain->GetTreeNumber()!=counterTreeNumber) {
+        // Check each file, not just the first member of a heterogeneous chain.
+        if(taggingControls.config.enabled)for(const char *name:{"Jet_btagUParTAK4B",
+            "Jet_btagUParTAK4CvB","Jet_btagUParTAK4CvL","Jet_btagPNetQvG"})
+          if(!fChain->GetTree()->GetBranch(name))throw std::runtime_error(std::string("Missing official tagger branch: ")+name);
+        if(isMC&&!fChain->GetTree()->GetBranch("Jet_hadronFlavour"))
+          throw std::runtime_error("Missing Jet_hadronFlavour for BTV calibration controls");
+        inputCounters.add(fChain->GetCurrentFile(),isMC);
+        counterTreeNumber=fChain->GetTreeNumber();
+      }
       if (nb<=0) {
         cout << "ERROR: failed to read event " << jentry
              << ". Stopping to avoid writing a silently incomplete sample."
@@ -2454,6 +2479,33 @@ void zjet::Loop()
           Jet_btagUParTAK4CvB[j],Jet_btagUParTAK4CvL[j],
           Jet_btagPNetQvG[j],Jet_btagUParTAK4QvG[j]};
       };
+      auto fillTaggingControl = [&](const std::string &co,int j,
+          const ZJetResponseAudit::Response &v,const TLorentzVector &missing,double weight,
+          double recoGen,double genmn=std::nan(""),double genmu=std::nan("")) {
+        auto other=taggingControls.config.tags(0,0,0,0);other["hybrid_pnet030"]=0;
+        for(auto &entry:other)entry.second=0;
+        for(int k=0;k<nJet;++k) {
+          if(k==j||Jet_pt[k]<=30.||fabs(Jet_eta[k])>=2.5)continue;
+          TLorentzVector candidate;candidate.SetPtEtaPhiM(Jet_pt[k],Jet_eta[k],Jet_phi[k],Jet_mass[k]);
+          if(!separatedFromSynchronizedMuons(candidate))continue;
+          auto tags=taggingControls.config.tags(Jet_btagUParTAK4B[k],Jet_btagUParTAK4CvB[k],Jet_btagUParTAK4CvL[k],Jet_btagPNetQvG[k]);
+          tags["hybrid_pnet030"]=ZJetResponseAudit::hybrid(auditScores(k),Jet_btagPNetQvG[k],.3);
+          for(const auto &tag:tags)if(tag.second==4||tag.second==5)++other[tag.first];
+        }
+        const double mx=(missing.Px()*p4z.Px()+missing.Py()*p4z.Py())/p4z.Pt();
+        const double my=(-missing.Px()*p4z.Py()+missing.Py()*p4z.Px())/p4z.Pt();
+        ZJetTaggingControls::fill(taggingControls,co,p4z.Pt(),Jet_pt[j],Jet_eta[j],
+          isMC?generatorFlavorId(Jet_partonFlavour[j]):0,isMC?Jet_hadronFlavour[j]:0,
+          auditScores(j),Jet_btagUParTAK4B[j],v,Jet_muEF[j],p4z.M(),mx,my,other,weight,recoGen,genmn,genmu);
+      };
+      auto auditPairAcceptance = [&]() {
+        auto clear=[&](double phi) {
+          return fabs(TVector2::Phi_mpi_pi(phi-p4lplus.Phi()))>=TMath::Pi()/8.&&
+                 fabs(TVector2::Phi_mpi_pi(phi-p4lminus.Phi()))>=TMath::Pi()/8.;
+        };
+        if(!clear(p4z.Phi()+TMath::Pi()))return 0.;
+        return .5*((clear(p4z.Phi()+TMath::Pi()/2.)?1.:0.)+(clear(p4z.Phi()-TMath::Pi()/2.)?1.:0.));
+      };
       // Legacy leading-jet reference. It shares the synchronized event and
       // dimuon selection above but retains the reference analysis choices,
       // including its alpha definition and JetID setting.
@@ -2631,6 +2683,47 @@ void zjet::Loop()
                   generatorPairComponents(
                     legacyGeneratorJetIndex,legacyJet,p4z,generatorAxis,
                     false);
+                fillTaggingControl("legacy",legacyJetIndex,auditLegacyResponse,legacyMet,legacyEventWeight,auditRecoGen,
+                  generatorRecoil.hasGeneratorZ&&generatorPair.valid?generatorPair.genMpfnRecoAxis:std::nan(""),
+                  generatorRecoil.hasGeneratorZ&&generatorPair.valid?generatorPair.genMpfuRecoAxis:std::nan(""));
+                fillTaggingControl("legacy_signed",legacyJetIndex,auditLegacyResponse,legacyMet,eventWeight,auditRecoGen);
+                auto &record=legacyReplay.row;
+                record.run=run;record.lumi=luminosityBlock;record.event=event;record.isMC=isMC;
+                record.parton=isMC?Jet_partonFlavour[legacyJetIndex]:0;
+                record.hadron=isMC?Jet_hadronFlavour[legacyJetIndex]:0;record.jetIndex=legacyJetIndex;
+                record.ptz=ptz;record.jetpt=ptj;record.eta=legacyJet.Eta();record.phi=legacyJet.Phi();
+                record.mass=p4z.M();record.rho=Rho_fixedGridRhoFastjetAll;record.npv=PV_npvs;
+                record.b=Jet_btagUParTAK4B[legacyJetIndex];record.cvb=Jet_btagUParTAK4CvB[legacyJetIndex];
+                record.cvl=Jet_btagUParTAK4CvL[legacyJetIndex];record.pnet=Jet_btagPNetQvG[legacyJetIndex];
+                record.deep=Jet_btagDeepFlavQG[legacyJetIndex];record.upart=Jet_btagUParTAK4QvG[legacyJetIndex];
+                record.m0=mpf;record.m2=mpf1;record.mn=mpfn;record.mu=mpfu;record.db=db;
+                record.inverseResidual=jetInverseResidual[legacyJetIndex];record.muEF=Jet_muEF[legacyJetIndex];
+                record.recoGen=auditRecoGen;record.genWeight=isMC?genWeight:1.;record.signedWeight=eventWeight;
+                record.metParallel=(legacyMet.Px()*p4z.Px()+legacyMet.Py()*p4z.Py())/ptz;
+                record.metPerp=(-legacyMet.Px()*p4z.Py()+legacyMet.Py()*p4z.Px())/ptz;
+                record.otherB.clear();record.otherCvB.clear();record.otherCvL.clear();record.otherQ.clear();
+                for(int k=0;k<nJet;++k) {
+                  if(k==legacyJetIndex||Jet_pt[k]<=30.||fabs(Jet_eta[k])>=2.5)continue;
+                  TLorentzVector other;other.SetPtEtaPhiM(Jet_pt[k],Jet_eta[k],Jet_phi[k],Jet_mass[k]);
+                  if(!separatedFromSynchronizedMuons(other))continue;
+                  record.otherB.push_back(Jet_btagUParTAK4B[k]);record.otherCvB.push_back(Jet_btagUParTAK4CvB[k]);
+                  record.otherCvL.push_back(Jet_btagUParTAK4CvL[k]);record.otherQ.push_back(Jet_btagPNetQvG[k]);
+                }
+                legacyReplay.tree->Fill();
+                // Separate normalization-capable control, leaving synchronized unit weights untouched.
+                fillTaggingControl("legacy_genweight",legacyJetIndex,auditLegacyResponse,legacyMet,
+                  isMC?double(genWeight):legacyEventWeight,auditRecoGen);
+                if(legacyDphiResidual<TMath::Pi()/16.) {
+                  fillTaggingControl("legacy_tightphi",legacyJetIndex,auditLegacyResponse,legacyMet,eventWeight,auditRecoGen);
+                  if(ptj>.5*ptz&&ptj<2.*ptz) {
+                    fillTaggingControl("legacy_ptratio",legacyJetIndex,auditLegacyResponse,legacyMet,eventWeight,auditRecoGen);
+                    if(passTightJetId(legacyJetIndex)) {
+                      fillTaggingControl("legacy_jetid",legacyJetIndex,auditLegacyResponse,legacyMet,eventWeight,auditRecoGen);
+                      const double accept=auditPairAcceptance();
+                      if(accept>0)fillTaggingControl("legacy_pairveto",legacyJetIndex,auditLegacyResponse,legacyMet,eventWeight*accept,auditRecoGen);
+                    }
+                  }
+                }
                 fillTruthHDMProfiles1D(
                   legacyTruthProfiles,"parallel",ptz,ptj,ptave,
                   hasGenResponse,generatorRecoil,generatorPair,mpf1,mpfn,
@@ -2655,6 +2748,7 @@ void zjet::Loop()
       }
 
       // Set Z-parallel (probe) directions
+      if(legacyOnly)continue; // New-method development is deliberately disabled in this campaign.
       p4p.SetPtEtaPhiM(p4z.Pt(),p4z.Eta(),p4z.Phi()+TMath::Pi(),p4z.M());
       p4pz.SetPtEtaPhiM(p4z.Pt(),p4z.Eta(),p4z.Phi(),p4z.M());
 	
@@ -3123,12 +3217,20 @@ void zjet::Loop()
 		          ? ptj/generatorPair.genJetPt : std::numeric_limits<double>::quiet_NaN();
 		        ZJetResponseAudit::fill(responseAudit,"new",ptz,truePartonFlavor,
 		          auditScores(ijet),auditValue,auditRecoGen,wt);
+                fillTaggingControl("new",ijet,auditValue,met,wt,auditRecoGen,
+                  generatorRecoil.hasGeneratorZ&&generatorPair.valid?generatorPair.genMpfnRecoAxis:std::nan(""),
+                  generatorRecoil.hasGeneratorZ&&generatorPair.valid?generatorPair.genMpfuRecoAxis:std::nan(""));
+                fillTaggingControl("new_genweight",ijet,auditValue,met,
+                  isMC?wt*std::abs(double(genWeight)):wt,auditRecoGen);
 		        responseAudit.selection->Fill(ptz,truePartonFlavor,
 		          auditLegacyIndex<0 ? 0 : (auditLegacyIndex==ijet ? 1 : 2),wt);
 		        if (isMC) responseAudit.truthLabels->Fill(ptz,truePartonFlavor,
 		          genJetIndex>=0 && genJetIndex<nGenJet
 		            ? generatorFlavorId(GenJet_partonFlavour[genJetIndex]) : 0,wt);
 		        if (auditLegacyIndex==ijet) {
+                  fillTaggingControl("common_unit",ijet,auditValue,met,legacyEventWeight,auditRecoGen);
+                  fillTaggingControl("common_event",ijet,auditValue,met,eventWeight,auditRecoGen);
+                  fillTaggingControl("common_pair",ijet,auditValue,met,wt,auditRecoGen);
 		          ZJetResponseAudit::fill(responseAudit,"common_new",ptz,truePartonFlavor,
 		            auditScores(ijet),auditValue,auditRecoGen,wt);
 		          ZJetResponseAudit::fill(responseAudit,"common_legacy",ptz,truePartonFlavor,

@@ -141,24 +141,26 @@ void embedCampaignMetadata(const char *rootFile, const char *metadataFile) {
 
   // The audit schema is nested, whereas the historical metadata pass below
   // operates at the file root. Do not accumulate one definition cycle/job.
-  if (TDirectory *audit = output.GetDirectory("ResponseAudit")) {
+  for(const auto &spec:std::map<std::string,std::string>{{"ResponseAudit","definition"},
+      {"TaggingControls","definition"},{"LegacyFlavor","definition"},{"configInfo","counter_definition"}}) {
+    TDirectory *audit=output.GetDirectory(spec.first.c_str());if(!audit)continue;
     std::string definition;
     bool found = false;
     TIter nextAudit(audit->GetListOfKeys());
     while (TKey *key=dynamic_cast<TKey*>(nextAudit())) {
-      if (std::string(key->GetName())!="definition") continue;
+      if (std::string(key->GetName())!=spec.second) continue;
       std::unique_ptr<TObject> object(key->ReadObj());
       auto *value=dynamic_cast<TObjString*>(object.get());
-      if (!value) throw std::runtime_error("Invalid ResponseAudit definition");
+      if (!value) throw std::runtime_error("Invalid audit definition: "+spec.first);
       const std::string text=value->GetString().Data();
       if (found && text!=definition)
-        throw std::runtime_error("Cannot merge different ResponseAudit schemas");
+        throw std::runtime_error("Cannot merge different audit configurations: "+spec.first);
       definition=text; found=true;
     }
     if (found) {
-      audit->cd(); audit->Delete("definition;*");
+      audit->cd(); audit->Delete((spec.second+";*").c_str());
       TObjString value(definition.c_str());
-      value.Write("definition",TObject::kOverwrite);
+      value.Write(spec.second.c_str(),TObject::kOverwrite);
     }
     output.cd();
   }

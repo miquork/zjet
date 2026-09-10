@@ -49,7 +49,7 @@ def main() -> None:
     counts: Dict[str, Dict[str, int]] = {
         sample: {"expected": 0, "ready": 0, "empty": 0, "missing": 0,
                  "unvalidated": 0}
-        for sample in ("mc","data")
+        for sample in ("mc","data","tt")
     }
     incomplete: List[str] = []
     for job in metadata["jobs"]:
@@ -87,8 +87,9 @@ def main() -> None:
           f"{metadata['data_files']} data")
     print(f"Partial results: {result_directory}")
     print("Job logs: " + ", ".join(str(path) for path in log_directories))
-    for sample in ("mc","data"):
+    for sample in ("mc","data","tt"):
         item = counts[sample]
+        if not item['expected']: continue
         print(f"{sample.upper():4s}: {item['ready']}/{item['expected']} ready; "
               f"{item['missing']} missing, {item['empty']} empty, "
               f"{item['unvalidated']} unvalidated")

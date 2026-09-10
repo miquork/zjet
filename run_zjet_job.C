@@ -1,5 +1,6 @@
 #include "zjet.h"
 #include "validateResponseAudit.C"
+#include "validateTaggingControls.C"
 
 #include <TChain.h>
 #include <TFile.h>
@@ -75,6 +76,7 @@ void run_zjet_job(const char *inputList, bool isMC, const char *outputFile,
                 muonCorrections,jetVetoMap);
   analysis.Loop();
   validateResponseAudit(outputFile);
+  validateTaggingControls(outputFile,isMC,added);
 
   TFile check(outputFile,"READ");
   TH2 *inclusiveCounts =

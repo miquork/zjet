@@ -38,6 +38,8 @@ def public_provenance(metadata: Dict[str, object]) -> Dict[str, object]:
         "files_per_job": metadata["files_per_job"],
         "mc_files": metadata["mc_files"],
         "data_files": metadata["data_files"],
+        "tt_files": metadata.get("tt_files",0),
+        "tt_jobs":sum(job["sample"]=="tt" for job in metadata["jobs"]),
         "mc_jobs": sum(job["sample"] == "mc" for job in metadata["jobs"]),
         "data_jobs": sum(job["sample"] == "data" for job in metadata["jobs"]),
         "source": metadata.get("source", {}),
@@ -59,6 +61,7 @@ def provenance_log(provenance: Dict[str, object]) -> str:
         f"{source.get('tracked_files_modified')}",
         f"MC list: {inputs.get('mc_list')}",
         f"Data list: {inputs.get('data_list')}",
+        f"TT list: {inputs.get('tt_list')}",
         f"Golden JSON: {inputs.get('golden_json')}",
         f"Lumisection pileup: {inputs.get('lumi_pileup')}",
         f"Pileup weights: {inputs.get('pileup_weights')}",
@@ -73,6 +76,7 @@ def provenance_log(provenance: Dict[str, object]) -> str:
         f"Inputs: {provenance['mc_files']} MC files in "
         f"{provenance['mc_jobs']} jobs; {provenance['data_files']} data "
         f"files in {provenance['data_jobs']} jobs",
+        f"TT: {provenance.get('tt_files',0)} files in {provenance.get('tt_jobs',0)} jobs (not mixed into DY)",
         "",
     ])
 
@@ -110,7 +114,7 @@ def main() -> None:
     result_directory = metadata.get("storage", {}).get("result_directory", "")
     remote_results = is_remote(result_directory)
     remote_sizes = remote_file_sizes(result_directory) if remote_results else {}
-    groups: Dict[str, List[str]] = {"mc": [], "data": []}
+    groups: Dict[str, List[str]] = {"mc": [], "data": [], "tt": []}
     missing: List[str] = []
     for job in metadata["jobs"]:
         value = job["result_path"]
@@ -159,7 +163,7 @@ def main() -> None:
                                      dir=scratch_parent) as temporary_name:
         temporary_dir = Path(temporary_name)
         for sample, output_name in (("mc","zjet_MC.root"),
-                                    ("data","zjet_DATA.root")):
+                                    ("data","zjet_DATA.root"),("tt","zjet_TT.root")):
             inputs = groups[sample]
             if not inputs:
                 continue
@@ -177,7 +181,7 @@ def main() -> None:
             validation_macro = (
                 f'validateFlavorMatrix.C('
                 f'"{root_macro_argument(temporary)}",'
-                f'{str(sample == "mc").lower()})'
+                f'{str(sample != "data").lower()})'
             )
             subprocess.run(["root", "-l", "-b", "-q", validation_macro],
                            cwd=REPOSITORY, check=True)
@@ -185,6 +189,11 @@ def main() -> None:
                            f'"{root_macro_argument(temporary)}",false)')
             subprocess.run(["root", "-l", "-b", "-q", audit_macro],
                            cwd=REPOSITORY, check=True)
+            if metadata.get('source_files',{}).get('ZJetTaggingControls.h'):
+                nfiles=sum(j['input_files'] for j in metadata['jobs'] if j['sample']==sample)
+                tagging_macro=(f'validateTaggingControls.C("{root_macro_argument(temporary)}",'
+                               f'{str(sample!="data").lower()},{nfiles})')
+                subprocess.run(['root','-l','-b','-q',tagging_macro],cwd=REPOSITORY,check=True)
             if remote_destination:
                 output = destination + output_name
                 upload(temporary,output,args.force)

@@ -99,6 +99,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mc-list", required=True, type=Path)
     parser.add_argument("--data-list", required=True, type=Path)
+    parser.add_argument("--tt-list", type=Path, default=None,
+                        help="optional separate TT MC input; never merged into DY without normalization")
+    parser.add_argument("--max-tt-files", type=int, default=-1)
+    parser.add_argument('--analysis-mode',choices=('both','legacy'),default='both')
     parser.add_argument("--campaign", required=True,
                         help="new campaign name (letters, digits, dot, dash, underscore)")
     parser.add_argument("--files-per-job", type=int, default=10)
@@ -168,6 +172,11 @@ def main() -> None:
     data_list = args.data_list.expanduser().resolve()
     mc_files = read_file_list(mc_list,args.max_mc_files)
     data_files = read_file_list(data_list,args.max_data_files)
+    tt_list=args.tt_list.expanduser().resolve() if args.tt_list else None
+    tt_files=read_file_list(tt_list,args.max_tt_files) if tt_list else []
+    wp_config=REPOSITORY/'data/Tagging/official_2024.txt'
+    if (tt_list or args.analysis_mode=='legacy') and not wp_config.is_file():
+        raise FileNotFoundError('TT/HF campaign requires data/Tagging/official_2024.txt; run extract_official_tagging_wps.py')
 
     golden_path, golden_name = optional_input(args.golden_json,"golden JSON")
     lumi_path, lumi_name = optional_input(args.lumi_pileup,"lumi pileup file")
@@ -240,7 +249,7 @@ def main() -> None:
 
     jobs: List[Dict[str, object]] = []
     for sample, values, output_tag in (
-            ("mc",mc_files,"MC"),("data",data_files,"DATA")):
+            ("mc",mc_files,"MC"),("data",data_files,"DATA"),("tt",tt_files,"TT")):
         for index, group in enumerate(chunks(values,args.files_per_job)):
             chunk_name = f"{sample}_{index:04d}.txt"
             chunk_path = chunk_dir / chunk_name
@@ -283,6 +292,7 @@ def main() -> None:
         "files_per_job": args.files_per_job,
         "mc_files": len(mc_files),
         "data_files": len(data_files),
+        "tt_files": len(tt_files),
         "jobs": jobs,
         "storage": {
             "result_mode": "eos" if eos_results else "afs",
@@ -292,8 +302,8 @@ def main() -> None:
         "source": git_description(),
         "source_files": {
             name: file_description(REPOSITORY/name)
-            for name in ("zjet.C", "zjet.h", "FlavorMatrixTools.h", "ZJetResponseAudit.h",
-                         "validateFlavorMatrix.C", "validateResponseAudit.C", "mk_compile.C",
+            for name in ("zjet.C", "zjet.h", "FlavorMatrixTools.h", "ZJetResponseAudit.h", "ZJetTaggingControls.h", "ZJetInputCounters.h",
+                         "ZJetLegacyReplay.h", "validateFlavorMatrix.C", "validateResponseAudit.C", "validateTaggingControls.C", "mk_compile.C",
                          "run_zjet_job.C", "condor/run_zjet_job.sh",
                          "embedCampaignMetadata.C",
                          "scripts/merge_condor.py",
@@ -304,6 +314,9 @@ def main() -> None:
                          "scripts/generate_muon_corrections.py")
         },
         "inputs": {
+            "tt_list": {"basename":tt_list.name if tt_list else None,
+                        "selected_sha256":sha256_bytes(('\n'.join(tt_files)+'\n').encode()) if tt_files else None},
+            "official_tagging_wps":file_description(wp_config if wp_config.is_file() else None),
             "mc_list": {"basename": mc_list.name,
                         "selected_sha256": sha256_bytes(selected_mc)},
             "data_list": {"basename": data_list.name,
@@ -320,8 +333,10 @@ def main() -> None:
             "jet_veto_map": file_description(jet_veto_map_path),
         },
         "analysis": {
-            "method": ("all accepted Z-jet pairs; +90 and -90 degree "
-                       "sidebands, each with weight 0.5"),
+            "analysis_mode":args.analysis_mode,
+            "flavor_baseline":"TaggingControls/legacy/bT_cvlT_pnet045; LegacyFlavor/events for offline retagging",
+            "method": ("legacy leading jet ONLY; new parallel/sidebands disabled" if args.analysis_mode=='legacy' else
+                       "all accepted Z-jet pairs; +90 and -90 degree sidebands, each with weight 0.5"),
             "legacy_control": (
                 "synchronized leading-jet response stored under legacy/; "
                 "Jet ID disabled to match the current production reference; "
@@ -375,6 +390,7 @@ def main() -> None:
     common_inputs = [
         "zjet.C", "zjet.h", "ZJetLumi.h", "ZJetJerResolution.h",
         "FlavorMatrixTools.h", "ZJetResponseAudit.h", "validateResponseAudit.C",
+        "ZJetTaggingControls.h", "ZJetInputCounters.h", "ZJetLegacyReplay.h", "validateTaggingControls.C",
         "ZJetMuonCorrections.h",
         "data/MuonCorrections/2024_Summer24_generated.h", "mk_compile.C",
         "run_zjet_job.C", "validateFlavorMatrix.C",
@@ -387,6 +403,7 @@ def main() -> None:
         "CondFormats/JetMETObjects/src/FactorizedJetCorrector.cc",
     ]
     transfer_inputs = list(common_inputs)
+    if wp_config.is_file():transfer_inputs.append('data/Tagging/official_2024.txt')
     staged_optional_names = []
     for path in optional_paths:
         try:
@@ -427,7 +444,7 @@ def main() -> None:
     submit_text = f"""universe = vanilla
 executable = condor/run_zjet_job.sh
 initialdir = {REPOSITORY}
-arguments = $(sample) $(chunk_path) $(output_file) {golden_argument} {lumi_argument} {weights_argument} {jec_l2_argument} {jec_residual_argument} {jer_resolution_argument} {jer_scale_factor_argument} {muon_correction_argument} {jet_veto_map_argument}
+arguments = $(sample) $(chunk_path) $(output_file) {golden_argument} {lumi_argument} {weights_argument} {jec_l2_argument} {jec_residual_argument} {jer_resolution_argument} {jer_scale_factor_argument} {muon_correction_argument} {jet_veto_map_argument} {args.analysis_mode}
 
 output = {log_dir}/$(sample)_$(chunk_id).out
 error = {log_dir}/$(sample)_$(chunk_id).err
@@ -463,6 +480,9 @@ queue {','.join(manifest_fields)} from {manifest_path}
     data_jobs = sum(job["sample"] == "data" for job in jobs)
     print(f"Prepared campaign {args.campaign}: {len(mc_files)} MC files in "
           f"{mc_jobs} jobs and {len(data_files)} data files in {data_jobs} jobs.")
+    if tt_files:
+        print(f"Additional TT: {len(tt_files)} files in "
+              f"{sum(job['sample']=='tt' for job in jobs)} jobs; separate zjet_TT.root output.")
     print(f"Submit with: condor_submit {submit_path.relative_to(REPOSITORY)}")
     print(f"Results will be written to: "
           f"{eos_results or result_dir.relative_to(REPOSITORY)}")
