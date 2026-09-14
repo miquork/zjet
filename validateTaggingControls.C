@@ -5,10 +5,11 @@
 #include <TKey.h>
 #include <TObjString.h>
 #include <TTree.h>
+#include <TParameter.h>
 #include <stdexcept>
 #include <iostream>
 #include <memory>
-void validateTaggingControls(const char *path,bool mc=true,int expectedFiles=-1) {
+void validateTaggingControls(const char *path,bool mc=true,int expectedFiles=-1,bool allowCompact=false) {
   std::unique_ptr<TFile> f(TFile::Open(path));
   if(!f||f->IsZombie())throw std::runtime_error("Cannot open tagging-control output");
   auto *n=dynamic_cast<TH1*>(f->Get("configInfo/SkimCounter"));
@@ -24,12 +25,17 @@ void validateTaggingControls(const char *path,bool mc=true,int expectedFiles=-1)
   }
   auto *definition=dynamic_cast<TObjString*>(f->Get("TaggingControls/definition"));
   auto *mode=dynamic_cast<TObjString*>(f->Get("zjet_analysis_mode"));
+  auto *compact=dynamic_cast<TObjString*>(f->Get("zjet_compact_definition"));
+  if(compact&&!allowCompact)throw std::runtime_error("Histogram-only compact file is not a full worker/merged output");
   if(mode&&mode->GetString()=="legacy") {
     auto *tree=dynamic_cast<TTree*>(f->Get("LegacyFlavor/events"));
     auto *counts=dynamic_cast<TH1*>(f->Get("TaggingControls/legacy/bT_cvlT_pnet045/counts"));
-    if(!tree||!counts||tree->GetEntries()!=counts->GetEntries())
+    auto *storedEntries=dynamic_cast<TParameter<Long64_t>*>(f->Get("zjet_replay_entries"));
+    const bool compactView=allowCompact&&compact&&!tree&&storedEntries;
+    if(!counts||(!tree&&!compactView)||
+       (tree?tree->GetEntries():storedEntries->GetVal())!=counts->GetEntries())
       throw std::runtime_error("Legacy replay tree and selected-probe count disagree");
-    if(tree->GetEntries()>0&&(!tree->GetBranch("b")||!tree->GetBranch("genWeight")))
+    if(tree&&tree->GetEntries()>0&&(!tree->GetBranch("b")||!tree->GetBranch("genWeight")))
       throw std::runtime_error("Incomplete Legacy replay schema");
     auto *newCounts=dynamic_cast<TH1*>(f->Get("TaggingControls/new/hybrid_pnet030/counts"));
     if(!newCounts||newCounts->GetEntries()!=0)throw std::runtime_error("Legacy-only run filled new-method controls");

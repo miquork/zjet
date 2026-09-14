@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import time
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -480,39 +481,72 @@ def merge(state_path_value: Path, state: Dict[str, object]) -> None:
 
 
 def download_merged(state_path_value: Path,
-                    state: Dict[str, object]) -> None:
+                    state: Dict[str, object], *, advance_checkpoint: bool = True) -> None:
     destination = Path(str(state.get(
         "merged_local_directory", "rootfiles"))).expanduser()
     if not destination.is_absolute():
         destination = REPOSITORY / destination
     merged = str(state["merged_directory"]).rstrip("/")
+    compact = bool(state.get("compact_download", False))
+    question = (f"Write COMPACT histogram-only DATA/MC/TT files to {destination}, replacing existing local files "
+                "only after validation? Full replay trees stay in EOS" if compact else
+                f"Copy all merged sample ROOT files to {destination}?")
     if not confirm(
-            f"Copy all merged sample ROOT files to {destination}?",
+            question,
             default=True):
         state["merged_files_local"] = False
-        advance(state_path_value, state, "merged_downloaded")
+        if advance_checkpoint:
+            advance(state_path_value, state, "merged_downloaded")
+        else:
+            save_state(state_path_value, state)
         return
 
     destination.mkdir(parents=True, exist_ok=True)
     samples=("DATA","MC","TT") if PRESETS[str(state['preset'])].get('tt_list') else ("DATA","MC")
+    metadata = None
+    if compact:
+        metadata_path = REPOSITORY/"condor"/"jobs"/str(state["full_campaign"])/"campaign.json"
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        state["compact_sources"] = {sample: f"{merged}/zjet_{sample}.root" for sample in samples}
     for sample in samples:
         source = f"{merged}/zjet_{sample}.root"
         output = destination / f"zjet_{sample}.root"
-        temporary = output.with_name(output.name + ".part")
-        if temporary.exists():
-            temporary.unlink()
+        # A fresh same-filesystem temporary, never a partial file that might
+        # belong to an older/still-running invocation.
+        fd, name = tempfile.mkstemp(prefix="."+output.name+".", suffix=".part", dir=destination)
+        os.close(fd)
+        temporary = Path(name)
+        temporary.unlink()  # ROOT CREATE requires a nonexistent target.
         try:
-            run(["xrdcp", "-f", source, str(temporary)])
+            if compact:
+                escaped_source = source.replace("\\", "\\\\").replace('"', '\\"')
+                escaped_target = str(temporary).replace("\\", "\\\\").replace('"', '\\"')
+                run(["root", "-l", "-b", "-q",
+                     f'writeCompactOutput.C("{escaped_source}","{escaped_target}")'])
+                mc = str(sample != "DATA").lower()
+                expected = sum(j["input_files"] for j in metadata["jobs"]
+                               if j["sample"] == sample.lower())
+                for macro in (f'validateFlavorMatrix.C("{escaped_target}",{mc})',
+                              f'validateResponseAudit.C("{escaped_target}",false)',
+                              f'validateTaggingControls.C("{escaped_target}",{mc},{expected},true)'):
+                    run(["root", "-l", "-b", "-q", macro])
+            else:
+                run(["xrdcp", "-f", source, str(temporary)])
             if not temporary.is_file() or temporary.stat().st_size == 0:
                 raise RuntimeError(
                     f"downloaded merged file is missing or empty: {source}")
             temporary.replace(output)
+            print(f"Stored {'compact ' if compact else ''}{sample}: {output.stat().st_size/1.e6:.1f} MB", flush=True)
         finally:
             if temporary.exists():
                 temporary.unlink()
     state["merged_files_local"] = True
+    state["merged_local_content"] = "histograms-only" if compact else "full"
     state["merged_local_directory"] = str(destination)
-    advance(state_path_value, state, "merged_downloaded")
+    if advance_checkpoint:
+        advance(state_path_value, state, "merged_downloaded")
+    else:
+        save_state(state_path_value, state)
 
 
 def write_compatibility(state_path_value: Path,
@@ -569,6 +603,8 @@ def print_plan(state: Dict[str, object], preset: Dict[str, object]) -> None:
     print(f"Full campaign: {state['full_campaign']}")
     print(f"Logs: {state['log_root']}")
     print(f"EOS: {state['eos_root']}")
+    if state.get("compact_download"):
+        print("Local output: COMPACT histograms only; full replay data remains in EOS")
     resource_summary(state, preset)
 
 
@@ -578,6 +614,9 @@ def main() -> None:
     parser.add_argument("--list-presets", action="store_true")
     parser.add_argument("--campaign", help="immutable workflow/campaign prefix")
     parser.add_argument("--resume", help="workflow name or state JSON path")
+    parser.add_argument("--compact-download", action="store_true",
+                        help="derive histogram-only local files without downloading Legacy replay baskets; "
+                             "also works after a completed/skipped download")
     parser.add_argument("--plan", action="store_true",
                         help="print the plan without checks, writes or submissions")
     parser.add_argument("--files-per-job", type=int, default=10)
@@ -617,18 +656,24 @@ def main() -> None:
         if path.exists():
             raise FileExistsError(f"workflow already exists; use --resume: {path}")
     preset = PRESETS[preset_name]
+    if args.compact_download:
+        state["compact_download"] = True
 
     print_plan(state, preset)
     if args.plan:
         return
     if not sys.stdin.isatty():
         raise RuntimeError("workflow execution requires an interactive terminal")
-    if not args.resume:
+    if not args.resume or args.compact_download:
         save_state(path, state)
 
     try:
         require_commands(["voms-proxy-info"])
         ensure_proxy(24.0)
+        if args.compact_download and state["stage"] in ("merged_downloaded", "compatibility_written"):
+            # Re-export a completed or deliberately skipped download without
+            # changing the analysis/merge checkpoint or re-running compatibility.
+            download_merged(path, state, advance_checkpoint=False)
         while state["stage"] != "compatibility_written":
             stage = str(state["stage"])
             if stage == "created":

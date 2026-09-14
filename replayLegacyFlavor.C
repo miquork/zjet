@@ -41,7 +41,10 @@ void replayLegacyFlavor(const char *input,const char *output,const char *bwp="T"
     }
   }
   std::unique_ptr<TFile> in(TFile::Open(input));if(!in||in->IsZombie())throw std::runtime_error("Cannot open input");
-  auto *tree=dynamic_cast<TTree*>(in->Get("LegacyFlavor/events"));if(!tree)throw std::runtime_error("Input lacks LegacyFlavor/events");
+  auto *tree=dynamic_cast<TTree*>(in->Get("LegacyFlavor/events"));
+  if(!tree)throw std::runtime_error(in->Get("zjet_compact_definition")
+    ? "This is a compact histogram file. For arbitrary retagging, pass the original full EOS merge URL."
+    : "Input lacks LegacyFlavor/events");
   ZJetLegacyRecord row;row.bind(tree,false);
   TFile out(output,"CREATE");if(out.IsZombie())throw std::runtime_error("Output exists or cannot be created; choose a fresh filename");
   out.mkdir("LegacyFlavor")->cd();
