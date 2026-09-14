@@ -474,7 +474,7 @@ def merge(state_path_value: Path, state: Dict[str, object]) -> None:
         print(f"Stopped before merge. Resume with: {resume_command(state)}")
         raise SystemExit(0)
     run([sys.executable, "scripts/merge_condor.py", campaign,
-         "--output-dir", destination])
+         "--output-dir", destination, "--resume-existing"])
     state["merged_directory"] = destination
     advance(state_path_value, state, "merged")
 

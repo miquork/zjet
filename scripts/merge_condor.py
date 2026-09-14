@@ -6,6 +6,8 @@ import json
 import shutil
 import subprocess
 import tempfile
+import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Union
@@ -16,6 +18,57 @@ from condor_storage import (ensure_remote_directory, is_remote,
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
+
+
+@contextmanager
+def phase(label):
+    start = time.monotonic()
+    print(f"START {label}", flush=True)
+    try:
+        yield
+    finally:
+        print(f"END {label}: {(time.monotonic()-start)/60:.1f} min", flush=True)
+
+
+def compatible_provenance(actual, expected):
+    # Ignore merge timestamps and the later presence of prepared repair records;
+    # they are not a physics-configuration change. Compare all original identity
+    # and analysis fields, including the selected input-list hashes.
+    fields = ("campaign", "created_utc", "files_per_job", "mc_files", "data_files",
+              "tt_files", "mc_jobs", "data_jobs", "tt_jobs", "source", "inputs", "analysis")
+    differing = [key for key in fields if actual.get(key) != expected.get(key)]
+    if differing:
+        raise RuntimeError("Existing merge belongs to different inputs/configuration: " + ", ".join(differing))
+
+
+def validate_sample(path, sample, metadata, provenance, scratch):
+    nfiles = sum(j["input_files"] for j in metadata["jobs"] if j["sample"] == sample)
+    exported = scratch/(sample+"_inspected_provenance.json")
+    macro = (f'inspectMergedFile.C("{root_macro_argument(path)}",'
+             f'"{root_macro_argument(exported)}",{str(sample!="data").lower()},{nfiles})')
+    subprocess.run(["root", "-l", "-b", "-q", macro], cwd=REPOSITORY, check=True)
+    compatible_provenance(json.loads(exported.read_text()), provenance)
+    macros = [f'validateFlavorMatrix.C("{root_macro_argument(path)}",{str(sample!="data").lower()})',
+              f'validateResponseAudit.C("{root_macro_argument(path)}",false)']
+    if metadata.get("source_files", {}).get("ZJetTaggingControls.h"):
+        macros.append(f'validateTaggingControls.C("{root_macro_argument(path)}",'
+                      f'{str(sample!="data").lower()},{nfiles})')
+    for macro in macros:
+        subprocess.run(["root", "-l", "-b", "-q", macro], cwd=REPOSITORY, check=True)
+
+
+def reuse_existing(output, sample, metadata, provenance, scratch, remote):
+    local = scratch/("existing_"+sample+".root") if remote else Path(output)
+    with phase(f"{sample}: validate existing merge (no hadd)"):
+        if remote:
+            subprocess.run(["xrdcp", str(output), str(local)], check=True)
+        if not local.is_file() or local.stat().st_size == 0:
+            raise RuntimeError("Existing merged output is empty")
+        validate_sample(local, sample, metadata, provenance, scratch)
+    print(f"REUSED validated {sample}: {output}", flush=True)
+    # Only our downloaded scratch copy is removed, never the EOS result.
+    if remote:
+        local.unlink()
 
 
 def campaign_path(value: str) -> Path:
@@ -103,7 +156,11 @@ def main() -> None:
                         help="local temporary directory (default: system TMPDIR)")
     parser.add_argument("--force", action="store_true",
                         help="replace existing zjet_MC.root and zjet_DATA.root")
+    parser.add_argument("--resume-existing", action="store_true",
+                        help="validate and reuse existing merges; never overwrite an invalid result")
     args = parser.parse_args()
+    if args.force and args.resume_existing:
+        parser.error("--force and --resume-existing are mutually exclusive")
 
     campaign_dir = campaign_path(args.campaign)
     metadata_path = campaign_dir/"campaign.json"
@@ -174,44 +231,41 @@ def main() -> None:
             inputs = groups[sample]
             if not inputs:
                 continue
-            if output_name in existing_outputs and not args.force:
-                raise FileExistsError(
-                    f"output exists at destination: {output_name}; "
-                    "pass --force to replace it")
+            output = destination + output_name if remote_destination else destination/output_name
+            if output_name in existing_outputs:
+                if args.resume_existing:
+                    try:
+                        reuse_existing(output, sample, metadata, provenance, temporary_dir, remote_destination)
+                    except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
+                        raise RuntimeError(f"Existing {output_name} could not be verified: {error}. "
+                                           "It was left untouched; do not force-overwrite without inspection.") from error
+                    continue
+                if not args.force:
+                    raise FileExistsError(
+                        f"output exists at destination: {output_name}; "
+                        "use --resume-existing to validate and reuse it")
             temporary = temporary_dir/output_name
-            subprocess.run([hadd,"-f",str(temporary),*inputs],check=True)
+            with phase(f"{sample}: hadd ({len(inputs)} inputs)"):
+                subprocess.run([hadd,"-f",str(temporary),*inputs],check=True)
             macro = (f'embedCampaignMetadata.C('
                      f'"{root_macro_argument(temporary)}",'
                      f'"{root_macro_argument(campaign_provenance)}")')
-            subprocess.run(["root","-l","-b","-q",macro],
-                           cwd=REPOSITORY,check=True)
-            validation_macro = (
-                f'validateFlavorMatrix.C('
-                f'"{root_macro_argument(temporary)}",'
-                f'{str(sample != "data").lower()})'
-            )
-            subprocess.run(["root", "-l", "-b", "-q", validation_macro],
-                           cwd=REPOSITORY, check=True)
-            audit_macro = (f'validateResponseAudit.C('
-                           f'"{root_macro_argument(temporary)}",false)')
-            subprocess.run(["root", "-l", "-b", "-q", audit_macro],
-                           cwd=REPOSITORY, check=True)
-            if metadata.get('source_files',{}).get('ZJetTaggingControls.h'):
-                nfiles=sum(j['input_files'] for j in metadata['jobs'] if j['sample']==sample)
-                tagging_macro=(f'validateTaggingControls.C("{root_macro_argument(temporary)}",'
-                               f'{str(sample!="data").lower()},{nfiles})')
-                subprocess.run(['root','-l','-b','-q',tagging_macro],cwd=REPOSITORY,check=True)
-            if remote_destination:
-                output = destination + output_name
-                upload(temporary,output,args.force)
-            else:
-                output = destination/output_name
-                shutil.copy2(temporary,output)
+            with phase(f"{sample}: finalize HDM and metadata"):
+                subprocess.run(["root","-l","-b","-q",macro], cwd=REPOSITORY,check=True)
+            with phase(f"{sample}: validate merged output"):
+                validate_sample(temporary, sample, metadata, provenance, temporary_dir)
+            with phase(f"{sample}: publish merged output"):
+                if remote_destination:
+                    upload(temporary,output,args.force)
+                else:
+                    shutil.copy2(temporary,output)
             print(f"Merged {len(inputs)} {sample} outputs into {output}")
 
     if remote_destination:
-        upload(campaign_provenance,destination+provenance_name,args.force)
-        upload(campaign_log,destination+log_name,args.force)
+        # These are regenerated sidecars, not physics outputs. A previous merge
+        # may have uploaded them just before losing the workflow checkpoint.
+        upload(campaign_provenance,destination+provenance_name,args.force or args.resume_existing)
+        upload(campaign_log,destination+log_name,args.force or args.resume_existing)
         print(f"Wrote provenance to {destination+provenance_name}")
     else:
         output_provenance = destination/provenance_name

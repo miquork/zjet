@@ -70,3 +70,31 @@ ready, its check passes and normal merging/download resumes. Repair preparation
 hashes are retained in `retries/*/repair.json` and included in the merged
 provenance under `prepared_job_repairs`. These document preparation, not proof
 of execution; the worker stdout contains the actual transferred source hashes.
+
+## Resume after an interrupted merge
+
+The workflow now invokes `merge_condor.py --resume-existing`. For each existing
+sample output it downloads a read-only scratch copy from EOS, checks ROOT file
+integrity, reads all Legacy replay entries/branches, compares embedded campaign
+provenance with the current campaign, and runs the normal FlavorMatrix,
+ResponseAudit and input-counter/tagging validators. A validated sample prints
+`REUSED validated mc` (or data/tt) and does not run hadd again. Absent samples are
+merged normally. This works with files published before the resume option was
+introduced. Merge timestamps and preparation-only repair annotations may differ;
+original campaign identity, input hashes and physics settings must agree.
+
+Empty, truncated, recovered, misconfigured or unreadable outputs stop recovery;
+they are never deleted or automatically overwritten. Do not run a second merge
+concurrently. The current publication path still uploads directly to the final
+EOS filename: interrupted uploads can leave partial files, which the next reuse
+check rejects. This change is validated reuse, **not atomic EOS publication**.
+
+Run the workflow inside tmux on a known lxplus host, and reconnect to that same
+host after SSH disconnects. The existing `--resume` command is sufficient; do
+not use `--force`. If validation succeeds, the original `full_ready` checkpoint
+can progress to `merged` after all sample outputs and sidecars are ready.
+
+`START`/`END` messages report elapsed minutes separately for hadd, finalizing
+HDM/metadata, validation and publication. These are phase timings, not an ETA
+or a hadd performance optimization. Only the downloaded scratch copy is deleted
+after successful reuse. ROOT inputs/outputs are otherwise preserved.
