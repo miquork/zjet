@@ -147,6 +147,13 @@ def main() -> None:
         existing_outputs = {path.name for path in destination.iterdir()}
 
     provenance = public_provenance(metadata)
+    # Preserve the original production version and separately document limited
+    # repairs. Preparation does not imply successful submission/execution; actual
+    # worker hashes remain in each job's .out log.
+    provenance["prepared_job_repairs"] = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in sorted((campaign_dir/"retries").glob("*/repair.json"))
+    ]
     provenance_name = f"zjet_{metadata['campaign']}_provenance.json"
     campaign_provenance = campaign_dir/provenance_name
     campaign_provenance.write_text(
